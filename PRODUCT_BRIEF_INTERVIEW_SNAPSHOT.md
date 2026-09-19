@@ -1507,3 +1507,14 @@ Partner changelog notification:
   - event payload
 - manual resend не создаёт новую generation и не влияет на billing
 - доставка остаётся at-least-once
+
+
+## 51. Manual resend event identity
+
+Подтверждено:
+
+- manual webhook resend должен вести себя как обычная повторная доставка того же business event
+- `event_id` сохраняется тем же, что у исходного события
+- для каждой отдельной HTTP-доставки система создаёт отдельный `delivery_id` и увеличивает `attempt`
+- это позволяет партнёру безопасно делать idempotent processing по `event_id`, при этом видеть и различать отдельные попытки доставки
+- manual resend использует актуальный delivery timestamp, но тот же event payload и тот же business event identity
