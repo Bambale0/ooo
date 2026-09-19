@@ -1663,3 +1663,13 @@ Partner changelog notification:
   - economic/preflight constraints
   - request не принят в пределах retry/acceptance flow
   - provider failure, допускающий fallback
+
+
+## 64. Slow-but-healthy provider behavior
+
+Подтверждено:
+
+- если provider формально доступен и не попал под технический circuit breaker/timeout, он остаётся первым в routing согласно глобальному приоритету
+- временное ухудшение latency само по себе не переключает трафик на более быстрый provider
+- динамической latency-based балансировки нет
+- переключение возможно только когда срабатывают зафиксированные технические условия: timeout, circuit breaker, недоступность, provider-side failure или другие заранее определённые причины fallback
