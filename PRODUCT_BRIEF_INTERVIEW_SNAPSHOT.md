@@ -1869,3 +1869,12 @@ Partner changelog notification:
   3. последний известный автоматический курс
 - если automatic source временно недоступен и manual fallback не задан, новые RUB↔USDT расчёты продолжаются по последнему успешно полученному автоматическому курсу
 - вместе с каждым FX snapshot сохраняется источник курса и timestamp последнего успешного automatic rate
+
+
+## 83. Safe-to-withdraw wallet balance freshness
+
+Подтверждено:
+
+- если safe-to-withdraw рассчитан по последнему известному Crypto Bot balance, администратор видит возраст этого snapshot
+- в admin UI рядом с показателем показываем понятный freshness status, например: `баланс обновлён 2 ч 17 мин назад`
+- это позволяет отличить расчёт по свежему wallet balance от расчёта по stale fallback
