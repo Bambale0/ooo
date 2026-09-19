@@ -1702,3 +1702,12 @@ Partner changelog notification:
 - показатель «Безопасно вывести сейчас» считается и отображается только в USD
 - для фактического wallet cap учитываем только USD/USDT-деноминированный доступный баланс
 - GRAM и другие активы не конвертируются и не добавляются в safe-to-withdraw
+
+
+## 68. Profit withdrawal amount currency
+
+Подтверждено:
+
+- операция «Зафиксировать вывод прибыли» принимает сумму только в USD
+- safe-to-withdraw и profit-withdrawal record используют одну admin-facing валюту — USD
+- если вывод превышает safe-to-withdraw, сохраняются warning и обязательная причина override, как зафиксировано ранее
