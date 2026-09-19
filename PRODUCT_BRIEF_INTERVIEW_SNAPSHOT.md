@@ -2056,3 +2056,12 @@ Partner changelog notification:
 - unpaid/pending invoice не уменьшает safe-to-withdraw
 - обязательство возникает только после подтверждённой фактической оплаты
 - после paid confirmation сумма сразу исключается из safe-to-withdraw, даже если администратор ещё не зачислил партнёру RUB balance
+
+
+## 101. Refunded/cancelled paid invoice releases safe-to-withdraw obligation
+
+Подтверждено:
+
+- если ранее оплаченный invoice вручную получает финальный статус refund/cancelled вне системы, связанное с ним обязательство снимается
+- после фиксации такого финального статуса соответствующая сумма снова перестаёт уменьшать safe-to-withdraw
+- изменение должно быть отражено в append-only финансовой истории, без удаления исходного факта оплаты
