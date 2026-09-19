@@ -1959,3 +1959,13 @@ Partner changelog notification:
 - запрос отклоняется до создания generation UUID / reserve
 - partner-facing ответ: HTTP 503 с нейтральным стабильным кодом `provider_temporarily_unavailable`
 - `idempotency_key` при таком pre-creation reject не расходуется и может быть безопасно повторён позже
+
+
+## 91. Profit withdrawal action is accounting-only
+
+Подтверждено:
+
+- кнопка «Зафиксировать вывод прибыли» только записывает факт вывода во внутренний учёт
+- система не инициирует перевод USDT через Crypto Bot API и не управляет фактическим выводом средств
+- физический вывод владелец выполняет отдельно вне системы
+- запись уменьшает доступный working capital / safe-to-withdraw согласно финансовой модели
