@@ -1494,3 +1494,16 @@ Partner changelog notification:
   - event_id
 - схема должна быть простой и знакомой интеграторам
 - receiver может отбрасывать слишком старые/replayed requests по timestamp
+
+
+## 50. Manual webhook resend
+
+Подтверждено:
+
+- партнёр может вручную переотправить webhook по конкретной генерации из Telegram-кабинета
+- повторная отправка использует тот же сохранённый webhook snapshot этой generation:
+  - webhook URL
+  - webhook secret
+  - event payload
+- manual resend не создаёт новую generation и не влияет на billing
+- доставка остаётся at-least-once
