@@ -1633,3 +1633,17 @@ Partner changelog notification:
   - другие provider-specific features, влияющие на результат
 - если provider не поддерживает эквивалентный набор параметров, он исключается из candidate routing для этой generation
 - система не имеет права молча деградировать качество, менять режим, игнорировать параметры или подменять request на упрощённый вариант
+
+
+## 62. Provider routing visibility
+
+Подтверждено:
+
+- выбор конкретного upstream/fallback provider полностью скрыт от партнёра
+- наружу партнёр видит только наш контракт:
+  - UUID generation
+  - status
+  - result
+  - billing/result metadata, предусмотренные нашим API
+- provider name, provider task id, routing attempts, fallback sequence, procurement cost и внутренние причины переключения наружу не раскрываются
+- provider-specific details хранятся только во внутренней admin/technical history
