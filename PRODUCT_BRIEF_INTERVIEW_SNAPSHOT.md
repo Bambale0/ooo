@@ -1480,3 +1480,17 @@ Partner changelog notification:
 - partner balance и списания — с точностью до 0.01 ₽
 - internal calculations — более высокая точность
 - customer final charge — ROUND_HALF_UP до копейки
+
+## 49. Webhook signature
+
+Подтверждено:
+
+- partner generation webhooks подписываются привычной схемой HMAC-SHA256
+- canonical payload для подписи: `timestamp + "." + raw_body`
+- у каждого API-ключа свой отдельный webhook secret
+- в headers передаются как минимум:
+  - timestamp
+  - signature
+  - event_id
+- схема должна быть простой и знакомой интеграторам
+- receiver может отбрасывать слишком старые/replayed requests по timestamp
