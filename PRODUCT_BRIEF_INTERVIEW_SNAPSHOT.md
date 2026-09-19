@@ -1528,3 +1528,15 @@ Partner changelog notification:
 - текущий webhook URL API-ключа не используется для уже созданной generation
 - partner не может подменить destination URL в момент manual resend
 - для manual resend также используется сохранённый webhook secret из generation snapshot
+
+
+## 53. Result URL retention
+
+Подтверждено:
+
+- готовые video/image файлы сервис у себя не хранит
+- партнёру возвращается provider CDN/result URL
+- если provider сообщает срок жизни ссылки, наружу передаётся `expires_at`
+- партнёр сам обязан скачать результат до истечения ссылки
+- бессрочная generation history хранит metadata, billing state, status и сам URL, но не гарантирует бессрочную доступность файла по этому URL
+- истечение provider CDN URL не является refund-событием, если generation успешно завершилась и ссылка была выдана
