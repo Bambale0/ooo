@@ -1617,3 +1617,19 @@ Partner changelog notification:
 - если заявка была отклонена, партнёр может подать новую заявку сразу
 - cooldown после rejection не применяется
 - новая заявка создаётся как отдельная application record
+
+
+## 61. Fallback capability equivalence
+
+Подтверждено:
+
+- fallback provider участвует в routing только если он может выполнить конкретный запрос без потери заявленных возможностей
+- должны совпадать все существенные параметры request:
+  - model capability
+  - mode
+  - resolution
+  - duration
+  - reference inputs
+  - другие provider-specific features, влияющие на результат
+- если provider не поддерживает эквивалентный набор параметров, он исключается из candidate routing для этой generation
+- система не имеет права молча деградировать качество, менять режим, игнорировать параметры или подменять request на упрощённый вариант
