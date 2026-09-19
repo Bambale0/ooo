@@ -1888,3 +1888,18 @@ Partner changelog notification:
 - такая сумма сразу исключается из safe-to-withdraw
 - до нажатия администратором «Зачислить баланс» эти средства нельзя считать доступной прибылью/свободным working capital
 - после зачисления обязательство переходит в обычный partner balance / cost coverage контур и продолжает учитываться в общей финансовой модели
+
+
+## 85. Safe-to-withdraw reserves only future provider cost coverage
+
+Подтверждено:
+
+- после ручного зачисления partner top-up в safe-to-withdraw не резервируется весь partner retail balance целиком
+- резервируется только консервативно необходимое покрытие будущей upstream себестоимости
+- расчёт должен ориентироваться на худшее текущее соотношение provider cost / retail price среди доступных партнёру production-конфигураций, а не на среднюю маржу
+- отдельно продолжают учитываться:
+  - active generation reserves
+  - paid-but-not-yet-credited obligations
+  - required provider working float
+  - фактический доступный USDT wallet cap
+- цель: не финансировать обычные генерации из owner capital, но и не замораживать уже экономически заработанную маржу до полного расходования partner retail balance
