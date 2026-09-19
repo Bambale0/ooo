@@ -1711,3 +1711,14 @@ Partner changelog notification:
 - операция «Зафиксировать вывод прибыли» принимает сумму только в USD
 - safe-to-withdraw и profit-withdrawal record используют одну admin-facing валюту — USD
 - если вывод превышает safe-to-withdraw, сохраняются warning и обязательная причина override, как зафиксировано ранее
+
+
+## 69. Profit withdrawal record fields
+
+Подтверждено:
+
+- для операции «Зафиксировать вывод прибыли» достаточно сохранять:
+  - сумму в USD
+  - дату/время
+  - внутреннюю причину/комментарий
+- tx_hash, blockchain transaction id и внешний payment reference не обязательны
