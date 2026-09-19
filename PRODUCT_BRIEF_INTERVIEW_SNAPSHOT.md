@@ -1540,3 +1540,21 @@ Partner changelog notification:
 - партнёр сам обязан скачать результат до истечения ссылки
 - бессрочная generation history хранит metadata, billing state, status и сам URL, но не гарантирует бессрочную доступность файла по этому URL
 - истечение provider CDN URL не является refund-событием, если generation успешно завершилась и ссылка была выдана
+
+
+## 54. ArgoLink result retention — docs check
+
+Проверено по актуальной публичной документации ArgoLink:
+
+- video generation возвращает `request_id`, затем status через `GET /v1/videos/{request_id}`
+- при `done` ответ содержит `video.url`, ведущий на защищённый endpoint `GET /v1/videos/{request_id}/content`
+- content endpoint требует Bearer key того же пользователя
+- в публичной документации не найдено обещание конкретного срока хранения готового MP4 / TTL result URL
+- упомянутые 24 часа относятся к `generation_timeout` для незавершённой генерации, а не к хранению готового результата
+- статус `expired` в lifecycle описан как случай, когда результат не был произведён и списания нет; это не описание TTL готового CDN/result URL
+
+Следствие для нашего продукта:
+
+- нельзя обещать партнёру гарантированную доступность готового файла 24 часа, пока upstream явно не гарантирует такой retention или пока мы сами не храним файл
+- текущая архитектура по-прежнему не хранит video/image result files
+- в нашей документации/оферте нужно формулировать обязанность партнёра скачать результат как можно скорее; точное правило 24h нужно трактовать как contractual download window/maximum expectation, а не как техническую гарантию upstream retention, если ArgoLink не подтвердит срок отдельно
