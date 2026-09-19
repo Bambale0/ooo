@@ -1673,3 +1673,12 @@ Partner changelog notification:
 - временное ухудшение latency само по себе не переключает трафик на более быстрый provider
 - динамической latency-based балансировки нет
 - переключение возможно только когда срабатывают зафиксированные технические условия: timeout, circuit breaker, недоступность, provider-side failure или другие заранее определённые причины fallback
+
+
+## 65. Safe-to-withdraw display currency
+
+Подтверждено:
+
+- показатель «Безопасно вывести сейчас» показывается в USD
+- это заменяет ранее зафиксированное отображение safe-to-withdraw в RUB
+- внутренний расчёт по-прежнему может использовать RUB/native provider currencies и FX snapshots, но итоговый admin-facing amount для safe withdrawal отображается в USD
