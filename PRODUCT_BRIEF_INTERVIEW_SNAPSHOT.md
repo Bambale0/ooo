@@ -1608,3 +1608,12 @@ Partner changelog notification:
 - если Telegram ID уже имеет заявку в статусе `pending`, новую заявку создать нельзя
 - вместо повторной формы бот показывает текущий статус существующей заявки
 - отдельная duplicate application record не создаётся
+
+
+## 60. Re-application after rejection
+
+Подтверждено:
+
+- если заявка была отклонена, партнёр может подать новую заявку сразу
+- cooldown после rejection не применяется
+- новая заявка создаётся как отдельная application record
