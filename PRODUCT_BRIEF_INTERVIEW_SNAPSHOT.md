@@ -1647,3 +1647,19 @@ Partner changelog notification:
   - billing/result metadata, предусмотренные нашим API
 - provider name, provider task id, routing attempts, fallback sequence, procurement cost и внутренние причины переключения наружу не раскрываются
 - provider-specific details хранятся только во внутренней admin/technical history
+
+
+## 63. Provider routing priority
+
+Подтверждено:
+
+- если для конкретного запроса доступны несколько полностью эквивалентных providers, routing идёт строго по заранее заданному глобальному приоритету для этой модели
+- система не выбирает provider динамически по цене
+- система не выбирает provider динамически по текущей latency/скорости
+- переход к следующему provider происходит только по предусмотренным причинам:
+  - текущий provider недоступен
+  - circuit breaker
+  - invalid partner provider key
+  - economic/preflight constraints
+  - request не принят в пределах retry/acceptance flow
+  - provider failure, допускающий fallback
