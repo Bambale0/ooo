@@ -2148,3 +2148,27 @@ Partner changelog notification:
   - docs/public price
   - changelog
 - новые генерации используют новую цену с момента её активации; исторические и in-flight generation price snapshots не меняются
+
+
+## 110. Atomic retail price publication
+
+Подтверждено:
+
+- изменение retail-цены применяется атомарно
+- новая цена начинает использоваться для новых generation requests только после одновременной публикации согласованного состояния:
+  - API pricing catalog / `/pricing`
+  - public price/docs
+  - changelog
+- до завершения публикации продолжает действовать предыдущая цена
+- in-flight и historical generation price snapshots не меняются
+
+## 111. Partner-specific retail price overrides
+
+Новое подтверждённое требование, supersedes прежнюю трактовку полностью глобальных retail-цен:
+
+- администратор должен иметь возможность задавать отдельные retail-цены для конкретных партнёров по отдельным моделям
+- при наличии partner-specific override для партнёра используется его цена вместо глобальной default price
+- если override отсутствует, действует глобальная цена модели
+- model availability при этом остаётся глобальной: индивидуальная цена не означает индивидуальное включение/выключение модели
+- partner-specific price changes применяются только к новым генерациям после активации и не меняют historical/in-flight price snapshots
+- partner-facing `/pricing` должен возвращать фактические цены именно этого партнёра с учётом его overrides
