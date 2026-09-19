@@ -1765,3 +1765,22 @@ Partner changelog notification:
   - видит retail prices/charges в RUB
 - crypto asset используется как транспорт платежа; партнёру не нужно вести отдельный USDT-баланс внутри сервиса
 - safe-to-withdraw показывается в USD; фактический доступный USDT может использоваться как долларовый эквивалент для этого показателя
+
+
+## 74. Internal reporting currency
+
+Подтверждено:
+
+- внутренняя управленческая отчётность ведётся и показывается преимущественно в USD/USDT
+- к ней относятся:
+  - profit
+  - working capital
+  - provider float
+  - safe-to-withdraw
+  - internal cost/margin views
+- RUB остаётся основной валютой partner-facing billing:
+  - balance
+  - retail prices
+  - charges
+  - top-up amount
+- исторические RUB snapshots по top-up/charge сохраняются для сверки и аудита
