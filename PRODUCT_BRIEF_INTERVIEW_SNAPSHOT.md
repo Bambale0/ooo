@@ -1682,3 +1682,14 @@ Partner changelog notification:
 - показатель «Безопасно вывести сейчас» показывается в USD
 - это заменяет ранее зафиксированное отображение safe-to-withdraw в RUB
 - внутренний расчёт по-прежнему может использовать RUB/native provider currencies и FX snapshots, но итоговый admin-facing amount для safe withdrawal отображается в USD
+
+
+## 66. Safe-to-withdraw limited by actual wallet balance
+
+Подтверждено:
+
+- показатель «Безопасно вывести сейчас» в USD ограничивается не только внутренними обязательствами, но и фактически доступными средствами в Crypto Bot/кошельке
+- система не должна показывать safe-to-withdraw выше реально доступного wallet balance
+- итоговый safe-to-withdraw = минимум между:
+  - суммой, разрешённой внутренней финансовой моделью после всех обязательств/reserves/required provider float
+  - фактически доступным wallet balance, приведённым к USD
