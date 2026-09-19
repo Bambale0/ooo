@@ -1784,3 +1784,12 @@ Partner changelog notification:
   - charges
   - top-up amount
 - исторические RUB snapshots по top-up/charge сохраняются для сверки и аудита
+
+
+## 75. Internal admin currency label
+
+Подтверждено:
+
+- во внутренней админке для долларовых показателей используем единый ярлык `USDT`
+- не показываем одновременно USD и USDT как два отдельных значения
+- внутренние показатели profit, working capital, provider float и safe-to-withdraw отображаются в USDT
