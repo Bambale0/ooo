@@ -2019,3 +2019,12 @@ Partner changelog notification:
 - если safe-to-withdraw становится отрицательным, администратору автоматически отправляется Telegram-alert
 - alert должен явно показывать факт дефицита покрытия и его величину в USDT
 - дефицит также остаётся видимым в admin UI как отрицательное значение safe-to-withdraw
+
+
+## 97. Negative safe-to-withdraw alert repeats until manual cancellation
+
+Подтверждено:
+
+- Telegram-alert о отрицательном safe-to-withdraw повторяется, пока администратор вручную не отменит/заглушит этот alert
+- автоматическое восстановление safe-to-withdraw выше нуля само по себе не является единственным механизмом остановки уже запущенного alert cycle
+- в admin UI должна быть явная ручная action для прекращения повторных уведомлений по текущему инциденту
