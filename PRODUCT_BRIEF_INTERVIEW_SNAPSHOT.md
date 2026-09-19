@@ -1741,3 +1741,13 @@ Partner changelog notification:
 - ограничения по количеству references, размеру input files, длительности входного видео и другим input-параметрам наследуются от конкретной модели/endpoint ArgoLink
 - дополнительных собственных лимитов поверх ArgoLink в v1 не вводим
 - если provider/model limits меняются, наши docs/validation должны синхронизироваться с актуальным upstream contract
+
+
+## 72. Crypto Bot balance source for safe-to-withdraw
+
+Подтверждено:
+
+- фактический USD/USDT-баланс для расчёта safe-to-withdraw подтягивается автоматически через API Crypto Bot
+- ручной ввод wallet balance в админке не используется как основной источник
+- safe-to-withdraw должен опираться на актуальный provider/API balance snapshot и внутренние обязательства
+- при недоступности Crypto Bot API система не должна молча считать wallet balance по устаревшему/ручному значению без явного статуса freshness
