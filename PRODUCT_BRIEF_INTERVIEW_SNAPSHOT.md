@@ -1518,3 +1518,13 @@ Partner changelog notification:
 - для каждой отдельной HTTP-доставки система создаёт отдельный `delivery_id` и увеличивает `attempt`
 - это позволяет партнёру безопасно делать idempotent processing по `event_id`, при этом видеть и различать отдельные попытки доставки
 - manual resend использует актуальный delivery timestamp, но тот же event payload и тот же business event identity
+
+
+## 52. Manual resend destination
+
+Подтверждено:
+
+- manual webhook resend всегда отправляется только на webhook URL, сохранённый в generation snapshot
+- текущий webhook URL API-ключа не используется для уже созданной generation
+- partner не может подменить destination URL в момент manual resend
+- для manual resend также используется сохранённый webhook secret из generation snapshot
