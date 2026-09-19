@@ -1803,3 +1803,17 @@ Partner changelog notification:
 - RUB-маржа не является основным admin-facing показателем
 - это соответствует тому, что расчёты с upstream-поставщиками и внутренний финансовый контур ведутся в USDT
 - partner-facing billing при этом по-прежнему остаётся в RUB
+
+
+## 77. Immutable FX snapshot for generation margin
+
+Подтверждено:
+
+- для каждой успешно завершённой генерации фиксируем один immutable курс RUB/USDT на момент финализации списания
+- этот курс используется для перевода partner retail charge из RUB в USDT для внутреннего расчёта маржи
+- формулы:
+  - revenue_usdt = charged_rub / fx_snapshot_rub_per_usdt
+  - margin_usdt = revenue_usdt - actual_provider_cost_usdt
+  - margin_percent = margin_usdt / revenue_usdt * 100
+- исторические генерации не переоцениваются по текущему курсу
+- вместе с генерацией сохраняется использованный FX snapshot для последующей сверки и отчётности
