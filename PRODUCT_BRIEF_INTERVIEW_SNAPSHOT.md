@@ -1949,3 +1949,13 @@ Partner changelog notification:
   - реально не хватает доступного working capital / provider float покрыть её фактическую себестоимость
   - либо генерация стала экономически отрицательной по текущим ценам
 - historical cost coverage используется для учёта и сверки, current required reserve — для текущего risk/safe-withdraw контроля
+
+
+## 90. Neutral error for economically unavailable generation
+
+Подтверждено:
+
+- если конкретная генерация стала экономически отрицательной из-за актуальной upstream-себестоимости, партнёру не раскрываем причину про маржу, закупочную цену или внутреннюю экономику
+- запрос отклоняется до создания generation UUID / reserve
+- partner-facing ответ: HTTP 503 с нейтральным стабильным кодом `provider_temporarily_unavailable`
+- `idempotency_key` при таком pre-creation reject не расходуется и может быть безопасно повторён позже
