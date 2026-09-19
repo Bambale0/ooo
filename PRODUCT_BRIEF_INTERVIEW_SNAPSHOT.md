@@ -1903,3 +1903,11 @@ Partner changelog notification:
   - required provider working float
   - фактический доступный USDT wallet cap
 - цель: не финансировать обычные генерации из owner capital, но и не замораживать уже экономически заработанную маржу до полного расходования partner retail balance
+
+
+## 86. No dynamic repricing of future cost coverage
+
+Подтверждено:
+
+- уже сформированное покрытие будущей себестоимости для зачисленного partner balance не пересчитывается динамически при последующих изменениях procurement price или retail price
+- изменение текущих цен влияет на новые операции и новые snapshots, но не должно автоматически переписывать ранее зафиксированное покрытие по уже зачисленному балансу
