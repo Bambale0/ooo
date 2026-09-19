@@ -1817,3 +1817,13 @@ Partner changelog notification:
   - margin_percent = margin_usdt / revenue_usdt * 100
 - исторические генерации не переоцениваются по текущему курсу
 - вместе с генерацией сохраняется использованный FX snapshot для последующей сверки и отчётности
+
+
+## 78. Safe-to-withdraw fallback on stale Crypto Bot balance
+
+Подтверждено:
+
+- если Crypto Bot API временно не отдаёт актуальный wallet balance, safe-to-withdraw продолжаем считать по последнему успешно полученному балансу
+- последнее успешное значение баланса кэшируется/хранится как fallback
+- при использовании устаревшего wallet balance расчёт не блокируется
+- freshness последнего успешного balance snapshot должна быть доступна системе и администратору
