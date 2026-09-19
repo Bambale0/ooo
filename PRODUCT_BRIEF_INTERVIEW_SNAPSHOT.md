@@ -1732,3 +1732,12 @@ Partner changelog notification:
 - отдельный собственный upload API для файлов в v1 не добавляем
 - не вводим дополнительный storage layer только ради загрузки reference/input files
 - request contract должен оставаться максимально совместимым с ArgoLink
+
+
+## 71. Partner API input limits
+
+Подтверждено:
+
+- ограничения по количеству references, размеру input files, длительности входного видео и другим input-параметрам наследуются от конкретной модели/endpoint ArgoLink
+- дополнительных собственных лимитов поверх ArgoLink в v1 не вводим
+- если provider/model limits меняются, наши docs/validation должны синхронизироваться с актуальным upstream contract
