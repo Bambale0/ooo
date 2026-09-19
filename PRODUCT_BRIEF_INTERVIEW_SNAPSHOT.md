@@ -1722,3 +1722,13 @@ Partner changelog notification:
   - дату/время
   - внутреннюю причину/комментарий
 - tx_hash, blockchain transaction id и внешний payment reference не обязательны
+
+
+## 70. Partner API reference/file inputs
+
+Подтверждено:
+
+- partner API для референсов и входных файлов принимает только те форматы и способы передачи, которые поддерживает ArgoLink для соответствующей модели/endpoint
+- отдельный собственный upload API для файлов в v1 не добавляем
+- не вводим дополнительный storage layer только ради загрузки reference/input files
+- request contract должен оставаться максимально совместимым с ArgoLink
