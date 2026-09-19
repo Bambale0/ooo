@@ -1935,3 +1935,17 @@ Partner changelog notification:
   - нового пополнения, которое создаёт новое cost coverage
   - либо отдельной admin-операции «Пополнить покрытие себестоимости»
 - это сохраняет правило: обычные генерации не финансируются из owner capital
+
+
+## 89. Historical cost coverage vs current reserve requirement
+
+Уточнение, supersedes жёсткий блок из раздела 88:
+
+- зафиксированный при top-up historical cost coverage остаётся immutable учётным snapshot и не переписывается при изменении цен
+- его исчерпание само по себе НЕ блокирует партнёра, если у партнёра ещё есть retail RUB balance
+- для safe-to-withdraw отдельно рассчитывается current required reserve по актуальной upstream-себестоимости оставшихся обязательств
+- рост provider cost уменьшает safe-to-withdraw и доступный owner profit, но не должен сам по себе неожиданно остановить API партнёра
+- новую генерацию блокируем только если:
+  - реально не хватает доступного working capital / provider float покрыть её фактическую себестоимость
+  - либо генерация стала экономически отрицательной по текущим ценам
+- historical cost coverage используется для учёта и сверки, current required reserve — для текущего risk/safe-withdraw контроля
