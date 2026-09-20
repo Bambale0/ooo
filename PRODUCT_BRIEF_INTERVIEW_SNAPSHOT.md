@@ -319,7 +319,7 @@ ArgoLink/upstream-ключ клиент никогда не видит.
 До включения обязательно:
 
 - полная реализация интеграции
-- retail price
+- partner price
 - документация
 - успешный автоматический smoke-test
 
@@ -374,10 +374,10 @@ Image billing/type поддерживается архитектурно; image 
 
 Fallback допускается на более дорогого провайдера, если:
 
-- retail price покрывает себестоимость
+- partner price покрывает себестоимость
 - задача не требует финансирования из денег владельца
 
-Партнёр платит ту же зафиксированную retail price независимо от внутреннего provider routing.
+Партнёр платит ту же зафиксированную partner price независимо от внутреннего provider routing.
 
 Если задача уже принята upstream, duplicate launch в другом provider без основания не делается.
 
@@ -391,12 +391,12 @@ Fallback допускается на более дорогого провайд�
 
 - fallback всё равно запускается за наш счёт
 - это исключение из правила «не кредитовать партнёра»
-- партнёр всё равно платит максимум одну обычную retail стоимость одной успешной генерации
+- партнёр всё равно платит максимум одну обычную partner price одной успешной генерации
 
 Если все fallback закончились без результата:
 
 - partner charge = 0 ₽
-- весь retail reserve возвращается
+- весь partner charge reserve возвращается
 - понесённые provider-costs записываются как `provider_incident_loss`
 
 ## 11. Circuit breaker и recovery
@@ -502,7 +502,7 @@ Stable `error_code` является основным машинным конт�
 ### `/pricing`
 
 - только по API key
-- возвращает только retail prices и billing units
+- возвращает только partner prices и billing units
 - не раскрывает upstream cost/margin
 - не используется как full model capability schema
 - technical capabilities живут в документации
@@ -549,7 +549,7 @@ Stable `error_code` является основным машинным конт�
 - rotation создаёт новый
 - новый немедленно инвалидирует старый
 - без grace period
-- admin usage рассчитывается по upstream себестоимости, без retail markup
+- admin usage рассчитывается по upstream себестоимости, без markup over provider cost
 
 ## 16. Idempotency
 
@@ -817,11 +817,11 @@ Admin disable:
 
 ## 26. Pricing
 
-Retail price всегда задаётся админом вручную.
+partner price всегда задаётся админом вручную.
 
 Provider procurement price может синхронизироваться автоматически, если provider это технически позволяет.
 
-Retail никогда не меняется автоматически из-за procurement changes.
+Partner никогда не меняется автоматически из-за procurement changes.
 
 Video pricing:
 
@@ -834,7 +834,7 @@ Video pricing:
 Reference-video billing:
 
 - billable seconds = output duration + суммарная длительность reference videos
-- customer billing следует той же логике с нашим retail rate
+- customer billing следует той же логике с нашим partner rate
 
 Images:
 
@@ -851,7 +851,7 @@ LLM:
 Price snapshot:
 
 - фиксируется на старте generation
-- изменение retail price не пересчитывает already-running tasks
+- изменение partner price не пересчитывает already-running tasks
 
 Model disable:
 
@@ -876,13 +876,13 @@ Margin alert:
 
 Для каждого partner account есть:
 
-### Retail balance
+### partner RUB balance
 
 То, что видит партнёр.
 
 Пример:
 
-партнёр пополнил 10 000 ₽ → retail balance = 10 000 ₽.
+партнёр пополнил 10 000 ₽ → partner RUB balance = 10 000 ₽.
 
 ### Cost coverage
 
@@ -890,17 +890,17 @@ Margin alert:
 
 То же пополнение:
 
-- retail balance +10 000 ₽
+- partner RUB balance +10 000 ₽
 - cost coverage +10 000 ₽
 
 После generation:
 
-- retail charge = 1 000 ₽
+- partner charge = 1 000 ₽
 - provider cost = 560 ₽
 
 Получаем:
 
-- retail balance = 9 000 ₽
+- partner RUB balance = 9 000 ₽
 - cost coverage = 9 440 ₽
 - earned gross margin = 440 ₽
 
@@ -910,13 +910,13 @@ Margin alert:
 
 Admin может:
 
-- увеличить retail balance
-- уменьшить retail balance
+- увеличить partner RUB balance
+- уменьшить partner RUB balance
 - увести balance ниже нуля
 
-Manual retail bonus/compensation по умолчанию:
+Manual partner bonus/compensation по умолчанию:
 
-- меняет только retail balance
+- меняет только partner RUB balance
 - не увеличивает cost coverage
 - generation не должна тратить деньги владельца из-за виртуального бонуса
 
@@ -936,7 +936,7 @@ Manual retail bonus/compensation по умолчанию:
 
 Для каждого partner/provider upstream key quota синхронизируется автоматически.
 
-Quota не равна retail balance 1:1.
+Quota не равна partner RUB balance 1:1.
 
 Она должна быть ограничителем допустимого реального provider-spend на основе:
 
@@ -1031,7 +1031,7 @@ Flow:
 7. Admin возвращается в Telegram.
 8. Backend проверяет реальный ArgoLink balance.
 9. Admin нажимает «Зачислить баланс».
-10. Partner retail balance и cost coverage увеличиваются.
+10. partner RUB balance и cost coverage увеличиваются.
 11. Payment status → credited.
 
 Повторное confirmation не может double-credit.
@@ -1165,8 +1165,8 @@ Default low balance threshold:
 
 Admin может вручную:
 
-- увеличить retail balance
-- уменьшить retail balance
+- увеличить partner RUB balance
+- уменьшить partner RUB balance
 - увести partner balance в минус
 
 Внутри:
@@ -1341,7 +1341,7 @@ Public price:
 - только русский
 - публичный, без авторизации
 - показывает только production-enabled models
-- показывает retail RUB only
+- показывает partner-facing RUB only
 - procurement/margin скрыты
 
 Public changelog:
@@ -1384,7 +1384,7 @@ Partner changelog notification:
 - disabled for partners by default
 - доступна admin
 - не может быть production-enabled до:
-  - retail price
+  - partner price
   - docs
   - integration completion
   - smoke test
@@ -1762,7 +1762,7 @@ Partner changelog notification:
 - партнёр при этом работает только с RUB:
   - задаёт сумму пополнения в RUB
   - видит balance в RUB
-  - видит retail prices/charges в RUB
+  - видит partner prices/charges в RUB
 - crypto asset используется как транспорт платежа; партнёру не нужно вести отдельный USDT-баланс внутри сервиса
 - safe-to-withdraw показывается в USD; фактический доступный USDT может использоваться как долларовый эквивалент для этого показателя
 
@@ -1780,7 +1780,7 @@ Partner changelog notification:
   - internal cost/margin views
 - RUB остаётся основной валютой partner-facing billing:
   - balance
-  - retail prices
+  - partner prices
   - charges
   - top-up amount
 - исторические RUB snapshots по top-up/charge сохраняются для сверки и аудита
@@ -1810,7 +1810,7 @@ Partner changelog notification:
 Подтверждено:
 
 - для каждой успешно завершённой генерации фиксируем один immutable курс RUB/USDT на момент финализации списания
-- этот курс используется для перевода partner retail charge из RUB в USDT для внутреннего расчёта маржи
+- этот курс используется для перевода partner partner charge из RUB в USDT для внутреннего расчёта маржи
 - формулы:
   - revenue_usdt = charged_rub / fx_snapshot_rub_per_usdt
   - margin_usdt = revenue_usdt - actual_provider_cost_usdt
@@ -1894,22 +1894,22 @@ Partner changelog notification:
 
 Подтверждено:
 
-- после ручного зачисления partner top-up в safe-to-withdraw не резервируется весь partner retail balance целиком
+- после ручного зачисления partner top-up в safe-to-withdraw не резервируется весь partner RUB balance целиком
 - резервируется только консервативно необходимое покрытие будущей upstream себестоимости
-- расчёт должен ориентироваться на худшее текущее соотношение provider cost / retail price среди доступных партнёру production-конфигураций, а не на среднюю маржу
+- расчёт должен ориентироваться на худшее текущее соотношение provider cost / partner price среди доступных партнёру production-конфигураций, а не на среднюю маржу
 - отдельно продолжают учитываться:
   - active generation reserves
   - paid-but-not-yet-credited obligations
   - required provider working float
   - фактический доступный USDT wallet cap
-- цель: не финансировать обычные генерации из owner capital, но и не замораживать уже экономически заработанную маржу до полного расходования partner retail balance
+- цель: не финансировать обычные генерации из owner capital, но и не замораживать уже экономически заработанную маржу до полного расходования partner RUB balance
 
 
 ## 86. No dynamic repricing of future cost coverage
 
 Подтверждено:
 
-- уже сформированное покрытие будущей себестоимости для зачисленного partner balance не пересчитывается динамически при последующих изменениях procurement price или retail price
+- уже сформированное покрытие будущей себестоимости для зачисленного partner balance не пересчитывается динамически при последующих изменениях procurement price или partner price
 - изменение текущих цен влияет на новые операции и новые snapshots, но не должно автоматически переписывать ранее зафиксированное покрытие по уже зачисленному балансу
 
 
@@ -1919,7 +1919,7 @@ Partner changelog notification:
 
 - покрытие будущей upstream-себестоимости фиксируется в момент, когда администратор вручную зачисляет оплаченное пополнение партнёру
 - для этого snapshot используются действующие на тот момент:
-  - retail prices
+  - partner prices
   - procurement/provider costs
   - RUB/USDT FX rate согласно текущей цепочке источников курса
 - полученное cost coverage по уже зачисленному top-up далее не переоценивается автоматически из-за изменения цен или курса
@@ -1929,8 +1929,8 @@ Partner changelog notification:
 
 Подтверждено:
 
-- если из-за изменения upstream-себестоимости cost coverage партнёра исчерпан раньше его retail RUB balance, новые генерации блокируются
-- наличие положительного retail balance само по себе недостаточно для запуска генерации
+- если из-за изменения upstream-себестоимости cost coverage партнёра исчерпан раньше его partner RUB balance, новые генерации блокируются
+- наличие положительного partner RUB balance само по себе недостаточно для запуска генерации
 - разблокировка возможна после:
   - нового пополнения, которое создаёт новое cost coverage
   - либо отдельной admin-операции «Пополнить покрытие себестоимости»
@@ -1942,7 +1942,7 @@ Partner changelog notification:
 Уточнение, supersedes жёсткий блок из раздела 88:
 
 - зафиксированный при top-up historical cost coverage остаётся immutable учётным snapshot и не переписывается при изменении цен
-- его исчерпание само по себе НЕ блокирует партнёра, если у партнёра ещё есть retail RUB balance
+- его исчерпание само по себе НЕ блокирует партнёра, если у партнёра ещё есть partner RUB balance
 - для safe-to-withdraw отдельно рассчитывается current required reserve по актуальной upstream-себестоимости оставшихся обязательств
 - рост provider cost уменьшает safe-to-withdraw и доступный owner profit, но не должен сам по себе неожиданно остановить API партнёра
 - новую генерацию блокируем только если:
@@ -2072,11 +2072,11 @@ Partner changelog notification:
 Подтверждено:
 
 - если invoice ранее был оплачен и RUB-пополнение уже зачислено партнёру, а затем администратор подтверждает фактический refund, система автоматически создаёт обратную корректировку
-- с partner retail balance списывается ровно исходная зачисленная RUB-сумма
+- с partner RUB balance списывается ровно исходная зачисленная RUB-сумма
 - связанный historical cost coverage разворачивается симметричной корректировкой по исходным snapshot-значениям
 - текущий FX rate не используется; берутся исходные значения операции
 - исходное пополнение и refund остаются отдельными append-only записями
-- если после корректировки retail balance становится отрицательным, отрицательное значение сохраняется, а новые генерации блокируются до восстановления баланса
+- если после корректировки partner RUB balance становится отрицательным, отрицательное значение сохраняется, а новые генерации блокируются до восстановления баланса
 
 
 ## 103. Partial refund creates proportional reversal
@@ -2084,7 +2084,7 @@ Partner changelog notification:
 Подтверждено:
 
 - если фактический refund по ранее зачисленному invoice частичный, система создаёт только пропорциональную обратную корректировку
-- partner retail balance уменьшается пропорционально фактически возвращённой части исходной суммы
+- partner RUB balance уменьшается пропорционально фактически возвращённой части исходной суммы
 - historical cost coverage разворачивается в той же пропорции по исходным snapshot-значениям
 - оставшаяся незарефанденная часть invoice продолжает считаться действительным пополнением
 - исходная операция и все partial refund adjustments сохраняются как отдельные append-only записи
@@ -2096,7 +2096,7 @@ Partner changelog notification:
 
 - детали refund и внутренняя причина возврата остаются только во внутренней админской истории
 - партнёру не показываем термин `refund`, детали Crypto Bot и внутренний комментарий
-- если refund меняет partner retail balance, в partner history показывается нейтральная запись `Корректировка баланса` с суммой и датой
+- если refund меняет partner RUB balance, в partner history показывается нейтральная запись `Корректировка баланса` с суммой и датой
 - та же нейтральная корректировка должна попадать в partner XLSX, чтобы reconciliation баланса сходился
 
 
@@ -2104,7 +2104,7 @@ Partner changelog notification:
 
 Подтверждено:
 
-- если refund/обратная корректировка уводит partner retail balance в минус, система не отправляет партнёру отдельное автоматическое Telegram-уведомление об этом
+- если refund/обратная корректировка уводит partner RUB balance в минус, система не отправляет партнёру отдельное автоматическое Telegram-уведомление об этом
 - администратор сообщает партнёру вручную
 - при этом сам отрицательный balance и стандартная блокировка новых генераций сохраняются в системе
 - refund-причина и внутренняя платёжная механика партнёру по-прежнему не раскрываются
@@ -2124,25 +2124,25 @@ Partner changelog notification:
 
 Уточнение пользователя:
 
-- включение новой production-модели не меняет уже действующие partner retail prices по существующим моделям
+- включение новой production-модели не меняет уже действующие partner prices по существующим моделям
 - уже зафиксированные partner balances и их исторические pricing/cost snapshots не переоцениваются из-за появления новой модели
-- новая модель получает собственную retail price при публикации, но не используется как основание для пересчёта старых цен партнёра
+- новая модель получает собственную partner price при публикации, но не используется как основание для пересчёта старых цен партнёра
 
 
-## 108. Retail price changes apply only to new generations
+## 108. partner price changes apply only to new generations
 
 Подтверждено:
 
-- если администратор меняет retail-цену уже существующей модели, новая цена применяется только к новым генерациям, созданным после момента изменения
+- если администратор меняет partner-цену уже существующей модели, новая цена применяется только к новым генерациям, созданным после момента изменения
 - уже созданные, queued, processing и иные in-flight генерации продолжают использовать price snapshot, зафиксированный при их создании
 - завершённые исторические операции не пересчитываются задним числом
 
 
-## 109. Retail price change publication without Telegram broadcast
+## 109. partner price change publication without Telegram broadcast
 
 Подтверждено:
 
-- при изменении retail-цены существующей модели отдельное автоматическое Telegram-уведомление партнёрам не требуется
+- при изменении partner-цены существующей модели отдельное автоматическое Telegram-уведомление партнёрам не требуется
 - достаточно обновить:
   - authenticated `/pricing`
   - docs/public price
@@ -2150,11 +2150,11 @@ Partner changelog notification:
 - новые генерации используют новую цену с момента её активации; исторические и in-flight generation price snapshots не меняются
 
 
-## 110. Atomic retail price publication
+## 110. Atomic partner price publication
 
 Подтверждено:
 
-- изменение retail-цены применяется атомарно
+- изменение partner-цены применяется атомарно
 - новая цена начинает использоваться для новых generation requests только после одновременной публикации согласованного состояния:
   - API pricing catalog / `/pricing`
   - public price/docs
@@ -2162,11 +2162,11 @@ Partner changelog notification:
 - до завершения публикации продолжает действовать предыдущая цена
 - in-flight и historical generation price snapshots не меняются
 
-## 111. Partner-specific retail price overrides
+## 111. Partner-specific partner price overrides
 
-Новое подтверждённое требование, supersedes прежнюю трактовку полностью глобальных retail-цен:
+Новое подтверждённое требование, supersedes прежнюю трактовку полностью глобальных partner-цен:
 
-- администратор должен иметь возможность задавать отдельные retail-цены для конкретных партнёров по отдельным моделям
+- администратор должен иметь возможность задавать отдельные partner-цены для конкретных партнёров по отдельным моделям
 - при наличии partner-specific override для партнёра используется его цена вместо глобальной default price
 - если override отсутствует, действует глобальная цена модели
 - model availability при этом остаётся глобальной: индивидуальная цена не означает индивидуальное включение/выключение модели
@@ -2174,22 +2174,33 @@ Partner changelog notification:
 - partner-facing `/pricing` должен возвращать фактические цены именно этого партнёра с учётом его overrides
 
 
-## 112. Revert partner-specific retail price overrides
+## 112. Revert partner-specific partner price overrides
 
 Уточнение пользователя, supersedes раздел 111:
 
-- индивидуальные retail-цены для отдельных партнёров не вводим
-- retail pricing остаётся глобальным для всех партнёров
+- индивидуальные partner-цены для отдельных партнёров не вводим
+- partner pricing остаётся глобальным для всех партнёров
 - для video сохраняется общая детализация pricing catalog по `model + mode + resolution` в RUB/sec
 - partner-facing `/pricing` возвращает те же глобальные цены, действующие для всех партнёров
-- model availability и retail prices остаются едиными для всей партнёрской базы
+- model availability и partner prices остаются едиными для всей партнёрской базы
 
 
-## 113. Global retail price changes take effect immediately
+## 113. Global partner price changes take effect immediately
 
 Подтверждено:
 
-- после подтверждения администратором новая глобальная retail-цена вступает в силу сразу
+- после подтверждения администратором новая глобальная partner-цена вступает в силу сразу
 - отложенного запуска по дате/времени не требуется
 - активация остаётся атомарной: новая цена применяется к новым генерациям только вместе с обновлёнными `/pricing`, public price/docs и changelog
 - уже созданные и исторические генерации продолжают использовать свои price snapshots
+
+
+## 114. Canonical pricing terminology
+
+Подтверждено:
+
+- термин `retail price` больше не используем
+- канонический термин: `partner price` / «цена для партнёра»
+- это цена, по которой Нейроныч продаёт генерацию партнёру и списывает средства с его RUB-баланса
+- цена, по которой партнёр перепродаёт генерацию своему конечному пользователю, находится вне нашего биллинга и не участвует в нашей финансовой модели
+- связанные термины в спецификации нормализованы: `partner RUB balance`, `partner charge`, `partner charge reserve`, `partner pricing`
