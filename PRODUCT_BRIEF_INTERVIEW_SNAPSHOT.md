@@ -2231,3 +2231,12 @@ Partner changelog notification:
   - новую цену
   - затронутую model/mode/resolution конфигурацию
 - история append-only и используется для финансовой сверки и разбора спорных случаев
+
+
+## 117. Price history lives inside model/configuration card
+
+Подтверждено:
+
+- отдельный глобальный экран истории partner price не нужен
+- историю изменений показываем внутри карточки конкретной model/mode/resolution конфигурации
+- в карточке видны бессрочные append-only записи изменений цены: кто, когда, старая цена, новая цена
