@@ -2305,3 +2305,17 @@ Partner changelog notification:
 - если override для модели отсутствует, используется глобальный threshold
 - threshold влияет только на alerting/monitoring и не меняет partner price автоматически
 - генерации продолжаются при положительной экономике даже ниже alert-threshold; при отрицательной экономике действует отдельное правило блокировки новых запросов
+
+
+## 124. Per-configuration low-margin alert thresholds
+
+Подтверждено:
+
+- low-margin threshold можно задавать не только глобально и на уровне модели, но и отдельно для конкретной `mode + resolution` конфигурации внутри модели
+- приоритет применения threshold:
+  1. configuration-level override (`model + mode + resolution`)
+  2. model-level override
+  3. global default
+- threshold влияет только на alerting/monitoring
+- partner price автоматически не меняется
+- при положительной экономике генерации продолжаются даже ниже threshold; при отрицательной экономике действует отдельная блокировка новых запросов
