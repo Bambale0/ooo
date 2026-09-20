@@ -4,7 +4,7 @@
 
 Первый upstream provider — ArgoLink, но ядро проектируется provider-agnostic: provider-specific ключи, task IDs, routing, закупочная стоимость и raw errors остаются внутренними.
 
-> **Статус репозитория:** сейчас здесь зафиксирована продуктовая спецификация, implementation epics, launch checklist и инструкции для AI-агентов. Runtime-код приложения должен появляться поэтапно начиная с EPIC 01. Не считать описанные ниже функции уже реализованными только потому, что они описаны в документации.
+> **Статус репозитория:** здесь зафиксирована продуктовая спецификация, implementation epics, launch checklist и начальный runtime-код EPIC 01. Реализованы базовый FastAPI-каркас, настройки, async SQLAlchemy/Alembic, Redis abstraction, health/readiness, Docker Compose, Nginx и первый партнёрский API-срез. Остальные функции из документации не считать готовыми, пока они не покрыты кодом и тестами.
 
 ## Содержание
 
@@ -532,6 +532,7 @@ DR FAIL блокирует следующий production release до испра
 |---|---|
 | `PRODUCT_BRIEF_INTERVIEW_SNAPSHOT.md` | Главный источник подтверждённых продуктовых решений |
 | `IMPLEMENTATION_EPICS.md` | 25 implementation epics, зависимости и rollout waves |
+| `IMPLEMENTATION_STATUS.md` | Текущий dev-status реализации по эпикам и launch checklist |
 | `PRODUCTION_LAUNCH_CHECKLIST.md` | PASS/FAIL/WARN production launch gate |
 | `AGENTS.md` | Обязательные правила для AI-агентов |
 | `.agents/` | Библиотека skills, обязательная для нетривиальных задач |
@@ -567,28 +568,45 @@ git submodule update --init --recursive
 
 ## Как начать разработку
 
-Сейчас runtime application skeleton ещё не является частью `main`.
+Runtime skeleton уже добавлен.
 
-Первая реализационная задача — **EPIC 01: базовый каркас приложения и архитектурные границы**.
+Проверенный локальный Python-запуск:
 
-Она должна добавить как минимум:
+```bash
+python -m pip install -e ".[dev]"
+python -m pytest -q
+python -m ruff check .
+```
 
-- FastAPI application factory;
-- aiogram application;
-- Pydantic Settings;
-- async SQLAlchemy;
-- Alembic;
-- Redis abstraction;
-- structured JSON logging;
-- health/readiness;
-- Dockerfile;
-- Docker Compose;
-- Nginx;
-- начальный test suite.
+Запуск API без Docker:
 
-До появления EPIC 01 не следует придумывать несуществующие команды вроде `docker compose up`, `pytest` или `alembic upgrade head` как будто они уже настроены.
+```bash
+python -m uvicorn app.main:app --reload
+```
 
-После реализации EPIC 01 этот раздел README должен быть обновлён реальными, проверенными командами запуска.
+Production-like test contour через Docker Compose:
+
+```bash
+docker compose up --build
+```
+
+После старта API доступен на `http://localhost:8000`, Nginx proxy — на `http://localhost:8080`, OpenAPI docs — на `/docs`.
+
+Миграции:
+
+```bash
+alembic upgrade head
+```
+
+Минимально реализованный продуктовый срез:
+
+- partner application;
+- admin approval;
+- API key выпуск;
+- model catalog и partner pricing;
+- manual balance adjustment;
+- idempotent generation creation с price snapshot и reserve ledger entry;
+- health/readiness checks.
 
 ## Git workflow
 

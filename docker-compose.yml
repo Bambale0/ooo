@@ -1,0 +1,65 @@
+services:
+  app:
+    build: .
+    environment:
+      APP_ENV: test
+      APP_NAME: neironych
+      API_PREFIX: /api/v1
+      DATABASE_URL: postgresql+asyncpg://neironych:neironych@postgres:5432/neironych
+      REDIS_URL: redis://redis:6379/0
+      ADMIN_API_TOKEN: change-me
+      ARGOLINK_BASE_URL: https://argolink.io
+      ARGOLINK_API_KEY: ""
+      WORKER_POLL_INTERVAL_SECONDS: 5
+      WORKER_BATCH_SIZE: 10
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - "8000:8000"
+
+  worker:
+    build: .
+    command: ["python", "-m", "app.workers.generation_worker"]
+    environment:
+      APP_ENV: test
+      APP_NAME: neironych
+      API_PREFIX: /api/v1
+      DATABASE_URL: postgresql+asyncpg://neironych:neironych@postgres:5432/neironych
+      REDIS_URL: redis://redis:6379/0
+      ADMIN_API_TOKEN: change-me
+      ARGOLINK_BASE_URL: https://argolink.io
+      ARGOLINK_API_KEY: ""
+      WORKER_POLL_INTERVAL_SECONDS: 5
+      WORKER_BATCH_SIZE: 10
+    depends_on:
+      - postgres
+      - redis
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: neironych
+      POSTGRES_PASSWORD: neironych
+      POSTGRES_DB: neironych
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  nginx:
+    image: nginx:1.27-alpine
+    depends_on:
+      - app
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+
+volumes:
+  postgres_data:
