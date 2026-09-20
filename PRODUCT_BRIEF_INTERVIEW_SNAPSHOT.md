@@ -2172,3 +2172,14 @@ Partner changelog notification:
 - model availability при этом остаётся глобальной: индивидуальная цена не означает индивидуальное включение/выключение модели
 - partner-specific price changes применяются только к новым генерациям после активации и не меняют historical/in-flight price snapshots
 - partner-facing `/pricing` должен возвращать фактические цены именно этого партнёра с учётом его overrides
+
+
+## 112. Revert partner-specific retail price overrides
+
+Уточнение пользователя, supersedes раздел 111:
+
+- индивидуальные retail-цены для отдельных партнёров не вводим
+- retail pricing остаётся глобальным для всех партнёров
+- для video сохраняется общая детализация pricing catalog по `model + mode + resolution` в RUB/sec
+- partner-facing `/pricing` возвращает те же глобальные цены, действующие для всех партнёров
+- model availability и retail prices остаются едиными для всей партнёрской базы
