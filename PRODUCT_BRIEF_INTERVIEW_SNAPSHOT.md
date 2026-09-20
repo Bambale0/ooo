@@ -2183,3 +2183,13 @@ Partner changelog notification:
 - для video сохраняется общая детализация pricing catalog по `model + mode + resolution` в RUB/sec
 - partner-facing `/pricing` возвращает те же глобальные цены, действующие для всех партнёров
 - model availability и retail prices остаются едиными для всей партнёрской базы
+
+
+## 113. Global retail price changes take effect immediately
+
+Подтверждено:
+
+- после подтверждения администратором новая глобальная retail-цена вступает в силу сразу
+- отложенного запуска по дате/времени не требуется
+- активация остаётся атомарной: новая цена применяется к новым генерациям только вместе с обновлёнными `/pricing`, public price/docs и changelog
+- уже созданные и исторические генерации продолжают использовать свои price snapshots
