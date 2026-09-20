@@ -1,0 +1,4 @@
+[submodule ".agents"]
+	path = .agents
+	url = git@github.com:Bambale0/.agents.git
+	branch = main
