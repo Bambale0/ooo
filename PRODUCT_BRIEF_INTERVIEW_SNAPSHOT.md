@@ -2334,3 +2334,12 @@ Partner changelog notification:
   - предыдущее значение
   - новое значение
 - история append-only
+
+
+## 126. Lowering threshold below current margin has no side effects
+
+Подтверждено:
+
+- если администратор снижает low-margin threshold ниже текущей фактической маржи, настройка просто сохраняется
+- дополнительных alert, блокировок, пересчётов или иных действий не требуется
+- новая граница применяется только к последующей оценке low-margin incidents
