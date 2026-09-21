@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     worker_batch_size: int = 20
     worker_submit_concurrency: int = Field(default=10, ge=1)
     worker_poll_concurrency: int = Field(default=10, ge=1)
+    worker_initial_poll_delay_seconds: float = Field(default=5.0, gt=0)
+    worker_poll_backoff_base_seconds: float = Field(default=5.0, gt=0)
+    worker_poll_backoff_max_seconds: float = Field(default=30.0, gt=0)
     worker_max_retries: int = 3
     worker_retry_base_seconds: float = 5.0
     worker_retry_max_seconds: float = 300.0
