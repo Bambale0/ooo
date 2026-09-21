@@ -51,7 +51,10 @@ async def run_webhook_worker_forever() -> None:
             await asyncio.sleep(0)
         else:
             with suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(stop_event.wait(), timeout=min(5.0, get_settings().webhook_retry_interval_seconds))
+                await asyncio.wait_for(
+                    stop_event.wait(),
+                    timeout=min(5.0, get_settings().webhook_retry_interval_seconds),
+                )
     logger.info("webhook_worker_stopped")
 
 
