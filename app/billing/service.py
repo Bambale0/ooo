@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
@@ -6,7 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.accounts.models import Partner
 from app.billing.models import LedgerEntry
-from app.generations.models import Generation
+
+if TYPE_CHECKING:
+    from app.generations.models import Generation
 
 
 async def lock_partner_for_update(db: AsyncSession, partner_id: str) -> Partner:
