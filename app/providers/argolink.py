@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 import httpx
@@ -11,6 +13,7 @@ from app.providers.base import (
     ProviderSubmitResult,
 )
 from app.providers.http_client import get_provider_http_client
+from app.providers.rate_limit import get_provider_rate_limiter
 
 
 class ArgoLinkAdapter:
@@ -71,6 +74,7 @@ class ArgoLinkAdapter:
             request_body["aspect_ratio"] = payload.aspect_ratio
         if payload.reference_images:
             request_body["reference_images"] = [{"url": url} for url in payload.reference_images]
+        await get_provider_rate_limiter(self.provider_name, "submit").acquire()
         async with self._http_client() as client:
             try:
                 response = await client.post("/v1/videos/generations", json=request_body, headers=self._auth_headers())
@@ -97,6 +101,7 @@ class ArgoLinkAdapter:
                 public_code="provider_temporarily_unavailable",
                 raw_error="ARGOLINK_API_KEY is not configured",
             )
+        await get_provider_rate_limiter(self.provider_name, "poll").acquire()
         async with self._http_client() as client:
             try:
                 response = await client.get(f"/v1/videos/{provider_task_id}", headers=self._auth_headers())
@@ -204,11 +209,39 @@ class ArgoLinkAdapter:
     def _http_error_to_provider_error(response: httpx.Response) -> ProviderAdapterError:
         if response.status_code in {401, 403}:
             return ProviderAdapterError("provider_temporarily_unavailable", "argolink_auth_failed")
+        retry_after_seconds = ArgoLinkAdapter._parse_retry_after_seconds(response.headers.get("Retry-After"))
         if response.status_code == 429:
-            return ProviderAdapterError("provider_temporarily_unavailable", "argolink_rate_limited")
+            return ProviderAdapterError(
+                "provider_temporarily_unavailable",
+                "argolink_rate_limited",
+                retry_after_seconds=retry_after_seconds,
+            )
         if response.status_code >= 500:
-            return ProviderAdapterError("provider_temporarily_unavailable", f"argolink_{response.status_code}")
+            return ProviderAdapterError(
+                "provider_temporarily_unavailable",
+                f"argolink_{response.status_code}",
+                retry_after_seconds=retry_after_seconds,
+            )
         return ProviderAdapterError("provider_rejected_request", f"argolink_{response.status_code}")
+
+    @staticmethod
+    def _parse_retry_after_seconds(value: str | None) -> float | None:
+        if not value:
+            return None
+        stripped = value.strip()
+        try:
+            return max(0.0, min(float(stripped), 86400.0))
+        except ValueError:
+            pass
+
+        try:
+            retry_at = parsedate_to_datetime(stripped)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=UTC)
+        seconds = (retry_at - datetime.now(UTC)).total_seconds()
+        return max(0.0, min(seconds, 86400.0))
 
     @staticmethod
     def _normalize_video_status(data: Any) -> str:
