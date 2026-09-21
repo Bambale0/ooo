@@ -54,5 +54,7 @@ class ProviderAttempt(Base):
     raw_error: Mapped[str | None] = mapped_column(Text)
     retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     next_attempt_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), index=True)
+    next_poll_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), index=True)
+    poll_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[object] = utc_created_at()
