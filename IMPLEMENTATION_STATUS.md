@@ -104,6 +104,8 @@ Implemented:
 - video submit now forwards duration, resolution, aspect ratio and reference image URLs;
 - ArgoLink video polling maps to `GET /v1/videos/{request_id}` and content URL uses `GET /v1/videos/{request_id}/content`;
 - normalized provider HTTP errors;
+- 429/408/5xx retry scheduling respects upstream `Retry-After` when present and falls back to capped exponential backoff;
+- ambiguous submit read/write timeouts are not automatically replayed, preventing duplicate upstream generation jobs when submit outcome is unknown;
 - provider credentials have format/connectivity checks before activation; protected live key validation remains open because `/v1/models` is public;
 - active credential replacement deactivates previous active provider credential;
 - provider capabilities by provider/model/mode/resolution;
@@ -128,7 +130,7 @@ Still open:
 
 - encrypted provider secret storage or external secret manager;
 - protected ArgoLink key validation flow;
-- Retry-After-aware delay extraction if provider surfaces the header;
+- provider quota discovery / remaining-quota reads when ArgoLink exposes them;
 - circuit breaker incident model and recovery staging;
 - queue depth/age metrics and real multi-worker/load validation;
 - real Cloudflare R2/MinIO bucket provisioning and 24h lifecycle rule;
