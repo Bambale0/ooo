@@ -10,6 +10,7 @@ from app.providers.base import (
     ProviderResultStream,
     ProviderSubmitResult,
 )
+from app.providers.http_client import get_provider_http_client
 
 
 class ArgoLinkAdapter:
@@ -27,7 +28,7 @@ class ArgoLinkAdapter:
         self.base_url = (base_url or settings.argolink_base_url).rstrip("/")
         self.api_key = api_key if api_key is not None else settings.argolink_api_key
         self.timeout_seconds = timeout_seconds or settings.argolink_timeout_seconds
-        self._client = client
+        self._client = client or get_provider_http_client(self.provider_name)
 
     async def health_check(self) -> bool:
         async with self._http_client() as client:
@@ -126,13 +127,7 @@ class ArgoLinkAdapter:
                 raw_error="ARGOLINK_API_KEY is not configured",
             )
 
-        owns_client = self._client is None
-        client = self._client or httpx.AsyncClient(
-            base_url=self.base_url,
-            headers={"Content-Type": "application/json"},
-            timeout=self.timeout_seconds,
-            trust_env=False,
-        )
+        client = self._client
         headers = self._auth_headers()
         if range_header:
             headers["Range"] = range_header
@@ -145,20 +140,14 @@ class ArgoLinkAdapter:
         except httpx.HTTPStatusError as exc:
             if response is not None:
                 await response.aclose()
-            if owns_client:
-                await client.aclose()
             raise self._http_error_to_provider_error(exc.response) from exc
         except httpx.TimeoutException as exc:
             if response is not None:
                 await response.aclose()
-            if owns_client:
-                await client.aclose()
             raise ProviderAdapterError("provider_temporarily_unavailable", "argolink_timeout") from exc
         except httpx.HTTPError as exc:
             if response is not None:
                 await response.aclose()
-            if owns_client:
-                await client.aclose()
             raise ProviderAdapterError("provider_temporarily_unavailable", type(exc).__name__) from exc
 
         async def body():
@@ -167,8 +156,6 @@ class ArgoLinkAdapter:
                     yield chunk
             finally:
                 await response.aclose()
-                if owns_client:
-                    await client.aclose()
 
         content_length: int | None = None
         raw_content_length = response.headers.get("content-length")
@@ -197,19 +184,8 @@ class ArgoLinkAdapter:
             return {}
         return {"Authorization": f"Bearer {self.api_key}"}
 
-    def _http_client(self, api_key: str | None = None) -> httpx.AsyncClient:
-        if self._client is not None:
-            return _BorrowedAsyncClient(self._client)
-        token = api_key if api_key is not None else self.api_key
-        headers = {"Content-Type": "application/json"}
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
-        return httpx.AsyncClient(
-            base_url=self.base_url,
-            headers=headers,
-            timeout=self.timeout_seconds,
-            trust_env=False,
-        )
+    def _http_client(self) -> "_BorrowedAsyncClient":
+        return _BorrowedAsyncClient(self._client)
 
     @staticmethod
     def _extract_task_id(data: Any) -> str | None:
