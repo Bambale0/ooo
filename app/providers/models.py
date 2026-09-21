@@ -13,6 +13,15 @@ class ProviderCredential(Base):
     label: Mapped[str] = mapped_column(String(120), nullable=False)
     key_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     key_prefix: Mapped[str] = mapped_column(String(12), nullable=False)
+    encrypted_api_key: Mapped[str | None] = mapped_column(Text)
+    partner_application_id: Mapped[str | None] = mapped_column(
+        ForeignKey("partner_applications.id"),
+        index=True,
+    )
+    partner_id: Mapped[str | None] = mapped_column(
+        ForeignKey("partners.id"),
+        index=True,
+    )
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
     created_at: Mapped[object] = utc_created_at()
 

@@ -4,13 +4,32 @@ from app.providers.argolink import ArgoLinkAdapter
 from app.providers.base import ProviderGenerationRequest
 
 
-async def test_argolink_adapter_uses_public_models_for_key_probe_and_video_generation_endpoint():
+async def test_argolink_adapter_validates_key_against_authenticated_video_status_endpoint():
+    seen_authorization: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/videos/00000000-0000-0000-0000-000000000000":
+            seen_authorization.append(request.headers.get("Authorization"))
+            if request.headers.get("Authorization") == "Bearer valid-key":
+                return httpx.Response(404, json={"error": "not found"})
+            return httpx.Response(401, json={"error": "unauthorized"})
+        return httpx.Response(404, json={"error": "not found"})
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(base_url="https://argolink.io", transport=transport) as client:
+        adapter = ArgoLinkAdapter(base_url="https://argolink.io", api_key=None, client=client)
+        assert await adapter.validate_key("valid-key") is True
+        assert await adapter.validate_key("bad-key") is False
+
+    assert seen_authorization == ["Bearer valid-key", "Bearer bad-key"]
+
+
+async def test_argolink_adapter_submits_polls_and_fetches_with_configured_key():
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        if request.method == "GET" and request.url.path == "/v1/models":
-            return httpx.Response(200, json={"object": "list", "data": []})
+        assert request.headers.get("Authorization") == "Bearer test-key"
         if request.method == "POST" and request.url.path == "/v1/videos/generations":
             body = request.read().decode("utf-8")
             assert "seedance-2.5" in body
@@ -18,7 +37,7 @@ async def test_argolink_adapter_uses_public_models_for_key_probe_and_video_gener
             assert "\"duration\":5" in body
             assert "\"aspect_ratio\":\"9:16\"" in body
             assert "https://cdn.example.test/reference.jpg" in body
-            return httpx.Response(200, json={"request_id": "video_task_123"})
+            return httpx.Response(202, json={"request_id": "video_task_123"})
         if request.method == "GET" and request.url.path == "/v1/videos/video_task_123":
             return httpx.Response(200, json={"status": "done"})
         if request.method == "GET" and request.url.path == "/v1/videos/video_task_123/content":
@@ -29,7 +48,7 @@ async def test_argolink_adapter_uses_public_models_for_key_probe_and_video_gener
     async with httpx.AsyncClient(
         base_url="https://argolink.io",
         transport=transport,
-        headers={"Authorization": "Bearer test-key", "Content-Type": "application/json"},
+        headers={"Content-Type": "application/json"},
     ) as client:
         adapter = ArgoLinkAdapter(
             base_url="https://argolink.io",
@@ -37,7 +56,6 @@ async def test_argolink_adapter_uses_public_models_for_key_probe_and_video_gener
             client=client,
         )
 
-        assert await adapter.validate_key("test-key") is True
         result = await adapter.submit_generation(
             ProviderGenerationRequest(
                 generation_id="generation-1",
@@ -59,7 +77,6 @@ async def test_argolink_adapter_uses_public_models_for_key_probe_and_video_gener
     assert content == b"video-bytes"
     assert content_type == "video/mp4"
     assert [request.url.path for request in requests] == [
-        "/v1/models",
         "/v1/videos/generations",
         "/v1/videos/video_task_123",
         "/v1/videos/video_task_123/content",

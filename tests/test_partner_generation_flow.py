@@ -18,6 +18,9 @@ from app.workers.generation_worker import process_generation_work_once
 class FakeArgoLinkAdapter:
     provider_name = "argolink"
 
+    def __init__(self, api_key: str | None = None) -> None:
+        self.api_key = api_key
+
     async def health_check(self) -> bool:
         return True
 
@@ -25,6 +28,7 @@ class FakeArgoLinkAdapter:
         return not api_key.startswith("invalid")
 
     async def submit_generation(self, payload):
+        assert self.api_key == "argolink-secret"
         assert payload.duration_seconds == 5
         assert payload.aspect_ratio == "9:16"
         assert payload.reference_images == ("https://cdn.example.test/reference.jpg",)
@@ -44,9 +48,9 @@ class FakeArgoLinkAdapter:
         raise error
 
 
-def fake_provider_adapter(provider: str) -> FakeArgoLinkAdapter:
+def fake_provider_adapter(provider: str, *, api_key: str | None = None) -> FakeArgoLinkAdapter:
     assert provider == "argolink"
-    return FakeArgoLinkAdapter()
+    return FakeArgoLinkAdapter(api_key=api_key)
 
 
 class FailingIngestAdapter(FakeArgoLinkAdapter):
@@ -66,8 +70,7 @@ async def test_partner_can_create_idempotent_generation_after_manual_credit(
     monkeypatch,
 ):
     monkeypatch.setattr("app.providers.router.get_provider_adapter", fake_provider_adapter)
-    monkeypatch.setattr("app.generations.service.get_provider_adapter", fake_provider_adapter)
-    monkeypatch.setattr("app.media.service.get_provider_adapter", fake_provider_adapter)
+    monkeypatch.setattr("app.providers.service.get_provider_adapter", fake_provider_adapter)
 
     application_response = await client.post(
         "/api/v1/accounts/applications",
@@ -101,7 +104,12 @@ async def test_partner_can_create_idempotent_generation_after_manual_credit(
     invalid_provider_key_response = await client.post(
         "/api/v1/providers/credentials",
         headers=admin_headers,
-        json={"provider": "argolink", "label": "bad", "api_key": "invalid-secret"},
+        json={
+            "provider": "argolink",
+            "label": "bad",
+            "api_key": "invalid-secret",
+            "partner_application_id": application_id,
+        },
     )
     assert invalid_provider_key_response.status_code == 409
     assert invalid_provider_key_response.json()["detail"] == "provider_key_invalid"
@@ -109,7 +117,12 @@ async def test_partner_can_create_idempotent_generation_after_manual_credit(
     provider_key_response = await client.post(
         "/api/v1/providers/credentials",
         headers=admin_headers,
-        json={"provider": "argolink", "label": "test", "api_key": "argolink-secret"},
+        json={
+            "provider": "argolink",
+            "label": "test",
+            "api_key": "argolink-secret",
+            "partner_application_id": application_id,
+        },
     )
     assert provider_key_response.status_code == 201
     assert "api_key" not in provider_key_response.json()

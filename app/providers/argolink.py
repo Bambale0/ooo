@@ -34,16 +34,18 @@ class ArgoLinkAdapter:
             return response.is_success
 
     async def validate_key(self, api_key: str) -> bool:
-        if not api_key.strip():
+        token = api_key.strip()
+        if not token:
             return False
-        if api_key.strip().lower().startswith("invalid"):
-            return False
-        async with self._http_client(api_key=api_key) as client:
+        async with self._http_client() as client:
             try:
-                response = await client.get("/v1/models")
+                response = await client.get(
+                    "/v1/videos/00000000-0000-0000-0000-000000000000",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
             except httpx.HTTPError:
                 return False
-            return response.is_success
+            return response.status_code not in {401, 403}
 
     async def submit_generation(self, payload: ProviderGenerationRequest) -> ProviderSubmitResult:
         if not self.api_key:
@@ -69,7 +71,7 @@ class ArgoLinkAdapter:
             request_body["reference_images"] = [{"url": url} for url in payload.reference_images]
         async with self._http_client() as client:
             try:
-                response = await client.post("/v1/videos/generations", json=request_body)
+                response = await client.post("/v1/videos/generations", json=request_body, headers=self._auth_headers())
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:
                 raise self._http_error_to_provider_error(exc.response) from exc
@@ -95,7 +97,7 @@ class ArgoLinkAdapter:
             )
         async with self._http_client() as client:
             try:
-                response = await client.get(f"/v1/videos/{provider_task_id}")
+                response = await client.get(f"/v1/videos/{provider_task_id}", headers=self._auth_headers())
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:
                 raise self._http_error_to_provider_error(exc.response) from exc
@@ -119,7 +121,7 @@ class ArgoLinkAdapter:
             )
         async with self._http_client() as client:
             try:
-                response = await client.get(provider_content_url)
+                response = await client.get(provider_content_url, headers=self._auth_headers())
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:
                 raise self._http_error_to_provider_error(exc.response) from exc
@@ -136,6 +138,11 @@ class ArgoLinkAdapter:
             public_code="provider_temporarily_unavailable",
             raw_error=type(error).__name__,
         )
+
+    def _auth_headers(self) -> dict[str, str]:
+        if not self.api_key:
+            return {}
+        return {"Authorization": f"Bearer {self.api_key}"}
 
     def _http_client(self, api_key: str | None = None) -> httpx.AsyncClient:
         if self._client is not None:

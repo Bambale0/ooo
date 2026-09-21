@@ -93,7 +93,9 @@ async def approve_application(application_id: str, db: DbSession) -> Partner:
     provider_key_result = await db.execute(
         select(ProviderCredential).where(
             ProviderCredential.provider == "argolink",
+            ProviderCredential.partner_application_id == application.id,
             ProviderCredential.is_active.is_(True),
+            ProviderCredential.encrypted_api_key.is_not(None),
         )
     )
     if provider_key_result.scalar_one_or_none() is None:
@@ -124,6 +126,14 @@ async def approve_application(application_id: str, db: DbSession) -> Partner:
     await db.execute(
         update(ConsentAcceptance)
         .where(ConsentAcceptance.partner_application_id == application.id)
+        .values(partner_id=partner.id)
+    )
+    await db.execute(
+        update(ProviderCredential)
+        .where(
+            ProviderCredential.partner_application_id == application.id,
+            ProviderCredential.is_active.is_(True),
+        )
         .values(partner_id=partner.id)
     )
     await db.flush()
