@@ -1,7 +1,8 @@
 import httpx
+import pytest
 
 from app.providers.argolink import ArgoLinkAdapter
-from app.providers.base import ProviderGenerationRequest
+from app.providers.base import ProviderAdapterError, ProviderGenerationRequest
 from app.providers.http_client import close_provider_http_clients, get_provider_http_client
 
 
@@ -117,3 +118,83 @@ async def test_provider_http_client_is_reused_and_recreated_after_close():
     assert third.is_closed is False
 
     await close_provider_http_clients()
+
+
+async def test_argolink_rate_limit_preserves_retry_after_hint():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            429,
+            headers={"Retry-After": "17"},
+            json={"error": "rate limited"},
+            request=request,
+        )
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(base_url="https://argolink.io", transport=transport) as client:
+        adapter = ArgoLinkAdapter(base_url="https://argolink.io", api_key="test-key", client=client)
+        with pytest.raises(ProviderAdapterError) as exc_info:
+            await adapter.submit_generation(
+                ProviderGenerationRequest(
+                    generation_id="generation-rate-limit",
+                    model_slug="seedance-2.5",
+                    mode="text_to_video",
+                    resolution="720p",
+                    prompt="rate limit",
+                    duration_seconds=5,
+                )
+            )
+
+    error = exc_info.value
+    assert error.public_code == "provider_temporarily_unavailable"
+    assert error.raw_error == "argolink_rate_limited"
+    assert error.retryable is True
+    assert error.retry_after_seconds == 17.0
+
+
+async def test_argolink_submit_read_timeout_is_not_replayed_automatically():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("submit response timed out", request=request)
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(base_url="https://argolink.io", transport=transport) as client:
+        adapter = ArgoLinkAdapter(base_url="https://argolink.io", api_key="test-key", client=client)
+        with pytest.raises(ProviderAdapterError) as exc_info:
+            await adapter.submit_generation(
+                ProviderGenerationRequest(
+                    generation_id="generation-timeout",
+                    model_slug="seedance-2.5",
+                    mode="text_to_video",
+                    resolution="720p",
+                    prompt="ambiguous timeout",
+                    duration_seconds=5,
+                )
+            )
+
+    error = exc_info.value
+    assert error.public_code == "provider_temporarily_unavailable"
+    assert error.raw_error == "argolink_submit_outcome_unknown"
+    assert error.retryable is False
+
+
+async def test_argolink_missing_task_id_is_not_replayed_automatically():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(202, json={"status": "accepted"}, request=request)
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(base_url="https://argolink.io", transport=transport) as client:
+        adapter = ArgoLinkAdapter(base_url="https://argolink.io", api_key="test-key", client=client)
+        with pytest.raises(ProviderAdapterError) as exc_info:
+            await adapter.submit_generation(
+                ProviderGenerationRequest(
+                    generation_id="generation-missing-id",
+                    model_slug="seedance-2.5",
+                    mode="text_to_video",
+                    resolution="720p",
+                    prompt="missing task id",
+                    duration_seconds=5,
+                )
+            )
+
+    error = exc_info.value
+    assert error.raw_error == "missing_provider_task_id"
+    assert error.retryable is False

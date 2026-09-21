@@ -3,6 +3,7 @@ from typing import Any
 import httpx
 
 from app.infrastructure.config import get_settings
+from app.infrastructure.retry import parse_retry_after_seconds
 from app.providers.base import (
     ProviderAdapterError,
     ProviderGenerationRequest,
@@ -77,14 +78,45 @@ class ArgoLinkAdapter:
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:
                 raise self._http_error_to_provider_error(exc.response) from exc
+            except (httpx.ConnectTimeout, httpx.PoolTimeout, httpx.ConnectError) as exc:
+                raise ProviderAdapterError(
+                    "provider_temporarily_unavailable",
+                    type(exc).__name__,
+                    retryable=True,
+                ) from exc
+            except (httpx.ReadTimeout, httpx.WriteTimeout, httpx.ReadError, httpx.WriteError) as exc:
+                raise ProviderAdapterError(
+                    "provider_temporarily_unavailable",
+                    "argolink_submit_outcome_unknown",
+                    retryable=False,
+                ) from exc
             except httpx.TimeoutException as exc:
-                raise ProviderAdapterError("provider_temporarily_unavailable", "argolink_timeout") from exc
+                raise ProviderAdapterError(
+                    "provider_temporarily_unavailable",
+                    "argolink_submit_outcome_unknown",
+                    retryable=False,
+                ) from exc
             except httpx.HTTPError as exc:
-                raise ProviderAdapterError("provider_temporarily_unavailable", type(exc).__name__) from exc
-        data = response.json()
+                raise ProviderAdapterError(
+                    "provider_temporarily_unavailable",
+                    type(exc).__name__,
+                    retryable=False,
+                ) from exc
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise ProviderAdapterError(
+                "provider_temporarily_unavailable",
+                "invalid_provider_submit_response",
+                retryable=False,
+            ) from exc
         provider_task_id = self._extract_task_id(data)
         if provider_task_id is None:
-            raise ProviderAdapterError("provider_temporarily_unavailable", "missing_provider_task_id")
+            raise ProviderAdapterError(
+                "provider_temporarily_unavailable",
+                "missing_provider_task_id",
+                retryable=False,
+            )
         return ProviderSubmitResult(
             provider_task_id=provider_task_id,
             status="accepted",
@@ -104,9 +136,17 @@ class ArgoLinkAdapter:
             except httpx.HTTPStatusError as exc:
                 raise self._http_error_to_provider_error(exc.response) from exc
             except httpx.TimeoutException as exc:
-                raise ProviderAdapterError("provider_temporarily_unavailable", "argolink_timeout") from exc
+                raise ProviderAdapterError(
+                    "provider_temporarily_unavailable",
+                    "argolink_timeout",
+                    retryable=True,
+                ) from exc
             except httpx.HTTPError as exc:
-                raise ProviderAdapterError("provider_temporarily_unavailable", type(exc).__name__) from exc
+                raise ProviderAdapterError(
+                    "provider_temporarily_unavailable",
+                    type(exc).__name__,
+                    retryable=True,
+                ) from exc
         data = response.json()
         status = self._normalize_video_status(data)
         result_url = f"{self.base_url}/v1/videos/{provider_task_id}/content" if status == "completed" else None
@@ -144,11 +184,19 @@ class ArgoLinkAdapter:
         except httpx.TimeoutException as exc:
             if response is not None:
                 await response.aclose()
-            raise ProviderAdapterError("provider_temporarily_unavailable", "argolink_timeout") from exc
+            raise ProviderAdapterError(
+                "provider_temporarily_unavailable",
+                "argolink_timeout",
+                retryable=True,
+            ) from exc
         except httpx.HTTPError as exc:
             if response is not None:
                 await response.aclose()
-            raise ProviderAdapterError("provider_temporarily_unavailable", type(exc).__name__) from exc
+            raise ProviderAdapterError(
+                "provider_temporarily_unavailable",
+                type(exc).__name__,
+                retryable=True,
+            ) from exc
 
         async def body():
             try:
@@ -202,13 +250,30 @@ class ArgoLinkAdapter:
 
     @staticmethod
     def _http_error_to_provider_error(response: httpx.Response) -> ProviderAdapterError:
+        retry_after_seconds = parse_retry_after_seconds(response.headers.get("Retry-After"))
         if response.status_code in {401, 403}:
-            return ProviderAdapterError("provider_temporarily_unavailable", "argolink_auth_failed")
-        if response.status_code == 429:
-            return ProviderAdapterError("provider_temporarily_unavailable", "argolink_rate_limited")
-        if response.status_code >= 500:
-            return ProviderAdapterError("provider_temporarily_unavailable", f"argolink_{response.status_code}")
-        return ProviderAdapterError("provider_rejected_request", f"argolink_{response.status_code}")
+            return ProviderAdapterError(
+                "provider_temporarily_unavailable",
+                "argolink_auth_failed",
+                retryable=False,
+            )
+        if response.status_code in {408, 429} or response.status_code >= 500:
+            raw_error = (
+                "argolink_rate_limited"
+                if response.status_code == 429
+                else f"argolink_{response.status_code}"
+            )
+            return ProviderAdapterError(
+                "provider_temporarily_unavailable",
+                raw_error,
+                retryable=True,
+                retry_after_seconds=retry_after_seconds,
+            )
+        return ProviderAdapterError(
+            "provider_rejected_request",
+            f"argolink_{response.status_code}",
+            retryable=False,
+        )
 
     @staticmethod
     def _normalize_video_status(data: Any) -> str:
