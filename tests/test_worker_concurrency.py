@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.accounts.models import Partner
 from app.generations.models import Generation
 from app.infrastructure.database import Base
+from app.infrastructure.retry import utc_now
+from app.providers.models import ProviderAttempt
 from app.workers.generation_worker import (
     _load_candidate_ids,
     _run_bounded,
@@ -187,3 +189,84 @@ async def test_candidate_selection_round_robins_partners(tmp_path):
 
     assert queued_ids == [a_ids[0], b_ids[0], a_ids[1], b_ids[1]]
     assert active_ids == []
+
+
+
+async def test_candidate_selection_only_returns_due_provider_polls(tmp_path):
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'poll-schedule.db'}")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as db:
+        partner = Partner(
+            telegram_id="poll-due-partner",
+            company_name="Poll Due",
+            project_name="Poll Due Bot",
+        )
+        db.add(partner)
+        await db.flush()
+
+        due_generation = Generation(
+            partner_id=partner.id,
+            model_id="due-model",
+            model_slug="seedance-2.5",
+            mode="text_to_video",
+            resolution="720p",
+            duration_seconds=5,
+            idempotency_key="poll-due",
+            partner_price_rub=Decimal("100.00"),
+            prompt="due",
+            status="processing",
+        )
+        future_generation = Generation(
+            partner_id=partner.id,
+            model_id="future-model",
+            model_slug="seedance-2.5",
+            mode="text_to_video",
+            resolution="720p",
+            duration_seconds=5,
+            idempotency_key="poll-future",
+            partner_price_rub=Decimal("100.00"),
+            prompt="future",
+            status="processing",
+        )
+        db.add_all([due_generation, future_generation])
+        await db.flush()
+
+        db.add_all(
+            [
+                ProviderAttempt(
+                    generation_id=due_generation.id,
+                    provider="argolink",
+                    provider_task_id="due-task",
+                    status="processing",
+                    next_poll_at=utc_now() - timedelta(seconds=1),
+                ),
+                ProviderAttempt(
+                    generation_id=future_generation.id,
+                    provider="argolink",
+                    provider_task_id="future-task",
+                    status="processing",
+                    next_poll_at=utc_now() + timedelta(minutes=1),
+                ),
+            ]
+        )
+        await db.commit()
+        due_id = due_generation.id
+        future_id = future_generation.id
+
+    try:
+        queued_ids, active_ids = await _load_candidate_ids(
+            session_factory=session_factory,
+            limit=10,
+            provider="argolink",
+        )
+    finally:
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.drop_all)
+        await engine.dispose()
+
+    assert queued_ids == []
+    assert due_id in active_ids
+    assert future_id not in active_ids
