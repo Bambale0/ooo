@@ -26,4 +26,6 @@ class Generation(Base):
     request_payload: Mapped[dict[str, object] | None] = mapped_column(JSON)
     result_url: Mapped[str | None] = mapped_column(Text)
     public_error_code: Mapped[str | None] = mapped_column(String(80))
+    webhook_url_snapshot: Mapped[str | None] = mapped_column(Text)
+    webhook_secret_encrypted_snapshot: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[object] = utc_created_at()
