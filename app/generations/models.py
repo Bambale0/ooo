@@ -13,6 +13,9 @@ class Generation(Base):
 
     id: Mapped[str] = uuid_pk()
     partner_id: Mapped[str] = mapped_column(ForeignKey("partners.id"), nullable=False, index=True)
+    api_key_id: Mapped[str | None] = mapped_column(ForeignKey("api_keys.id"), index=True)
+    webhook_url_snapshot: Mapped[str | None] = mapped_column(Text)
+    webhook_secret_encrypted_snapshot: Mapped[str | None] = mapped_column(Text)
     model_id: Mapped[str] = mapped_column(String(36), nullable=False)
     model_slug: Mapped[str] = mapped_column(String(80), nullable=False)
     mode: Mapped[str] = mapped_column(String(80), nullable=False)
