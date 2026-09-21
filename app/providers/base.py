@@ -40,10 +40,17 @@ class ProviderResultStream:
 
 
 class ProviderAdapterError(Exception):
-    def __init__(self, public_code: str, raw_error: str | None = None) -> None:
+    def __init__(
+        self,
+        public_code: str,
+        raw_error: str | None = None,
+        *,
+        retry_after_seconds: float | None = None,
+    ) -> None:
         super().__init__(public_code)
         self.public_code = public_code
         self.raw_error = raw_error
+        self.retry_after_seconds = retry_after_seconds
 
 
 class ProviderAdapter(Protocol):
