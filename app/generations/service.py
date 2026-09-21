@@ -10,6 +10,7 @@ from app.providers.base import ProviderAdapterError, ProviderGenerationRequest
 from app.providers.models import ProviderAttempt, ProviderModelCapability
 from app.providers.rate_limit import get_provider_rate_limiter
 from app.providers.service import get_active_provider_credential, get_partner_provider_adapter
+from app.webhooks.service import ensure_terminal_webhook_event
 
 PRIMARY_PROVIDER = "argolink"
 
@@ -109,6 +110,7 @@ async def dispatch_generation_to_provider(
                 generation,
                 reason="Released partner reserve after provider submit failure",
             )
+            await ensure_terminal_webhook_event(db, generation)
     await db.flush()
     await db.refresh(attempt)
     return attempt
@@ -143,6 +145,7 @@ async def poll_generation_provider(
             generation,
             reason="Released partner reserve after provider processing timeout",
         )
+        await ensure_terminal_webhook_event(db, generation)
         await db.flush()
         await db.refresh(generation)
         return generation
@@ -166,6 +169,7 @@ async def poll_generation_provider(
                 generation,
                 reason="Released partner reserve after terminal provider polling failure",
             )
+            await ensure_terminal_webhook_event(db, generation)
         await db.flush()
         await db.refresh(generation)
         return generation
@@ -189,6 +193,7 @@ async def poll_generation_provider(
                 provider=provider,
                 provider_content_url=result.result_url,
             )
+        await ensure_terminal_webhook_event(db, generation)
     elif result.status == "failed":
         generation.status = "failed"
         generation.public_error_code = "provider_generation_failed"
@@ -200,6 +205,7 @@ async def poll_generation_provider(
             generation,
             reason="Released partner reserve after provider generation failure",
         )
+        await ensure_terminal_webhook_event(db, generation)
     elif result.status == "processing":
         generation.status = "processing"
         attempt.poll_count += 1
