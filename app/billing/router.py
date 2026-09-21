@@ -6,6 +6,7 @@ from app.api.dependencies import DbSession, require_admin
 from app.billing.models import LedgerEntry
 from app.billing.schemas import BalanceRead, LedgerEntryRead, ManualAdjustmentCreate
 from app.billing.service import apply_partner_balance_change
+from app.infrastructure.security import hash_secret
 
 router = APIRouter()
 
@@ -20,7 +21,7 @@ async def create_manual_adjustment(payload: ManualAdjustmentCreate, db: DbSessio
         partner=partner,
         amount_rub=payload.amount_rub,
         operation_type="manual_adjustment",
-        idempotency_key=f"manual:{partner.id}:{payload.idempotency_key}",
+        idempotency_key=f"manual:{partner.id}:{hash_secret(payload.idempotency_key)}",
         description=payload.description,
     )
 
