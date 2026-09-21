@@ -28,7 +28,10 @@ async def validate_public_webhook_url(url: str) -> None:
     try:
         infos = await asyncio.to_thread(socket.getaddrinfo, host, parsed.port or 443, type=socket.SOCK_STREAM)
     except socket.gaierror as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="webhook_host_unresolvable") from exc
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="webhook_host_unresolvable",
+        ) from exc
 
     addresses = {ipaddress.ip_address(info[4][0]) for info in infos}
     if not addresses or any(not _is_public_ip(address) for address in addresses):
