@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.billing.service import release_generation_reserve, settle_generation_reserve
 from app.generations.models import Generation
 from app.infrastructure.config import get_settings
-from app.infrastructure.retry import is_due, is_older_than, next_retry_at
+from app.infrastructure.retry import is_due, is_older_than, next_poll_at, next_retry_at
 from app.media.service import create_provider_ready_asset
 from app.providers.base import ProviderGenerationRequest
 from app.providers.models import ProviderAttempt, ProviderModelCapability
@@ -87,6 +87,13 @@ async def dispatch_generation_to_provider(
         attempt.raw_error = None
         attempt.last_error = None
         attempt.next_attempt_at = None
+        attempt.poll_count = 0
+        attempt.next_poll_at = next_poll_at(
+            0,
+            initial_seconds=get_settings().worker_initial_poll_delay_seconds,
+            base_seconds=get_settings().worker_poll_backoff_base_seconds,
+            max_seconds=get_settings().worker_poll_backoff_max_seconds,
+        )
         generation.status = "sent_to_provider"
     except Exception as exc:
         normalized = adapter.normalize_error(exc)
@@ -126,6 +133,7 @@ async def poll_generation_provider(
         attempt.public_error_code = "generation_timeout"
         attempt.last_error = "provider_processing_timeout"
         attempt.next_attempt_at = None
+        attempt.next_poll_at = None
         generation.status = "timeout"
         generation.public_error_code = "generation_timeout"
         await release_generation_reserve(
@@ -137,7 +145,10 @@ async def poll_generation_provider(
         await db.refresh(generation)
         return generation
 
-    if not is_due(attempt.next_attempt_at):
+    if attempt.next_attempt_at is not None:
+        if not is_due(attempt.next_attempt_at):
+            return generation
+    elif not is_due(attempt.next_poll_at):
         return generation
 
     adapter = await get_partner_provider_adapter(db, generation.partner_id, provider)
@@ -161,10 +172,12 @@ async def poll_generation_provider(
     attempt.raw_error = None
     attempt.last_error = None
     attempt.next_attempt_at = None
+    attempt.retry_count = 0
 
     if result.status == "completed":
         generation.status = "completed"
         generation.public_error_code = None
+        attempt.next_poll_at = None
         await settle_generation_reserve(db, generation)
         if result.result_url:
             await create_provider_ready_asset(
@@ -178,6 +191,7 @@ async def poll_generation_provider(
         generation.public_error_code = "provider_generation_failed"
         attempt.public_error_code = "provider_generation_failed"
         attempt.raw_error = result.raw_error
+        attempt.next_poll_at = None
         await release_generation_reserve(
             db,
             generation,
@@ -185,6 +199,13 @@ async def poll_generation_provider(
         )
     elif result.status == "processing":
         generation.status = "processing"
+        attempt.poll_count += 1
+        attempt.next_poll_at = next_poll_at(
+            attempt.poll_count,
+            initial_seconds=settings.worker_initial_poll_delay_seconds,
+            base_seconds=settings.worker_poll_backoff_base_seconds,
+            max_seconds=settings.worker_poll_backoff_max_seconds,
+        )
 
     await db.flush()
     await db.refresh(generation)
@@ -218,5 +239,6 @@ def _mark_attempt_error(
 
     attempt.status = "failed"
     attempt.next_attempt_at = None
+    attempt.next_poll_at = None
     generation.status = "failed"
     generation.public_error_code = public_code
