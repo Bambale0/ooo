@@ -7,8 +7,8 @@ from app.infrastructure.config import get_settings
 from app.infrastructure.retry import is_due, is_older_than, next_retry_at
 from app.media.service import create_provider_ready_asset
 from app.providers.base import ProviderGenerationRequest
-from app.providers.models import ProviderAttempt, ProviderCredential, ProviderModelCapability
-from app.providers.registry import get_provider_adapter
+from app.providers.models import ProviderAttempt, ProviderModelCapability
+from app.providers.service import get_active_provider_credential, get_partner_provider_adapter
 
 PRIMARY_PROVIDER = "argolink"
 
@@ -34,15 +34,10 @@ async def has_provider_capability(
 
 async def has_active_provider_credential(
     db: AsyncSession,
+    partner_id: str,
     provider: str = PRIMARY_PROVIDER,
 ) -> bool:
-    result = await db.execute(
-        select(ProviderCredential).where(
-            ProviderCredential.provider == provider,
-            ProviderCredential.is_active.is_(True),
-        )
-    )
-    return result.scalar_one_or_none() is not None
+    return await get_active_provider_credential(db, partner_id, provider) is not None
 
 
 async def dispatch_generation_to_provider(
@@ -66,7 +61,7 @@ async def dispatch_generation_to_provider(
     else:
         attempt = None
 
-    adapter = get_provider_adapter(provider)
+    adapter = await get_partner_provider_adapter(db, generation.partner_id, provider)
     request = ProviderGenerationRequest(
         generation_id=generation.id,
         model_slug=generation.model_slug,
@@ -145,7 +140,7 @@ async def poll_generation_provider(
     if not is_due(attempt.next_attempt_at):
         return generation
 
-    adapter = get_provider_adapter(provider)
+    adapter = await get_partner_provider_adapter(db, generation.partner_id, provider)
     try:
         result = await adapter.poll_generation(attempt.provider_task_id)
     except Exception as exc:
