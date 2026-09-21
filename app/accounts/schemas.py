@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, HttpUrl, model_validator
 
 
 class PartnerApplicationCreate(BaseModel):
@@ -38,6 +38,16 @@ class PartnerRead(BaseModel):
 
 class ApiKeyCreate(BaseModel):
     name: str = Field(min_length=2, max_length=120)
+    webhook_url: HttpUrl | None = None
+    webhook_secret: str | None = Field(default=None, min_length=16, max_length=4096)
+
+    @model_validator(mode="after")
+    def validate_webhook_settings(self) -> "ApiKeyCreate":
+        if self.webhook_url is not None and self.webhook_url.scheme != "https":
+            raise ValueError("webhook_url_must_use_https")
+        if self.webhook_secret is not None and self.webhook_url is None:
+            raise ValueError("webhook_secret_requires_url")
+        return self
 
 
 class ApiKeyCreated(BaseModel):
@@ -45,12 +55,14 @@ class ApiKeyCreated(BaseModel):
     name: str
     key_prefix: str
     api_key: str
+    webhook_url: str | None = None
 
 
 class ApiKeyRead(BaseModel):
     id: str
     name: str
     key_prefix: str
+    webhook_url: str | None
     is_active: bool
 
     model_config = {"from_attributes": True}
