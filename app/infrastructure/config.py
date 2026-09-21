@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     argolink_base_url: str = "https://argolink.io"
     argolink_api_key: str | None = None
     provider_credentials_master_key: str | None = Field(default=None, min_length=32)
+    webhook_secrets_master_key: str | None = Field(default=None, min_length=32)
     argolink_timeout_seconds: float = 30.0
     argolink_http_connect_timeout_seconds: float = Field(default=5.0, gt=0)
     argolink_http_read_timeout_seconds: float = Field(default=30.0, gt=0)
@@ -53,6 +54,9 @@ class Settings(BaseSettings):
     worker_retry_max_seconds: float = 300.0
     worker_provider_processing_timeout_seconds: float = 30 * 60
     worker_shutdown_grace_seconds: float = 25.0
+    webhook_timeout_seconds: float = Field(default=10.0, gt=0)
+    webhook_retry_interval_seconds: int = Field(default=15 * 60, ge=60)
+    webhook_retry_window_hours: int = Field(default=24, ge=1)
 
 
 @lru_cache
