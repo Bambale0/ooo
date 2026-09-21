@@ -1,4 +1,5 @@
 import asyncio
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -6,7 +7,11 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.accounts.models import Partner
 from app.generations.models import Generation
 from app.infrastructure.database import Base
-from app.workers.generation_worker import _run_bounded, process_generation_work_concurrently_once
+from app.workers.generation_worker import (
+    _load_candidate_ids,
+    _run_bounded,
+    process_generation_work_concurrently_once,
+)
 
 
 async def test_run_bounded_limits_concurrency():
@@ -107,3 +112,78 @@ async def test_concurrent_worker_dispatches_candidates_in_parallel(tmp_path, mon
     assert result.dispatched == 6
     assert result.polled == 0
     assert max_active == 2
+
+
+
+async def test_candidate_selection_round_robins_partners(tmp_path):
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'fair-worker.db'}")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    base_time = datetime.now(UTC)
+    async with session_factory() as db:
+        partner_a = Partner(
+            telegram_id="fair-a",
+            company_name="Partner A",
+            project_name="A",
+        )
+        partner_b = Partner(
+            telegram_id="fair-b",
+            company_name="Partner B",
+            project_name="B",
+        )
+        db.add_all([partner_a, partner_b])
+        await db.flush()
+
+        generations: list[Generation] = []
+        for index in range(4):
+            generations.append(
+                Generation(
+                    partner_id=partner_a.id,
+                    model_id=f"model-a-{index}",
+                    model_slug="seedance-2.5",
+                    mode="text_to_video",
+                    resolution="720p",
+                    duration_seconds=5,
+                    idempotency_key=f"fair-a-{index}",
+                    partner_price_rub=Decimal("100.00"),
+                    prompt="fairness",
+                    status="queued",
+                    created_at=base_time + timedelta(seconds=index),
+                )
+            )
+        for index in range(2):
+            generations.append(
+                Generation(
+                    partner_id=partner_b.id,
+                    model_id=f"model-b-{index}",
+                    model_slug="seedance-2.5",
+                    mode="text_to_video",
+                    resolution="720p",
+                    duration_seconds=5,
+                    idempotency_key=f"fair-b-{index}",
+                    partner_price_rub=Decimal("100.00"),
+                    prompt="fairness",
+                    status="queued",
+                    created_at=base_time + timedelta(seconds=10 + index),
+                )
+            )
+        db.add_all(generations)
+        await db.commit()
+
+        a_ids = [generation.id for generation in generations[:4]]
+        b_ids = [generation.id for generation in generations[4:]]
+
+    try:
+        queued_ids, active_ids = await _load_candidate_ids(
+            session_factory=session_factory,
+            limit=4,
+        )
+    finally:
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.drop_all)
+        await engine.dispose()
+
+    assert queued_ids == [a_ids[0], b_ids[0], a_ids[1], b_ids[1]]
+    assert active_ids == []
