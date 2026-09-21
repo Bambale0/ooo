@@ -32,6 +32,8 @@ async def test_provider_credential_is_scoped_to_application_and_encrypted(
             "telegram_id": "cred-app-1",
             "company_name": "First Partner",
             "project_name": "First Project",
+            "accepted_terms": True,
+            "accepted_privacy_policy": True,
         },
     )
     second = await client.post(
@@ -40,6 +42,8 @@ async def test_provider_credential_is_scoped_to_application_and_encrypted(
             "telegram_id": "cred-app-2",
             "company_name": "Second Partner",
             "project_name": "Second Project",
+            "accepted_terms": True,
+            "accepted_privacy_policy": True,
         },
     )
     assert first.status_code == 201
