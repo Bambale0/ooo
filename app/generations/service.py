@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.billing.service import release_generation_reserve, settle_generation_reserve
 from app.generations.models import Generation
 from app.infrastructure.config import get_settings
-from app.infrastructure.retry import is_due, is_older_than, next_poll_at, next_retry_at
+from app.infrastructure.retry import is_due, is_older_than, next_poll_at, next_retry_at, retry_after_at
 from app.media.service import create_provider_ready_asset
 from app.providers.base import ProviderGenerationRequest
 from app.providers.models import ProviderAttempt, ProviderModelCapability
@@ -100,7 +100,13 @@ async def dispatch_generation_to_provider(
         if attempt is None:
             attempt = ProviderAttempt(generation_id=generation.id, provider=provider)
             db.add(attempt)
-        _mark_attempt_error(attempt, generation, normalized.public_code, normalized.raw_error)
+        _mark_attempt_error(
+            attempt,
+            generation,
+            normalized.public_code,
+            normalized.raw_error,
+            retry_after_seconds=normalized.retry_after_seconds,
+        )
         if generation.status == "failed":
             await release_generation_reserve(
                 db,
@@ -217,6 +223,8 @@ def _mark_attempt_error(
     generation: Generation,
     public_code: str,
     raw_error: str | None,
+    *,
+    retry_after_seconds: float | None = None,
 ) -> None:
     settings = get_settings()
     attempt.public_error_code = public_code
@@ -226,11 +234,14 @@ def _mark_attempt_error(
     if retryable and attempt.retry_count < settings.worker_max_retries:
         attempt.retry_count += 1
         attempt.status = "retry_pending"
-        attempt.next_attempt_at = next_retry_at(
-            attempt.retry_count,
-            base_seconds=settings.worker_retry_base_seconds,
-            max_seconds=settings.worker_retry_max_seconds,
-        )
+        if retry_after_seconds is not None:
+            attempt.next_attempt_at = retry_after_at(retry_after_seconds)
+        else:
+            attempt.next_attempt_at = next_retry_at(
+                attempt.retry_count,
+                base_seconds=settings.worker_retry_base_seconds,
+                max_seconds=settings.worker_retry_max_seconds,
+            )
         if attempt.provider_task_id:
             generation.status = "processing"
         else:
