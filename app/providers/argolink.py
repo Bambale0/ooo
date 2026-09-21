@@ -34,16 +34,18 @@ class ArgoLinkAdapter:
             return response.is_success
 
     async def validate_key(self, api_key: str) -> bool:
-        if not api_key.strip():
+        token = api_key.strip()
+        if not token:
             return False
-        if api_key.strip().lower().startswith("invalid"):
-            return False
-        async with self._http_client(api_key=api_key) as client:
+        async with self._http_client() as client:
             try:
-                response = await client.get("/v1/models")
+                response = await client.get(
+                    "/v1/videos/00000000-0000-0000-0000-000000000000",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
             except httpx.HTTPError:
                 return False
-            return response.is_success
+            return response.status_code not in {401, 403}
 
     async def submit_generation(self, payload: ProviderGenerationRequest) -> ProviderSubmitResult:
         if not self.api_key:
