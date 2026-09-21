@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     argolink_http_max_connections: int = Field(default=100, ge=1)
     argolink_http_max_keepalive_connections: int = Field(default=50, ge=1)
     argolink_http_keepalive_expiry_seconds: float = Field(default=30.0, gt=0)
+    argolink_submit_rps: float = Field(default=10.0, ge=0)
+    argolink_poll_rps: float = Field(default=50.0, ge=0)
     public_api_base_url: str = "http://localhost:8000"
     public_media_base_url: str | None = None
     media_storage_backend: str = "local"
