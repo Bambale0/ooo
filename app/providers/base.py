@@ -1,3 +1,4 @@
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -28,6 +29,16 @@ class ProviderPollResult:
     raw_error: str | None = None
 
 
+@dataclass(frozen=True)
+class ProviderResultStream:
+    body: AsyncIterator[bytes]
+    status_code: int = 200
+    content_type: str | None = None
+    content_length: int | None = None
+    content_range: str | None = None
+    accept_ranges: str | None = None
+
+
 class ProviderAdapterError(Exception):
     def __init__(self, public_code: str, raw_error: str | None = None) -> None:
         super().__init__(public_code)
@@ -46,6 +57,11 @@ class ProviderAdapter(Protocol):
 
     async def poll_generation(self, provider_task_id: str) -> ProviderPollResult: ...
 
-    async def fetch_result_content(self, provider_content_url: str) -> tuple[bytes, str | None]: ...
+    async def open_result_stream(
+        self,
+        provider_content_url: str,
+        *,
+        range_header: str | None = None,
+    ) -> ProviderResultStream: ...
 
     def normalize_error(self, error: Exception) -> ProviderAdapterError: ...
