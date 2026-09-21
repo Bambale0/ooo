@@ -9,8 +9,8 @@ class PartnerApplicationCreate(BaseModel):
     project_name: str = Field(min_length=2, max_length=255)
     terms_version: str = Field(default="2026-09-19", min_length=1, max_length=40)
     privacy_policy_version: str = Field(default="2026-09-19", min_length=1, max_length=40)
-    accepted_terms: bool = True
-    accepted_privacy_policy: bool = True
+    accepted_terms: bool
+    accepted_privacy_policy: bool
 
 
 class PartnerApplicationRead(BaseModel):
