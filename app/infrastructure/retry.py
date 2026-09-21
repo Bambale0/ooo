@@ -33,6 +33,10 @@ def next_retry_at(
     )
 
 
+def retry_after_at(retry_after_seconds: float) -> datetime:
+    return utc_now() + timedelta(seconds=max(0.0, retry_after_seconds))
+
+
 def next_poll_at(
     poll_count: int,
     *,
