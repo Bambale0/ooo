@@ -93,7 +93,24 @@ async def deliver_webhook_once(
         await db.flush()
         return delivery
 
-    await ensure_public_webhook_destination(event.destination_url, resolver=resolver)
+    try:
+        await ensure_public_webhook_destination(event.destination_url, resolver=resolver)
+    except ValueError as exc:
+        error_code = str(exc)
+        delivery.last_error = error_code
+        delivery.next_attempt_at = None
+        if error_code in {
+            "webhook_url_must_use_https",
+            "webhook_url_credentials_forbidden",
+            "webhook_url_host_required",
+            "webhook_url_private_destination",
+        }:
+            delivery.status = "failed_terminal"
+        else:
+            delivery.status = "failed"
+            await _schedule_retry_if_allowed(db, event, delivery)
+        await db.flush()
+        return delivery
 
     timestamp = str(int(time()))
     body = _serialize_payload(event.payload)
@@ -104,7 +121,15 @@ async def deliver_webhook_once(
         "X-Neironych-Delivery-Id": delivery.id,
         "X-Neironych-Attempt": str(delivery.attempt),
     }
-    signature = _signature_for_event(event, timestamp, body)
+    try:
+        signature = _signature_for_event(event, timestamp, body)
+    except (RuntimeError, ValueError) as exc:
+        delivery.status = "failed"
+        delivery.last_error = str(exc)
+        delivery.next_attempt_at = None
+        await _schedule_retry_if_allowed(db, event, delivery)
+        await db.flush()
+        return delivery
     if signature is not None:
         headers["X-Neironych-Signature"] = signature
 
