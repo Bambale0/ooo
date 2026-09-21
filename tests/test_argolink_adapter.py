@@ -24,7 +24,7 @@ async def test_argolink_adapter_validates_key_against_authenticated_video_status
     assert seen_authorization == ["Bearer valid-key", "Bearer bad-key"]
 
 
-async def test_argolink_adapter_submits_polls_and_fetches_with_configured_key():
+async def test_argolink_adapter_submits_polls_and_streams_with_configured_key():
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -41,7 +41,17 @@ async def test_argolink_adapter_submits_polls_and_fetches_with_configured_key():
         if request.method == "GET" and request.url.path == "/v1/videos/video_task_123":
             return httpx.Response(200, json={"status": "done"})
         if request.method == "GET" and request.url.path == "/v1/videos/video_task_123/content":
-            return httpx.Response(200, content=b"video-bytes", headers={"content-type": "video/mp4"})
+            assert request.headers.get("Range") == "bytes=0-3"
+            return httpx.Response(
+                206,
+                content=b"vide",
+                headers={
+                    "content-type": "video/mp4",
+                    "content-length": "4",
+                    "content-range": "bytes 0-3/11",
+                    "accept-ranges": "bytes",
+                },
+            )
         return httpx.Response(404, json={"error": "not found"})
 
     transport = httpx.MockTransport(handler)
@@ -69,13 +79,21 @@ async def test_argolink_adapter_submits_polls_and_fetches_with_configured_key():
             )
         )
         poll_result = await adapter.poll_generation(result.provider_task_id)
-        content, content_type = await adapter.fetch_result_content(poll_result.result_url or "")
+        stream = await adapter.open_result_stream(
+            poll_result.result_url or "",
+            range_header="bytes=0-3",
+        )
+        content = b"".join([chunk async for chunk in stream.body])
 
     assert result.provider_task_id == "video_task_123"
     assert poll_result.status == "completed"
     assert poll_result.result_url == "https://argolink.io/v1/videos/video_task_123/content"
-    assert content == b"video-bytes"
-    assert content_type == "video/mp4"
+    assert stream.status_code == 206
+    assert stream.content_type == "video/mp4"
+    assert stream.content_length == 4
+    assert stream.content_range == "bytes 0-3/11"
+    assert stream.accept_ranges == "bytes"
+    assert content == b"vide"
     assert [request.url.path for request in requests] == [
         "/v1/videos/generations",
         "/v1/videos/video_task_123",

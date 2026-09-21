@@ -47,10 +47,3 @@ class ProviderPollRead(BaseModel):
     result_url: str | None
     public_error_code: str | None
 
-
-class MediaIngestRead(BaseModel):
-    generation_id: str
-    asset_id: str
-    status: str
-    result_url: str
-    byte_size: int | None

@@ -7,6 +7,7 @@ from app.providers.base import (
     ProviderAdapterError,
     ProviderGenerationRequest,
     ProviderPollResult,
+    ProviderResultStream,
     ProviderSubmitResult,
 )
 
@@ -111,7 +112,12 @@ class ArgoLinkAdapter:
         raw_error = self._extract_error(data) if status == "failed" else None
         return ProviderPollResult(status=status, result_url=result_url, raw_error=raw_error)
 
-    async def fetch_result_content(self, provider_content_url: str) -> tuple[bytes, str | None]:
+    async def open_result_stream(
+        self,
+        provider_content_url: str,
+        *,
+        range_header: str | None = None,
+    ) -> ProviderResultStream:
         if not provider_content_url.startswith(f"{self.base_url}/v1/videos/"):
             raise ProviderAdapterError("provider_rejected_request", "unexpected_result_url")
         if not self.api_key:
@@ -119,17 +125,64 @@ class ArgoLinkAdapter:
                 public_code="provider_temporarily_unavailable",
                 raw_error="ARGOLINK_API_KEY is not configured",
             )
-        async with self._http_client() as client:
+
+        owns_client = self._client is None
+        client = self._client or httpx.AsyncClient(
+            base_url=self.base_url,
+            headers={"Content-Type": "application/json"},
+            timeout=self.timeout_seconds,
+            trust_env=False,
+        )
+        headers = self._auth_headers()
+        if range_header:
+            headers["Range"] = range_header
+
+        response: httpx.Response | None = None
+        try:
+            request = client.build_request("GET", provider_content_url, headers=headers)
+            response = await client.send(request, stream=True, follow_redirects=True)
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            if response is not None:
+                await response.aclose()
+            if owns_client:
+                await client.aclose()
+            raise self._http_error_to_provider_error(exc.response) from exc
+        except httpx.TimeoutException as exc:
+            if response is not None:
+                await response.aclose()
+            if owns_client:
+                await client.aclose()
+            raise ProviderAdapterError("provider_temporarily_unavailable", "argolink_timeout") from exc
+        except httpx.HTTPError as exc:
+            if response is not None:
+                await response.aclose()
+            if owns_client:
+                await client.aclose()
+            raise ProviderAdapterError("provider_temporarily_unavailable", type(exc).__name__) from exc
+
+        async def body():
             try:
-                response = await client.get(provider_content_url, headers=self._auth_headers())
-                response.raise_for_status()
-            except httpx.HTTPStatusError as exc:
-                raise self._http_error_to_provider_error(exc.response) from exc
-            except httpx.TimeoutException as exc:
-                raise ProviderAdapterError("provider_temporarily_unavailable", "argolink_timeout") from exc
-            except httpx.HTTPError as exc:
-                raise ProviderAdapterError("provider_temporarily_unavailable", type(exc).__name__) from exc
-        return response.content, response.headers.get("content-type")
+                async for chunk in response.aiter_bytes():
+                    yield chunk
+            finally:
+                await response.aclose()
+                if owns_client:
+                    await client.aclose()
+
+        content_length: int | None = None
+        raw_content_length = response.headers.get("content-length")
+        if raw_content_length and raw_content_length.isdigit():
+            content_length = int(raw_content_length)
+
+        return ProviderResultStream(
+            body=body(),
+            status_code=response.status_code,
+            content_type=response.headers.get("content-type"),
+            content_length=content_length,
+            content_range=response.headers.get("content-range"),
+            accept_ranges=response.headers.get("accept-ranges"),
+        )
 
     def normalize_error(self, error: Exception) -> ProviderAdapterError:
         if isinstance(error, ProviderAdapterError):

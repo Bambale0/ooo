@@ -16,9 +16,6 @@ from app.generations.service import (
 from app.infrastructure.config import get_settings
 from app.infrastructure.database import SessionLocal
 from app.infrastructure.logging import configure_logging
-from app.infrastructure.retry import utc_now
-from app.media.models import MediaAsset
-from app.media.service import ingest_provider_asset, mark_ingest_retry
 
 logger = logging.getLogger(__name__)
 
@@ -27,11 +24,10 @@ logger = logging.getLogger(__name__)
 class WorkerCycleResult:
     dispatched: int = 0
     polled: int = 0
-    ingested: int = 0
 
     @property
     def did_work(self) -> bool:
-        return any((self.dispatched, self.polled, self.ingested))
+        return any((self.dispatched, self.polled))
 
 
 async def process_generation_work_once(
@@ -42,8 +38,7 @@ async def process_generation_work_once(
 ) -> WorkerCycleResult:
     dispatched = await _dispatch_queued_generations(db, limit=limit, provider=provider)
     polled = await _poll_active_generations(db, limit=limit, provider=provider)
-    ingested = await _ingest_ready_media_assets(db, limit=limit)
-    return WorkerCycleResult(dispatched=dispatched, polled=polled, ingested=ingested)
+    return WorkerCycleResult(dispatched=dispatched, polled=polled)
 
 
 async def run_generation_worker_forever() -> None:
@@ -68,7 +63,6 @@ async def run_generation_worker_forever() -> None:
                 extra={
                     "dispatched": result.dispatched,
                     "polled": result.polled,
-                    "ingested": result.ingested,
                 },
             )
         if result.did_work:
@@ -122,27 +116,6 @@ async def _poll_active_generations(
     count = 0
     for generation in result.scalars().all():
         await poll_generation_provider(db, generation, provider)
-        count += 1
-    return count
-
-
-async def _ingest_ready_media_assets(db: AsyncSession, *, limit: int) -> int:
-    now = utc_now()
-    result = await db.execute(
-        select(MediaAsset)
-        .where(MediaAsset.status == "provider_ready")
-        .where((MediaAsset.next_attempt_at.is_(None)) | (MediaAsset.next_attempt_at <= now))
-        .order_by(MediaAsset.created_at)
-        .with_for_update(skip_locked=True)
-        .limit(limit)
-    )
-    count = 0
-    for asset in result.scalars().all():
-        try:
-            await ingest_provider_asset(db=db, asset=asset)
-        except Exception as exc:
-            mark_ingest_retry(asset, exc)
-        await db.flush()
         count += 1
     return count
 

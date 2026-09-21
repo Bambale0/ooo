@@ -11,7 +11,6 @@ from app.generations.models import Generation
 from app.generations.schemas import (
     GenerationCreate,
     GenerationRead,
-    MediaIngestRead,
     ProviderDispatchRead,
     ProviderPollRead,
 )
@@ -22,8 +21,6 @@ from app.generations.service import (
     has_provider_capability,
     poll_generation_provider,
 )
-from app.media.models import MediaAsset
-from app.media.service import ingest_provider_asset
 
 router = APIRouter()
 
@@ -137,30 +134,6 @@ async def poll_generation(generation_id: str, db: DbSession) -> ProviderPollRead
         status=generation.status,
         result_url=generation.result_url,
         public_error_code=generation.public_error_code,
-    )
-
-
-@router.post(
-    "/{generation_id}/ingest-result",
-    response_model=MediaIngestRead,
-    dependencies=[Depends(require_admin)],
-)
-async def ingest_generation_result(generation_id: str, db: DbSession) -> MediaIngestRead:
-    generation = await db.get(Generation, generation_id)
-    if generation is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="generation_not_found")
-    asset_result = await db.execute(select(MediaAsset).where(MediaAsset.generation_id == generation.id))
-    asset = asset_result.scalar_one_or_none()
-    if asset is None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="media_asset_not_ready")
-    asset = await ingest_provider_asset(db=db, asset=asset)
-    await db.refresh(generation)
-    return MediaIngestRead(
-        generation_id=generation.id,
-        asset_id=asset.id,
-        status=asset.status,
-        result_url=asset.public_url,
-        byte_size=asset.byte_size,
     )
 
 
