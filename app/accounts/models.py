@@ -44,6 +44,8 @@ class ApiKey(Base):
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     key_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     key_prefix: Mapped[str] = mapped_column(String(12), nullable=False)
+    webhook_url: Mapped[str | None] = mapped_column(Text)
+    webhook_secret_encrypted: Mapped[str | None] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
     created_at: Mapped[object] = utc_created_at()
 
