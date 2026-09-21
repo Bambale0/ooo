@@ -17,7 +17,9 @@ from app.generations.service import (
 from app.infrastructure.config import get_settings
 from app.infrastructure.database import SessionLocal
 from app.infrastructure.logging import configure_logging
+from app.infrastructure.retry import utc_now
 from app.providers.http_client import close_provider_http_clients
+from app.providers.models import ProviderAttempt
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +57,7 @@ async def process_generation_work_concurrently_once(
     queued_ids, active_ids = await _load_candidate_ids(
         session_factory=session_factory,
         limit=limit,
+        provider=provider,
     )
 
     dispatched = await _run_bounded(
@@ -119,13 +122,14 @@ async def _load_candidate_ids(
     *,
     session_factory: async_sessionmaker[AsyncSession],
     limit: int,
+    provider: str = PRIMARY_PROVIDER,
 ) -> tuple[list[str], list[str]]:
     async with session_factory() as db:
         queued_result = await db.execute(
             _fair_candidate_ids_query(("queued",), limit=limit)
         )
         active_result = await db.execute(
-            _fair_candidate_ids_query(("sent_to_provider", "processing"), limit=limit)
+            _fair_due_active_candidate_ids_query(provider=provider, limit=limit)
         )
         return list(queued_result.scalars().all()), list(active_result.scalars().all())
 
@@ -143,6 +147,42 @@ def _fair_candidate_ids_query(statuses: tuple[str, ...], *, limit: int):
             .label("partner_position"),
         )
         .where(Generation.status.in_(statuses))
+        .subquery()
+    )
+    return (
+        select(ranked.c.generation_id)
+        .order_by(
+            ranked.c.partner_position,
+            ranked.c.created_at,
+            ranked.c.generation_id,
+        )
+        .limit(limit)
+    )
+
+
+def _fair_due_active_candidate_ids_query(*, provider: str, limit: int):
+    due_at = func.coalesce(ProviderAttempt.next_attempt_at, ProviderAttempt.next_poll_at)
+    now = utc_now()
+    ranked = (
+        select(
+            Generation.id.label("generation_id"),
+            Generation.created_at.label("created_at"),
+            func.row_number()
+            .over(
+                partition_by=Generation.partner_id,
+                order_by=(Generation.created_at, Generation.id),
+            )
+            .label("partner_position"),
+        )
+        .join(
+            ProviderAttempt,
+            (ProviderAttempt.generation_id == Generation.id)
+            & (ProviderAttempt.provider == provider),
+        )
+        .where(
+            Generation.status.in_(("sent_to_provider", "processing")),
+            (due_at.is_(None)) | (due_at <= now),
+        )
         .subquery()
     )
     return (
