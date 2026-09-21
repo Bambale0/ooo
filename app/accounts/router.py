@@ -21,7 +21,8 @@ from app.accounts.schemas import (
     RejectApplicationCreate,
 )
 from app.api.dependencies import DbSession, require_admin
-from app.infrastructure.security import create_api_key
+from app.infrastructure.config import get_settings
+from app.infrastructure.security import create_api_key, encrypt_secret
 from app.providers.models import ProviderCredential
 
 router = APIRouter()
@@ -174,16 +175,34 @@ async def create_partner_api_key(partner_id: str, payload: ApiKeyCreate, db: DbS
     if partner is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="partner_not_found")
     token, token_hash = create_api_key()
+    webhook_secret_encrypted = None
+    if payload.webhook_secret is not None:
+        master_key = get_settings().webhook_secrets_master_key
+        if not master_key:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="webhook_secret_encryption_not_configured",
+            )
+        webhook_secret_encrypted = encrypt_secret(payload.webhook_secret, master_key)
+
     api_key = ApiKey(
         partner_id=partner.id,
         name=payload.name,
         key_hash=token_hash,
         key_prefix=token[:8],
+        webhook_url=str(payload.webhook_url) if payload.webhook_url is not None else None,
+        webhook_secret_encrypted=webhook_secret_encrypted,
     )
     db.add(api_key)
     await db.flush()
     await db.refresh(api_key)
-    return ApiKeyCreated(id=api_key.id, name=api_key.name, key_prefix=api_key.key_prefix, api_key=token)
+    return ApiKeyCreated(
+        id=api_key.id,
+        name=api_key.name,
+        key_prefix=api_key.key_prefix,
+        api_key=token,
+        webhook_url=api_key.webhook_url,
+    )
 
 
 @router.get(
