@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from email.utils import parsedate_to_datetime
 from random import uniform
 
 
@@ -18,19 +19,50 @@ def compute_backoff_delay_seconds(
     return max(0.0, exponential + uniform(-jitter, jitter))
 
 
+def parse_retry_after_seconds(
+    value: str | None,
+    *,
+    now: datetime | None = None,
+) -> float | None:
+    if value is None:
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+
+    try:
+        seconds = float(raw)
+    except ValueError:
+        seconds = -1.0
+    if seconds >= 0:
+        return seconds
+
+    try:
+        retry_at = parsedate_to_datetime(raw)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=UTC)
+    current = now or utc_now()
+    return max(0.0, (retry_at.astimezone(UTC) - current.astimezone(UTC)).total_seconds())
+
+
 def next_retry_at(
     retry_count: int,
     *,
     base_seconds: float = 5.0,
     max_seconds: float = 300.0,
+    retry_after_seconds: float | None = None,
 ) -> datetime:
-    return utc_now() + timedelta(
-        seconds=compute_backoff_delay_seconds(
+    if retry_after_seconds is None:
+        delay_seconds = compute_backoff_delay_seconds(
             retry_count,
             base_seconds=base_seconds,
             max_seconds=max_seconds,
         )
-    )
+    else:
+        delay_seconds = max(0.0, retry_after_seconds)
+    return utc_now() + timedelta(seconds=delay_seconds)
 
 
 def next_poll_at(
