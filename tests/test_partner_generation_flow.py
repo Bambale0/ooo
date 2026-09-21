@@ -68,8 +68,7 @@ async def test_partner_can_create_idempotent_generation_after_manual_credit(
     monkeypatch,
 ):
     monkeypatch.setattr("app.providers.router.get_provider_adapter", fake_provider_adapter)
-    monkeypatch.setattr("app.generations.service.get_provider_adapter", fake_provider_adapter)
-    monkeypatch.setattr("app.media.service.get_provider_adapter", fake_provider_adapter)
+    monkeypatch.setattr("app.providers.service.get_provider_adapter", fake_provider_adapter)
 
     application_response = await client.post(
         "/api/v1/accounts/applications",
