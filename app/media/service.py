@@ -6,7 +6,7 @@ from app.infrastructure.config import get_settings
 from app.infrastructure.retry import next_retry_at
 from app.media.models import MediaAsset
 from app.media.storage import get_media_storage
-from app.providers.registry import get_provider_adapter
+from app.providers.service import get_partner_provider_adapter
 
 
 def build_partner_media_url(asset_id: str) -> str:
@@ -58,7 +58,7 @@ async def ingest_provider_asset(
         return asset
 
     settings = get_settings()
-    adapter = get_provider_adapter(asset.provider)
+    adapter = await get_partner_provider_adapter(db, asset.partner_id, asset.provider)
     content, content_type = await adapter.fetch_result_content(asset.provider_content_url)
     if len(content) > settings.media_max_download_bytes:
         asset.status = "ingest_failed"
