@@ -30,6 +30,9 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "integration: tests that require real external infrastructure such as PostgreSQL",
+]
 
 [tool.setuptools.packages.find]
 include = ["app*"]
