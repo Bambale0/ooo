@@ -24,6 +24,7 @@ from app.api.dependencies import DbSession, require_admin
 from app.infrastructure.config import get_settings
 from app.infrastructure.security import create_api_key, encrypt_secret
 from app.providers.models import ProviderCredential
+from app.webhooks.security import validate_webhook_url
 
 router = APIRouter()
 
@@ -175,6 +176,12 @@ async def create_partner_api_key(partner_id: str, payload: ApiKeyCreate, db: DbS
     if partner is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="partner_not_found")
     token, token_hash = create_api_key()
+    if payload.webhook_url is not None:
+        try:
+            validate_webhook_url(str(payload.webhook_url))
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
     webhook_secret_encrypted = None
     if payload.webhook_secret is not None:
         master_key = get_settings().webhook_secrets_master_key
