@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 
 from app.accounts.models import Partner
-from app.api.dependencies import DbSession, get_current_partner, require_admin
+from app.api.dependencies import DbSession, PartnerAuth, get_current_partner, get_current_partner_auth, require_admin
 from app.billing.service import apply_partner_balance_change, lock_partner_for_update
 from app.catalog.models import Model, PartnerPrice
 from app.generations.models import Generation
@@ -29,8 +29,9 @@ router = APIRouter()
 async def create_generation(
     payload: GenerationCreate,
     db: DbSession,
-    partner: Partner = Depends(get_current_partner),
+    auth: PartnerAuth = Depends(get_current_partner_auth),
 ) -> Generation:
+    partner = auth.partner
     existing = await _find_generation_by_idempotency_key(db, partner.id, payload.idempotency_key)
     if existing is not None:
         return existing
@@ -64,6 +65,9 @@ async def create_generation(
 
     generation = Generation(
         partner_id=locked_partner.id,
+        api_key_id=auth.api_key.id,
+        webhook_url_snapshot=auth.api_key.webhook_url,
+        webhook_secret_encrypted_snapshot=auth.api_key.webhook_secret_encrypted,
         model_id=model.id,
         model_slug=model.slug,
         mode=payload.mode,
