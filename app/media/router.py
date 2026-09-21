@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 
 from app.accounts.models import Partner
 from app.api.dependencies import DbSession, get_current_partner
 from app.media.models import MediaAsset
-from app.media.storage import get_media_storage
+from app.providers.base import ProviderAdapterError
+from app.providers.service import get_partner_provider_adapter
 
 router = APIRouter()
 
@@ -12,24 +13,39 @@ router = APIRouter()
 @router.get("/{asset_id}/content")
 async def read_media_content(
     asset_id: str,
+    request: Request,
     db: DbSession,
     partner: Partner = Depends(get_current_partner),
-) -> Response:
+) -> StreamingResponse:
     asset = await db.get(MediaAsset, asset_id)
     if asset is None or asset.partner_id != partner.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="media_asset_not_found")
-    if asset.status != "stored":
-        return JSONResponse(
-            status_code=status.HTTP_202_ACCEPTED,
-            content={"detail": "asset_not_ingested", "status": asset.status},
+    if asset.status != "provider_ready":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="media_asset_not_ready")
+
+    adapter = await get_partner_provider_adapter(db, partner.id, asset.provider)
+    try:
+        provider_stream = await adapter.open_result_stream(
+            asset.provider_content_url,
+            range_header=request.headers.get("range"),
         )
-    if not asset.storage_key:
-        return JSONResponse(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={"detail": "media_storage_key_missing"},
-        )
-    storage = get_media_storage()
-    local_path = await storage.local_path(asset.storage_key)
-    if local_path is not None:
-        return FileResponse(local_path, media_type=asset.content_type or "video/mp4")
-    return RedirectResponse(asset.public_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+    except ProviderAdapterError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=exc.public_code,
+        ) from exc
+
+    response_headers: dict[str, str] = {}
+    if provider_stream.content_length is not None:
+        response_headers["Content-Length"] = str(provider_stream.content_length)
+    if provider_stream.content_range:
+        response_headers["Content-Range"] = provider_stream.content_range
+    if provider_stream.accept_ranges:
+        response_headers["Accept-Ranges"] = provider_stream.accept_ranges
+
+    return StreamingResponse(
+        provider_stream.body,
+        status_code=provider_stream.status_code,
+        media_type=provider_stream.content_type or asset.content_type or "application/octet-stream",
+        headers=response_headers,
+    )
