@@ -21,6 +21,13 @@ class Settings(BaseSettings):
     argolink_api_key: str | None = None
     provider_credentials_master_key: str | None = Field(default=None, min_length=32)
     argolink_timeout_seconds: float = 30.0
+    argolink_http_connect_timeout_seconds: float = Field(default=5.0, gt=0)
+    argolink_http_read_timeout_seconds: float = Field(default=30.0, gt=0)
+    argolink_http_write_timeout_seconds: float = Field(default=30.0, gt=0)
+    argolink_http_pool_timeout_seconds: float = Field(default=5.0, gt=0)
+    argolink_http_max_connections: int = Field(default=100, ge=1)
+    argolink_http_max_keepalive_connections: int = Field(default=50, ge=1)
+    argolink_http_keepalive_expiry_seconds: float = Field(default=30.0, gt=0)
     public_api_base_url: str = "http://localhost:8000"
     public_media_base_url: str | None = None
     media_storage_backend: str = "local"

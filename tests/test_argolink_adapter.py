@@ -2,6 +2,7 @@ import httpx
 
 from app.providers.argolink import ArgoLinkAdapter
 from app.providers.base import ProviderGenerationRequest
+from app.providers.http_client import close_provider_http_clients, get_provider_http_client
 
 
 async def test_argolink_adapter_validates_key_against_authenticated_video_status_endpoint():
@@ -99,3 +100,20 @@ async def test_argolink_adapter_submits_polls_and_streams_with_configured_key():
         "/v1/videos/video_task_123",
         "/v1/videos/video_task_123/content",
     ]
+
+
+async def test_provider_http_client_is_reused_and_recreated_after_close():
+    first = get_provider_http_client("argolink")
+    second = get_provider_http_client("argolink")
+
+    assert first is second
+    assert first.is_closed is False
+
+    await close_provider_http_clients()
+    assert first.is_closed is True
+
+    third = get_provider_http_client("argolink")
+    assert third is not first
+    assert third.is_closed is False
+
+    await close_provider_http_clients()

@@ -7,12 +7,16 @@ from fastapi.responses import JSONResponse
 from app.api.router import api_router
 from app.infrastructure.config import get_settings
 from app.infrastructure.logging import configure_logging
+from app.providers.http_client import close_provider_http_clients
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_logging()
-    yield
+    try:
+        yield
+    finally:
+        await close_provider_http_clients()
 
 
 def create_app() -> FastAPI:
