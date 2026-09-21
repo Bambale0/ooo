@@ -6,7 +6,7 @@ from app.generations.models import Generation
 from app.infrastructure.config import get_settings
 from app.infrastructure.retry import is_due, is_older_than, next_poll_at, next_retry_at
 from app.media.service import create_provider_ready_asset
-from app.providers.base import ProviderGenerationRequest
+from app.providers.base import ProviderAdapterError, ProviderGenerationRequest
 from app.providers.models import ProviderAttempt, ProviderModelCapability
 from app.providers.service import get_active_provider_credential, get_partner_provider_adapter
 
@@ -100,7 +100,7 @@ async def dispatch_generation_to_provider(
         if attempt is None:
             attempt = ProviderAttempt(generation_id=generation.id, provider=provider)
             db.add(attempt)
-        _mark_attempt_error(attempt, generation, normalized.public_code, normalized.raw_error)
+        _mark_attempt_error(attempt, generation, normalized)
         if generation.status == "failed":
             await release_generation_reserve(
                 db,
@@ -156,7 +156,7 @@ async def poll_generation_provider(
         result = await adapter.poll_generation(attempt.provider_task_id)
     except Exception as exc:
         normalized = adapter.normalize_error(exc)
-        _mark_attempt_error(attempt, generation, normalized.public_code, normalized.raw_error)
+        _mark_attempt_error(attempt, generation, normalized)
         if generation.status == "failed":
             await release_generation_reserve(
                 db,
@@ -215,21 +215,20 @@ async def poll_generation_provider(
 def _mark_attempt_error(
     attempt: ProviderAttempt,
     generation: Generation,
-    public_code: str,
-    raw_error: str | None,
+    error: ProviderAdapterError,
 ) -> None:
     settings = get_settings()
-    attempt.public_error_code = public_code
-    attempt.raw_error = raw_error
-    attempt.last_error = raw_error or public_code
-    retryable = public_code == "provider_temporarily_unavailable"
-    if retryable and attempt.retry_count < settings.worker_max_retries:
+    attempt.public_error_code = error.public_code
+    attempt.raw_error = error.raw_error
+    attempt.last_error = error.raw_error or error.public_code
+    if error.retryable and attempt.retry_count < settings.worker_max_retries:
         attempt.retry_count += 1
         attempt.status = "retry_pending"
         attempt.next_attempt_at = next_retry_at(
             attempt.retry_count,
             base_seconds=settings.worker_retry_base_seconds,
             max_seconds=settings.worker_retry_max_seconds,
+            retry_after_seconds=error.retry_after_seconds,
         )
         if attempt.provider_task_id:
             generation.status = "processing"
@@ -241,4 +240,4 @@ def _mark_attempt_error(
     attempt.next_attempt_at = None
     attempt.next_poll_at = None
     generation.status = "failed"
-    generation.public_error_code = public_code
+    generation.public_error_code = error.public_code
