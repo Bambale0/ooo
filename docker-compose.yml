@@ -8,6 +8,8 @@ services:
       DATABASE_URL: postgresql+asyncpg://neironych:neironych@postgres:5432/neironych
       REDIS_URL: redis://redis:6379/0
       ADMIN_API_TOKEN: change-me
+      PROVIDER_CREDENTIALS_MASTER_KEY: local-provider-credentials-master-key-32
+      WEBHOOK_SECRETS_MASTER_KEY: local-webhook-secrets-master-key-32xx
       ARGOLINK_BASE_URL: https://argolink.io
       ARGOLINK_API_KEY: ""
       WORKER_POLL_INTERVAL_SECONDS: 5
@@ -28,10 +30,31 @@ services:
       DATABASE_URL: postgresql+asyncpg://neironych:neironych@postgres:5432/neironych
       REDIS_URL: redis://redis:6379/0
       ADMIN_API_TOKEN: change-me
+      PROVIDER_CREDENTIALS_MASTER_KEY: local-provider-credentials-master-key-32
+      WEBHOOK_SECRETS_MASTER_KEY: local-webhook-secrets-master-key-32xx
       ARGOLINK_BASE_URL: https://argolink.io
       ARGOLINK_API_KEY: ""
       WORKER_POLL_INTERVAL_SECONDS: 5
       WORKER_BATCH_SIZE: 10
+    depends_on:
+      - postgres
+      - redis
+
+  webhook-worker:
+    build: .
+    command: ["python", "-m", "app.workers.webhook_worker"]
+    environment:
+      APP_ENV: test
+      APP_NAME: neironych
+      API_PREFIX: /api/v1
+      DATABASE_URL: postgresql+asyncpg://neironych:neironych@postgres:5432/neironych
+      REDIS_URL: redis://redis:6379/0
+      ADMIN_API_TOKEN: change-me
+      PROVIDER_CREDENTIALS_MASTER_KEY: local-provider-credentials-master-key-32
+      WEBHOOK_SECRETS_MASTER_KEY: local-webhook-secrets-master-key-32xx
+      WEBHOOK_TIMEOUT_SECONDS: 10
+      WEBHOOK_RETRY_INTERVAL_SECONDS: 900
+      WEBHOOK_RETRY_WINDOW_HOURS: 24
     depends_on:
       - postgres
       - redis
