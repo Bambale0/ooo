@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 
 from app.accounts.models import Partner
-from app.api.dependencies import DbSession, get_current_partner, require_admin
+from app.api.dependencies import DbSession, PartnerAuth, get_current_partner, get_partner_auth, require_admin
 from app.billing.service import apply_partner_balance_change, lock_partner_for_update
 from app.catalog.models import Model, PartnerPrice
 from app.generations.models import Generation
@@ -29,8 +29,9 @@ router = APIRouter()
 async def create_generation(
     payload: GenerationCreate,
     db: DbSession,
-    partner: Partner = Depends(get_current_partner),
+    auth: PartnerAuth = Depends(get_partner_auth),
 ) -> Generation:
+    partner = auth.partner
     existing = await _find_generation_by_idempotency_key(db, partner.id, payload.idempotency_key)
     if existing is not None:
         return existing
@@ -73,6 +74,8 @@ async def create_generation(
         idempotency_key=payload.idempotency_key,
         partner_price_rub=price_rub,
         prompt=payload.prompt,
+        webhook_url_snapshot=auth.api_key.webhook_url,
+        webhook_secret_encrypted_snapshot=auth.api_key.webhook_secret_encrypted,
         request_payload={
             "duration_seconds": payload.duration_seconds,
             "aspect_ratio": payload.aspect_ratio,
@@ -135,6 +138,29 @@ async def poll_generation(generation_id: str, db: DbSession) -> ProviderPollRead
         result_url=generation.result_url,
         public_error_code=generation.public_error_code,
     )
+
+
+@router.post("/{generation_id}/webhook/resend")
+async def resend_generation_webhook(
+    generation_id: str,
+    db: DbSession,
+    partner: Partner = Depends(get_current_partner),
+) -> dict[str, object]:
+    generation = await db.get(Generation, generation_id)
+    if generation is None or generation.partner_id != partner.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="generation_not_found")
+    from app.webhooks.service import request_manual_resend
+
+    try:
+        event = await request_manual_resend(db, generation_id=generation.id, partner_id=partner.id)
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="webhook_event_not_found") from exc
+    return {
+        "generation_id": generation.id,
+        "event_id": event.id,
+        "status": event.status,
+        "attempt": event.attempt_count + 1,
+    }
 
 
 @router.get("/{generation_id}", response_model=GenerationRead)
