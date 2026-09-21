@@ -18,6 +18,9 @@ from app.workers.generation_worker import process_generation_work_once
 class FakeArgoLinkAdapter:
     provider_name = "argolink"
 
+    def __init__(self, api_key: str | None = None) -> None:
+        self.api_key = api_key
+
     async def health_check(self) -> bool:
         return True
 
@@ -25,6 +28,7 @@ class FakeArgoLinkAdapter:
         return not api_key.startswith("invalid")
 
     async def submit_generation(self, payload):
+        assert self.api_key == "argolink-secret"
         assert payload.duration_seconds == 5
         assert payload.aspect_ratio == "9:16"
         assert payload.reference_images == ("https://cdn.example.test/reference.jpg",)
@@ -46,9 +50,7 @@ class FakeArgoLinkAdapter:
 
 def fake_provider_adapter(provider: str, *, api_key: str | None = None) -> FakeArgoLinkAdapter:
     assert provider == "argolink"
-    if api_key is not None:
-        assert api_key == "argolink-secret"
-    return FakeArgoLinkAdapter()
+    return FakeArgoLinkAdapter(api_key=api_key)
 
 
 class FailingIngestAdapter(FakeArgoLinkAdapter):
