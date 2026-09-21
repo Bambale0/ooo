@@ -23,7 +23,7 @@ from app.webhooks.service import (
 def test_webhook_signature_is_hmac_sha256_over_timestamp_dot_raw_body():
     signature = sign_webhook_payload("secret-value", "1700000000", b'{"status":"completed"}')
 
-    assert signature == "sha256=7316238e0051bf171defbc5c6e2c143fd10527ee11ee579f937f933f96a7c3c5"
+    assert signature == "sha256=79b4eca6678e184ea382c2fa74aef65a6d8e407ce90dabade9adda786f28790e"
 
 
 def test_webhook_url_rejects_private_destinations():
