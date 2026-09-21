@@ -1,0 +1,39 @@
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.infrastructure.database import Base
+from app.infrastructure.types import utc_created_at, uuid_pk
+
+
+class WebhookEvent(Base):
+    __tablename__ = "webhook_events"
+    __table_args__ = (
+        UniqueConstraint("generation_id", "event_type", name="uq_webhook_event_generation_type"),
+    )
+
+    id: Mapped[str] = uuid_pk()
+    generation_id: Mapped[str] = mapped_column(ForeignKey("generations.id"), nullable=False, index=True)
+    partner_id: Mapped[str] = mapped_column(ForeignKey("partners.id"), nullable=False, index=True)
+    api_key_id: Mapped[str | None] = mapped_column(ForeignKey("api_keys.id"), index=True)
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    payload: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    destination_url: Mapped[str] = mapped_column(Text, nullable=False)
+    secret_encrypted: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[object] = utc_created_at()
+
+
+class WebhookDelivery(Base):
+    __tablename__ = "webhook_deliveries"
+    __table_args__ = (
+        UniqueConstraint("event_id", "attempt", name="uq_webhook_delivery_event_attempt"),
+    )
+
+    id: Mapped[str] = uuid_pk()
+    event_id: Mapped[str] = mapped_column(ForeignKey("webhook_events.id"), nullable=False, index=True)
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)
+    next_attempt_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), index=True)
+    response_status: Mapped[int | None] = mapped_column(Integer)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    delivered_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[object] = utc_created_at()
