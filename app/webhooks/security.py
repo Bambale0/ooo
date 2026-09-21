@@ -31,7 +31,10 @@ def validate_webhook_url(url: str) -> tuple[str, int]:
 
 async def resolve_public_addresses(host: str, port: int) -> list[str]:
     loop = asyncio.get_running_loop()
-    infos = await loop.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    try:
+        infos = await loop.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError as exc:
+        raise ValueError("webhook_url_unresolvable") from exc
     addresses = sorted({item[4][0] for item in infos})
     return addresses
 
