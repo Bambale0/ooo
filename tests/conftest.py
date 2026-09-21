@@ -11,6 +11,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite://")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6399/0")
 os.environ.setdefault("ARGOLINK_API_KEY", "test-argolink-key")
 
+from app.infrastructure.config import get_settings  # noqa: E402
 from app.infrastructure.database import Base, get_db_session  # noqa: E402
 from app.main import app  # noqa: E402
 
@@ -53,4 +54,4 @@ async def client(db_session: AsyncSession) -> AsyncIterator[AsyncClient]:
 
 @pytest.fixture
 def admin_headers() -> dict[str, str]:
-    return {"Authorization": "Bearer test-admin-token"}
+    return {"Authorization": f"Bearer {get_settings().admin_api_token}"}
