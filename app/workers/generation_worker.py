@@ -16,6 +16,7 @@ from app.generations.service import (
 from app.infrastructure.config import get_settings
 from app.infrastructure.database import SessionLocal
 from app.infrastructure.logging import configure_logging
+from app.providers.http_client import close_provider_http_clients
 
 logger = logging.getLogger(__name__)
 
@@ -47,29 +48,32 @@ async def run_generation_worker_forever() -> None:
     stop_event = asyncio.Event()
     _install_signal_handlers(stop_event)
     logger.info("generation_worker_started")
-    while not stop_event.is_set():
-        async with SessionLocal() as db:
-            try:
-                result = await process_generation_work_once(db, limit=settings.worker_batch_size)
-                await db.commit()
-            except Exception:
-                await db.rollback()
-                logger.exception("generation_worker_cycle_failed")
-                await asyncio.sleep(settings.worker_poll_interval_seconds)
-                continue
-        if result.did_work:
-            logger.info(
-                "generation_worker_cycle_completed",
-                extra={
-                    "dispatched": result.dispatched,
-                    "polled": result.polled,
-                },
-            )
-        if result.did_work:
-            await asyncio.sleep(0)
-        else:
-            with suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(stop_event.wait(), timeout=settings.worker_poll_interval_seconds)
+    try:
+        while not stop_event.is_set():
+            async with SessionLocal() as db:
+                try:
+                    result = await process_generation_work_once(db, limit=settings.worker_batch_size)
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
+                    logger.exception("generation_worker_cycle_failed")
+                    await asyncio.sleep(settings.worker_poll_interval_seconds)
+                    continue
+            if result.did_work:
+                logger.info(
+                    "generation_worker_cycle_completed",
+                    extra={
+                        "dispatched": result.dispatched,
+                        "polled": result.polled,
+                    },
+                )
+            if result.did_work:
+                await asyncio.sleep(0)
+            else:
+                with suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(stop_event.wait(), timeout=settings.worker_poll_interval_seconds)
+    finally:
+        await close_provider_http_clients()
     logger.info("generation_worker_stopped")
 
 
