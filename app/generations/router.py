@@ -5,7 +5,7 @@ from sqlalchemy import select
 
 from app.accounts.models import Partner
 from app.api.dependencies import DbSession, get_current_partner, require_admin
-from app.billing.service import apply_partner_balance_change, require_sufficient_balance
+from app.billing.service import apply_partner_balance_change, lock_partner_for_update
 from app.catalog.models import Model, PartnerPrice
 from app.generations.models import Generation
 from app.generations.schemas import (
@@ -34,13 +34,7 @@ async def create_generation(
     db: DbSession,
     partner: Partner = Depends(get_current_partner),
 ) -> Generation:
-    existing_result = await db.execute(
-        select(Generation).where(
-            Generation.partner_id == partner.id,
-            Generation.idempotency_key == payload.idempotency_key,
-        )
-    )
-    existing = existing_result.scalar_one_or_none()
+    existing = await _find_generation_by_idempotency_key(db, partner.id, payload.idempotency_key)
     if existing is not None:
         return existing
 
@@ -66,9 +60,13 @@ async def create_generation(
     if not await has_provider_capability(db, model.id, payload.mode, payload.resolution):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="capability_mismatch")
 
-    await require_sufficient_balance(partner, price_rub)
+    locked_partner = await lock_partner_for_update(db, partner.id)
+    existing = await _find_generation_by_idempotency_key(db, locked_partner.id, payload.idempotency_key)
+    if existing is not None:
+        return existing
+
     generation = Generation(
-        partner_id=partner.id,
+        partner_id=locked_partner.id,
         model_id=model.id,
         model_slug=model.slug,
         mode=payload.mode,
@@ -91,12 +89,13 @@ async def create_generation(
     await db.flush()
     await apply_partner_balance_change(
         db=db,
-        partner=partner,
+        partner=locked_partner,
         amount_rub=-price_rub,
         operation_type="generation_reserve",
-        idempotency_key=f"generation-reserve:{partner.id}:{payload.idempotency_key}",
+        idempotency_key=f"generation-reserve:{generation.id}",
         generation_id=generation.id,
         description=f"Reserved partner price for {model.slug} ({billable_units} {price.billing_unit})",
+        allow_negative=False,
     )
     await db.refresh(generation)
     return generation
@@ -111,7 +110,7 @@ async def dispatch_generation(generation_id: str, db: DbSession) -> ProviderDisp
     generation = await db.get(Generation, generation_id)
     if generation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="generation_not_found")
-    if generation.status not in {"queued", "sent_to_provider", "failed"}:
+    if generation.status not in {"queued", "sent_to_provider"}:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="generation_not_dispatchable")
     attempt = await dispatch_generation_to_provider(db, generation, PRIMARY_PROVIDER)
     await db.refresh(generation)
@@ -175,3 +174,17 @@ async def read_generation(
     if generation is None or generation.partner_id != partner.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="generation_not_found")
     return generation
+
+
+async def _find_generation_by_idempotency_key(
+    db: DbSession,
+    partner_id: str,
+    idempotency_key: str,
+) -> Generation | None:
+    result = await db.execute(
+        select(Generation).where(
+            Generation.partner_id == partner_id,
+            Generation.idempotency_key == idempotency_key,
+        )
+    )
+    return result.scalar_one_or_none()
