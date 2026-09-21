@@ -2,6 +2,7 @@ from datetime import timedelta
 from decimal import Decimal
 from urllib.parse import urlsplit
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.accounts.models import Partner
@@ -287,6 +288,14 @@ async def test_partner_can_create_idempotent_generation_after_manual_credit(
     assert duplicate_generation.status_code == 202
     assert duplicate_generation.json()["id"] == first_body["id"]
     assert duplicate_generation.json()["status"] == "sent_to_provider"
+
+    attempt_result = await db_session.execute(
+        select(ProviderAttempt).where(ProviderAttempt.generation_id == first_body["id"])
+    )
+    provider_attempt = attempt_result.scalar_one()
+    assert provider_attempt.next_poll_at is not None
+    provider_attempt.next_poll_at = utc_now() - timedelta(seconds=1)
+    await db_session.flush()
 
     worker_result = await process_generation_work_once(db_session)
     assert worker_result.polled == 1
