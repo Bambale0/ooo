@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     rub_per_usdt: Decimal = Decimal("100.00")
     argolink_base_url: str = "https://argolink.io"
     argolink_api_key: str | None = None
+    provider_credentials_master_key: str | None = Field(default=None, min_length=32)
     argolink_timeout_seconds: float = 30.0
     public_api_base_url: str = "http://localhost:8000"
     public_media_base_url: str | None = None
