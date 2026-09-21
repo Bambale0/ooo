@@ -4,8 +4,6 @@ import signal
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import TypeVar
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -21,7 +19,6 @@ from app.infrastructure.logging import configure_logging
 from app.providers.http_client import close_provider_http_clients
 
 logger = logging.getLogger(__name__)
-T = TypeVar("T")
 
 
 @dataclass(frozen=True)
@@ -198,7 +195,7 @@ async def _poll_generation_candidate(
             return False
 
 
-async def _run_bounded(
+async def _run_bounded[T](
     items: Sequence[T],
     *,
     concurrency: int,
