@@ -102,10 +102,21 @@ class ArgoLinkAdapter:
                     type(exc).__name__,
                     retryable=False,
                 ) from exc
-        data = response.json()
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise ProviderAdapterError(
+                "provider_temporarily_unavailable",
+                "invalid_provider_submit_response",
+                retryable=False,
+            ) from exc
         provider_task_id = self._extract_task_id(data)
         if provider_task_id is None:
-            raise ProviderAdapterError("provider_temporarily_unavailable", "missing_provider_task_id")
+            raise ProviderAdapterError(
+                "provider_temporarily_unavailable",
+                "missing_provider_task_id",
+                retryable=False,
+            )
         return ProviderSubmitResult(
             provider_task_id=provider_task_id,
             status="accepted",
