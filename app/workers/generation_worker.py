@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.generations.models import Generation
@@ -122,18 +122,38 @@ async def _load_candidate_ids(
 ) -> tuple[list[str], list[str]]:
     async with session_factory() as db:
         queued_result = await db.execute(
-            select(Generation.id)
-            .where(Generation.status == "queued")
-            .order_by(Generation.created_at)
-            .limit(limit)
+            _fair_candidate_ids_query(("queued",), limit=limit)
         )
         active_result = await db.execute(
-            select(Generation.id)
-            .where(Generation.status.in_(("sent_to_provider", "processing")))
-            .order_by(Generation.created_at)
-            .limit(limit)
+            _fair_candidate_ids_query(("sent_to_provider", "processing"), limit=limit)
         )
         return list(queued_result.scalars().all()), list(active_result.scalars().all())
+
+
+def _fair_candidate_ids_query(statuses: tuple[str, ...], *, limit: int):
+    ranked = (
+        select(
+            Generation.id.label("generation_id"),
+            Generation.created_at.label("created_at"),
+            func.row_number()
+            .over(
+                partition_by=Generation.partner_id,
+                order_by=(Generation.created_at, Generation.id),
+            )
+            .label("partner_position"),
+        )
+        .where(Generation.status.in_(statuses))
+        .subquery()
+    )
+    return (
+        select(ranked.c.generation_id)
+        .order_by(
+            ranked.c.partner_position,
+            ranked.c.created_at,
+            ranked.c.generation_id,
+        )
+        .limit(limit)
+    )
 
 
 async def _dispatch_generation_candidate(
