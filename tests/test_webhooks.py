@@ -236,3 +236,43 @@ async def test_failed_delivery_schedules_new_delivery_id(db_session):
     assert deliveries[1].id != first.id
     assert deliveries[1].status == "pending"
     assert deliveries[1].next_attempt_at is not None
+
+
+async def test_api_key_webhook_secret_is_encrypted_and_not_returned(
+    client,
+    db_session,
+    admin_headers,
+):
+    partner = Partner(
+        telegram_id="webhook-api-key",
+        company_name="Webhook API Key",
+        project_name="Webhook API Key Project",
+    )
+    db_session.add(partner)
+    await db_session.flush()
+
+    response = await client.post(
+        f"/api/v1/accounts/partners/{partner.id}/api-keys",
+        headers=admin_headers,
+        json={
+            "name": "with-webhook",
+            "webhook_url": "https://hooks.example.com/generation",
+            "webhook_secret": "super-secret-webhook-value",
+        },
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert "webhook_secret" not in body
+    assert body["webhook_url"] == "https://hooks.example.com/generation"
+
+    stored = await db_session.get(ApiKey, body["id"])
+    assert stored is not None
+    assert stored.webhook_secret_encrypted != "super-secret-webhook-value"
+    assert (
+        decrypt_secret(
+            stored.webhook_secret_encrypted,
+            get_settings().webhook_secrets_master_key,
+        )
+        == "super-secret-webhook-value"
+    )
