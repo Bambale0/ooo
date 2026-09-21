@@ -8,6 +8,7 @@ from app.infrastructure.retry import is_due, is_older_than, next_poll_at, next_r
 from app.media.service import create_provider_ready_asset
 from app.providers.base import ProviderAdapterError, ProviderGenerationRequest
 from app.providers.models import ProviderAttempt, ProviderModelCapability
+from app.providers.rate_limit import get_provider_rate_limiter
 from app.providers.service import get_active_provider_credential, get_partner_provider_adapter
 
 PRIMARY_PROVIDER = "argolink"
@@ -77,6 +78,7 @@ async def dispatch_generation_to_provider(
         ),
     )
     try:
+        await get_provider_rate_limiter(provider, "submit").acquire()
         result = await adapter.submit_generation(request)
         if attempt is None:
             attempt = ProviderAttempt(generation_id=generation.id, provider=provider)
@@ -153,6 +155,7 @@ async def poll_generation_provider(
 
     adapter = await get_partner_provider_adapter(db, generation.partner_id, provider)
     try:
+        await get_provider_rate_limiter(provider, "poll").acquire()
         result = await adapter.poll_generation(attempt.provider_task_id)
     except Exception as exc:
         normalized = adapter.normalize_error(exc)
