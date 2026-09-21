@@ -20,7 +20,7 @@ async def create_manual_adjustment(payload: ManualAdjustmentCreate, db: DbSessio
         partner=partner,
         amount_rub=payload.amount_rub,
         operation_type="manual_adjustment",
-        idempotency_key=f"manual:{payload.idempotency_key}",
+        idempotency_key=f"manual:{partner.id}:{payload.idempotency_key}",
         description=payload.description,
     )
 
