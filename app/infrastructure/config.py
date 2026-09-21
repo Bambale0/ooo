@@ -40,7 +40,9 @@ class Settings(BaseSettings):
     s3_access_key_id: str | None = None
     s3_secret_access_key: str | None = None
     worker_poll_interval_seconds: float = 5.0
-    worker_batch_size: int = 10
+    worker_batch_size: int = 20
+    worker_submit_concurrency: int = Field(default=10, ge=1)
+    worker_poll_concurrency: int = Field(default=10, ge=1)
     worker_max_retries: int = 3
     worker_retry_base_seconds: float = 5.0
     worker_retry_max_seconds: float = 300.0

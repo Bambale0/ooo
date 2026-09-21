@@ -1,11 +1,12 @@
 import asyncio
 import logging
 import signal
+from collections.abc import Awaitable, Callable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.generations.models import Generation
 from app.generations.service import (
@@ -37,8 +38,43 @@ async def process_generation_work_once(
     limit: int = 10,
     provider: str = PRIMARY_PROVIDER,
 ) -> WorkerCycleResult:
+    """Single-session worker path kept for focused tests and admin/debug use."""
     dispatched = await _dispatch_queued_generations(db, limit=limit, provider=provider)
     polled = await _poll_active_generations(db, limit=limit, provider=provider)
+    return WorkerCycleResult(dispatched=dispatched, polled=polled)
+
+
+async def process_generation_work_concurrently_once(
+    *,
+    session_factory: async_sessionmaker[AsyncSession] = SessionLocal,
+    limit: int = 20,
+    provider: str = PRIMARY_PROVIDER,
+    submit_concurrency: int = 10,
+    poll_concurrency: int = 10,
+) -> WorkerCycleResult:
+    queued_ids, active_ids = await _load_candidate_ids(
+        session_factory=session_factory,
+        limit=limit,
+    )
+
+    dispatched = await _run_bounded(
+        queued_ids,
+        concurrency=submit_concurrency,
+        handler=lambda generation_id: _dispatch_generation_candidate(
+            session_factory=session_factory,
+            generation_id=generation_id,
+            provider=provider,
+        ),
+    )
+    polled = await _run_bounded(
+        active_ids,
+        concurrency=poll_concurrency,
+        handler=lambda generation_id: _poll_generation_candidate(
+            session_factory=session_factory,
+            generation_id=generation_id,
+            provider=provider,
+        ),
+    )
     return WorkerCycleResult(dispatched=dispatched, polled=polled)
 
 
@@ -50,15 +86,11 @@ async def run_generation_worker_forever() -> None:
     logger.info("generation_worker_started")
     try:
         while not stop_event.is_set():
-            async with SessionLocal() as db:
-                try:
-                    result = await process_generation_work_once(db, limit=settings.worker_batch_size)
-                    await db.commit()
-                except Exception:
-                    await db.rollback()
-                    logger.exception("generation_worker_cycle_failed")
-                    await asyncio.sleep(settings.worker_poll_interval_seconds)
-                    continue
+            result = await process_generation_work_concurrently_once(
+                limit=settings.worker_batch_size,
+                submit_concurrency=settings.worker_submit_concurrency,
+                poll_concurrency=settings.worker_poll_concurrency,
+            )
             if result.did_work:
                 logger.info(
                     "generation_worker_cycle_completed",
@@ -67,7 +99,6 @@ async def run_generation_worker_forever() -> None:
                         "polled": result.polled,
                     },
                 )
-            if result.did_work:
                 await asyncio.sleep(0)
             else:
                 with suppress(asyncio.TimeoutError):
@@ -82,6 +113,106 @@ def _install_signal_handlers(stop_event: asyncio.Event) -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         with suppress(NotImplementedError, RuntimeError):
             loop.add_signal_handler(sig, stop_event.set)
+
+
+async def _load_candidate_ids(
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    limit: int,
+) -> tuple[list[str], list[str]]:
+    async with session_factory() as db:
+        queued_result = await db.execute(
+            select(Generation.id)
+            .where(Generation.status == "queued")
+            .order_by(Generation.created_at)
+            .limit(limit)
+        )
+        active_result = await db.execute(
+            select(Generation.id)
+            .where(Generation.status.in_(("sent_to_provider", "processing")))
+            .order_by(Generation.created_at)
+            .limit(limit)
+        )
+        return list(queued_result.scalars().all()), list(active_result.scalars().all())
+
+
+async def _dispatch_generation_candidate(
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    generation_id: str,
+    provider: str,
+) -> bool:
+    async with session_factory() as db:
+        try:
+            result = await db.execute(
+                select(Generation)
+                .where(Generation.id == generation_id)
+                .with_for_update()
+            )
+            generation = result.scalar_one_or_none()
+            if generation is None or generation.status != "queued":
+                await db.rollback()
+                return False
+
+            await dispatch_generation_to_provider(db, generation, provider)
+            await db.commit()
+            return True
+        except Exception:
+            await db.rollback()
+            logger.exception(
+                "generation_dispatch_failed",
+                extra={"generation_id": generation_id, "provider": provider},
+            )
+            return False
+
+
+async def _poll_generation_candidate(
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    generation_id: str,
+    provider: str,
+) -> bool:
+    async with session_factory() as db:
+        try:
+            result = await db.execute(
+                select(Generation)
+                .where(Generation.id == generation_id)
+                .with_for_update()
+            )
+            generation = result.scalar_one_or_none()
+            if generation is None or generation.status not in {"sent_to_provider", "processing"}:
+                await db.rollback()
+                return False
+
+            await poll_generation_provider(db, generation, provider)
+            await db.commit()
+            return True
+        except Exception:
+            await db.rollback()
+            logger.exception(
+                "generation_poll_failed",
+                extra={"generation_id": generation_id, "provider": provider},
+            )
+            return False
+
+
+async def _run_bounded[T](
+    items: Sequence[T],
+    *,
+    concurrency: int,
+    handler: Callable[[T], Awaitable[bool]],
+) -> int:
+    if not items:
+        return 0
+
+    semaphore = asyncio.Semaphore(max(1, concurrency))
+
+    async def run_one(item: T) -> bool:
+        async with semaphore:
+            return await handler(item)
+
+    results = await asyncio.gather(*(run_one(item) for item in items))
+    return sum(results)
 
 
 async def _dispatch_queued_generations(
