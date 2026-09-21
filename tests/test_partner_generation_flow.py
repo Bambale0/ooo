@@ -44,8 +44,10 @@ class FakeArgoLinkAdapter:
         raise error
 
 
-def fake_provider_adapter(provider: str) -> FakeArgoLinkAdapter:
+def fake_provider_adapter(provider: str, *, api_key: str | None = None) -> FakeArgoLinkAdapter:
     assert provider == "argolink"
+    if api_key is not None:
+        assert api_key == "argolink-secret"
     return FakeArgoLinkAdapter()
 
 
@@ -101,7 +103,12 @@ async def test_partner_can_create_idempotent_generation_after_manual_credit(
     invalid_provider_key_response = await client.post(
         "/api/v1/providers/credentials",
         headers=admin_headers,
-        json={"provider": "argolink", "label": "bad", "api_key": "invalid-secret"},
+        json={
+            "provider": "argolink",
+            "label": "bad",
+            "api_key": "invalid-secret",
+            "partner_application_id": application_id,
+        },
     )
     assert invalid_provider_key_response.status_code == 409
     assert invalid_provider_key_response.json()["detail"] == "provider_key_invalid"
@@ -109,7 +116,12 @@ async def test_partner_can_create_idempotent_generation_after_manual_credit(
     provider_key_response = await client.post(
         "/api/v1/providers/credentials",
         headers=admin_headers,
-        json={"provider": "argolink", "label": "test", "api_key": "argolink-secret"},
+        json={
+            "provider": "argolink",
+            "label": "test",
+            "api_key": "argolink-secret",
+            "partner_application_id": application_id,
+        },
     )
     assert provider_key_response.status_code == 201
     assert "api_key" not in provider_key_response.json()
