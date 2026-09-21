@@ -33,6 +33,20 @@ def next_retry_at(
     )
 
 
+def next_poll_at(
+    poll_count: int,
+    *,
+    initial_seconds: float = 5.0,
+    base_seconds: float = 5.0,
+    max_seconds: float = 30.0,
+) -> datetime:
+    if poll_count <= 0:
+        delay_seconds = initial_seconds
+    else:
+        delay_seconds = min(base_seconds * (2 ** max(poll_count - 1, 0)), max_seconds)
+    return utc_now() + timedelta(seconds=delay_seconds)
+
+
 def is_due(value: object | None, *, now: datetime | None = None) -> bool:
     if value is None:
         return True
