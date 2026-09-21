@@ -55,7 +55,7 @@ async def create_generation(
     billable_units = payload.duration_seconds if price.billing_unit == "second" else 1
     price_rub = Decimal(price.price_rub) * Decimal(billable_units)
 
-    if not await has_active_provider_credential(db):
+    if not await has_active_provider_credential(db, partner.id):
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="provider_temporarily_unavailable")
     if not await has_provider_capability(db, model.id, payload.mode, payload.resolution):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="capability_mismatch")
