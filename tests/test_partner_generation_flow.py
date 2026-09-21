@@ -78,6 +78,8 @@ async def test_partner_can_create_idempotent_generation_after_manual_credit(
             "telegram_id": "100500",
             "company_name": "Demo Partner",
             "project_name": "Demo Bot",
+            "accepted_terms": True,
+            "accepted_privacy_policy": True,
         },
     )
     assert application_response.status_code == 201
@@ -89,6 +91,8 @@ async def test_partner_can_create_idempotent_generation_after_manual_credit(
             "telegram_id": "100500",
             "company_name": "Demo Partner",
             "project_name": "Demo Bot",
+            "accepted_terms": True,
+            "accepted_privacy_policy": True,
         },
     )
     assert duplicate_application.status_code == 201
