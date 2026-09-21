@@ -7,10 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.accounts.models import Partner
 from app.generations.models import Generation
 from app.infrastructure.config import get_settings
-from app.infrastructure.retry import is_due, utc_now
-from app.media.models import MediaAsset
-from app.media.service import mark_ingest_retry
-from app.providers.base import ProviderPollResult, ProviderSubmitResult
+from app.infrastructure.retry import utc_now
+from app.providers.base import ProviderPollResult, ProviderResultStream, ProviderSubmitResult
 from app.providers.models import ProviderAttempt
 from app.workers.generation_worker import process_generation_work_once
 
@@ -40,9 +38,20 @@ class FakeArgoLinkAdapter:
             result_url=f"https://argolink.io/v1/videos/{provider_task_id}/content",
         )
 
-    async def fetch_result_content(self, provider_content_url: str):
+    async def open_result_stream(self, provider_content_url: str, *, range_header: str | None = None):
         assert provider_content_url.startswith("https://argolink.io/v1/videos/")
-        return b"fake mp4 bytes", "video/mp4"
+        assert range_header is None
+
+        async def body():
+            yield b"fake "
+            yield b"mp4 bytes"
+
+        return ProviderResultStream(
+            body=body(),
+            content_type="video/mp4",
+            content_length=len(b"fake mp4 bytes"),
+            accept_ranges="bytes",
+        )
 
     def normalize_error(self, error: Exception):
         raise error
@@ -51,16 +60,6 @@ class FakeArgoLinkAdapter:
 def fake_provider_adapter(provider: str, *, api_key: str | None = None) -> FakeArgoLinkAdapter:
     assert provider == "argolink"
     return FakeArgoLinkAdapter(api_key=api_key)
-
-
-class FailingIngestAdapter(FakeArgoLinkAdapter):
-    async def fetch_result_content(self, provider_content_url: str):
-        raise RuntimeError("temporary media outage")
-
-
-def failing_ingest_adapter(provider: str) -> FailingIngestAdapter:
-    assert provider == "argolink"
-    return FailingIngestAdapter()
 
 
 async def test_partner_can_create_idempotent_generation_after_manual_credit(
@@ -291,7 +290,6 @@ async def test_partner_can_create_idempotent_generation_after_manual_credit(
 
     worker_result = await process_generation_work_once(db_session)
     assert worker_result.polled == 1
-    assert worker_result.ingested == 1
 
     completed_generation = await client.get(
         f"/api/v1/generations/{first_body['id']}",
@@ -331,64 +329,6 @@ async def test_partner_can_create_idempotent_generation_after_manual_credit(
 
     rejected_after_revoke = await client.get(f"/api/v1/generations/{first_body['id']}", headers=partner_headers)
     assert rejected_after_revoke.status_code == 401
-
-
-async def test_worker_schedules_media_ingest_retry(
-    db_session: AsyncSession,
-    monkeypatch,
-):
-    async def failing_ingest_provider_asset(*, db, asset):
-        raise RuntimeError("temporary media outage")
-
-    async def resilient_failing_ingest_provider_asset(*, db, asset):
-        try:
-            await failing_ingest_provider_asset(db=db, asset=asset)
-        except Exception as exc:
-            mark_ingest_retry(asset, exc)
-
-    monkeypatch.setattr("app.workers.generation_worker.ingest_provider_asset", resilient_failing_ingest_provider_asset)
-
-    partner = Partner(
-        telegram_id="retry-test",
-        company_name="Retry Partner",
-        project_name="Retry Bot",
-    )
-    db_session.add(partner)
-    await db_session.flush()
-    generation = Generation(
-        partner_id=partner.id,
-        model_id="model-1",
-        model_slug="seedance-2.5",
-        mode="text_to_video",
-        resolution="720p",
-        duration_seconds=5,
-        idempotency_key="retry-media-idem",
-        partner_price_rub=Decimal("100.00"),
-        prompt="retry media",
-        status="completed",
-    )
-    db_session.add(generation)
-    await db_session.flush()
-    asset = MediaAsset(
-        generation_id=generation.id,
-        partner_id=partner.id,
-        provider="argolink",
-        provider_content_url="https://argolink.io/v1/videos/retry/content",
-        public_url="http://localhost:8000/api/v1/media/retry/content",
-        status="provider_ready",
-    )
-    db_session.add(asset)
-    await db_session.flush()
-
-    result = await process_generation_work_once(db_session)
-    await db_session.refresh(asset)
-
-    assert result.ingested == 1
-    assert asset.status == "provider_ready"
-    assert asset.retry_count == 1
-    assert asset.next_attempt_at is not None
-    assert is_due(asset.next_attempt_at) is False
-    assert asset.last_error == "RuntimeError"
 
 
 async def test_worker_marks_stale_provider_attempt_timeout(
