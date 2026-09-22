@@ -1,9 +1,8 @@
 """
 SSRF protection utilities — validate webhook URLs are safe before submission.
 """
-from urllib.parse import urlparse
-
 import ipaddress
+from urllib.parse import urlparse
 
 _BLOCKED_HOST_PATTERNS = (
     "169.254.",       # link-local
@@ -33,7 +32,7 @@ _BLOCKED_HOSTS = {
     "localhost",
     "127.0.0.1",
     "::1",
-    "0.0.0.0",
+    "0.0.0.0",  # nosec B104 - blocked SSRF destination, not a bind address
     "[::1]",
 }
 _BLOCKED_DOMAINS = {
@@ -69,7 +68,7 @@ def validate_webhook_url(url: str) -> bool:
 
     # Resolve DNS and check for private IP
     try:
-        from socket import getaddrinfo, gaierror
+        from socket import gaierror, getaddrinfo
         try:
             addrs = getaddrinfo(host, 80)
             for addr in addrs:

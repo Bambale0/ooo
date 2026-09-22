@@ -3,17 +3,12 @@ Support ticket system for partner support within Telegram.
 """
 
 from datetime import datetime
-from typing import Literal
 
 from sqlalchemy import ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.database import Base
-from app.infrastructure.retry import utc_now
 from app.infrastructure.types import utc_created_at, uuid_pk
-
-
-TicketStatus = Literal["open", "in_progress", "closed"]
 
 
 class SupportTicket(Base):
