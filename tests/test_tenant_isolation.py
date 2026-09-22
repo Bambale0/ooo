@@ -58,22 +58,25 @@ async def test_partner_cannot_read_another_partners_generation(client, db_sessio
     )
     db_session.add(generation)
     await db_session.commit()
+    generation_id = generation.id
+    partner_a_id = partner_a.id
+    partner_b_id = partner_b.id
 
     unauthorized = await client.get(
-        f"/api/v1/generations/{generation.id}",
+        f"/api/v1/generations/{generation_id}",
         headers={"Authorization": "Bearer nrn_tenant_a_generation_key"},
     )
     assert unauthorized.status_code == 404
     assert unauthorized.json()["detail"] == "generation_not_found"
 
     own = await client.get(
-        f"/api/v1/generations/{generation.id}",
+        f"/api/v1/generations/{generation_id}",
         headers={"Authorization": "Bearer nrn_tenant_b_generation_key"},
     )
     assert own.status_code == 200
-    assert own.json()["id"] == generation.id
-    assert own.json()["partner_id"] == partner_b.id
-    assert partner_a.id != partner_b.id
+    assert own.json()["id"] == generation_id
+    assert own.json()["partner_id"] == partner_b_id
+    assert partner_a_id != partner_b_id
 
 
 async def test_partner_cannot_resend_another_partners_webhook_or_mutate_event(client, db_session):
