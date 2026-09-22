@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.generations.models import Generation
 from app.infrastructure.config import get_settings
+from app.infrastructure.metrics import monotonic_seconds, observe_webhook_delivery
 from app.infrastructure.retry import utc_now
 from app.infrastructure.security import decrypt_secret
 from app.webhooks.models import WebhookDelivery, WebhookEvent
@@ -129,6 +130,7 @@ async def deliver_claimed_event(db: AsyncSession, event_id: str) -> bool:
     if signature is not None:
         headers["X-Neironych-Signature"] = f"sha256={signature}"
 
+    delivery_started_at = monotonic_seconds()
     try:
         await validate_public_webhook_url(event.webhook_url)
         response = await _http_client().post(
@@ -144,13 +146,25 @@ async def deliver_claimed_event(db: AsyncSession, event_id: str) -> bool:
             event.next_attempt_at = None
             event.claimed_until = None
             event.attempt_count = attempt
+            observe_webhook_delivery(
+                outcome="delivered",
+                duration_seconds=monotonic_seconds() - delivery_started_at,
+            )
             await db.flush()
             return True
         delivery.status = "failed"
         delivery.error = f"http_{response.status_code}"
+        observe_webhook_delivery(
+            outcome="http_error",
+            duration_seconds=monotonic_seconds() - delivery_started_at,
+        )
     except Exception as exc:
         delivery.status = "failed"
         delivery.error = type(exc).__name__
+        observe_webhook_delivery(
+            outcome="exception",
+            duration_seconds=monotonic_seconds() - delivery_started_at,
+        )
 
     event.attempt_count = attempt
     event.claimed_until = None
