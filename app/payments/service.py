@@ -216,6 +216,7 @@ async def record_confirmed_refund(
         reason=reason,
     )
     db.add(refund)
+    await db.flush()
     await apply_partner_balance_change(
         db=db,
         partner=partner,
