@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./neironych.db"
     redis_url: str = "redis://localhost:6379/0"
     admin_api_token: str = Field(default="change-me", min_length=1)
+    admin_telegram_id: str | None = None
     telegram_bot_token: str | None = None
     log_level: str = "INFO"
     rub_per_usdt: Decimal = Decimal("100.00")

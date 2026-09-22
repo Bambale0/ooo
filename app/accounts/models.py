@@ -32,6 +32,7 @@ class Partner(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
     balance_rub: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=Decimal("0.00"))
     cost_coverage_rub: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=Decimal("0.00"))
+    is_admin: Mapped[bool] = mapped_column(default=False, nullable=False)
     created_at: Mapped[object] = utc_created_at()
 
     api_keys: Mapped[list["ApiKey"]] = relationship(back_populates="partner")
@@ -74,4 +75,14 @@ class PartnerAccountStateHistory(Base):
     from_status: Mapped[str | None] = mapped_column(String(32))
     to_status: Mapped[str] = mapped_column(String(32), nullable=False)
     reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[object] = utc_created_at()
+
+class ProfitWithdrawal(Base):
+    __tablename__ = "profit_withdrawals"
+
+    id: Mapped[str] = uuid_pk()
+    partner_id: Mapped[str] = mapped_column(ForeignKey("partners.id"), nullable=False, index=True)
+    amount_usdt: Mapped[Decimal] = mapped_column(Numeric(36, 18), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    correction_for_id: Mapped[str | None] = mapped_column(ForeignKey("profit_withdrawals.id"))
     created_at: Mapped[object] = utc_created_at()
