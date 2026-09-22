@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.accounts.models import Partner
-from app.billing.models import CoverageLedgerEntry, LedgerEntry
+from app.billing.models import LedgerEntry
 from app.generations.models import Generation
 from app.payments.models import PaymentInvoice
 
@@ -100,7 +100,6 @@ async def record_profit_withdrawal(
     partner_id: str,
 ) -> dict:
     """Record an accounting-only profit withdrawal."""
-    from app.infrastructure.retry import utc_now
     from app.accounts.models import ProfitWithdrawal
     
     withdrawal = ProfitWithdrawal(
