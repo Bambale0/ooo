@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+from dataclasses import dataclass
 from datetime import timedelta
 
 import httpx
@@ -17,6 +18,23 @@ from app.webhooks.security import validate_public_webhook_url
 
 _TERMINAL_STATUSES = {"completed", "failed", "timeout", "cancelled"}
 _client: httpx.AsyncClient | None = None
+
+
+@dataclass(frozen=True)
+class PreparedWebhookDelivery:
+    event_id: str
+    delivery_id: str
+    attempt: int
+    webhook_url: str
+    webhook_secret_encrypted: str | None
+    payload: dict[str, object]
+
+
+@dataclass(frozen=True)
+class WebhookDeliveryOutcome:
+    delivered: bool
+    response_status: int | None = None
+    error: str | None = None
 
 
 async def ensure_terminal_webhook_event(db: AsyncSession, generation: Generation) -> WebhookEvent | None:
@@ -101,13 +119,31 @@ async def claim_due_events(
     return [event.id for event in events]
 
 
-async def deliver_claimed_event(db: AsyncSession, event_id: str) -> bool:
-    event = await db.get(WebhookEvent, event_id)
+async def prepare_claimed_delivery(
+    db: AsyncSession,
+    event_id: str,
+) -> PreparedWebhookDelivery | None:
+    result = await db.execute(
+        select(WebhookEvent)
+        .where(WebhookEvent.id == event_id)
+        .with_for_update()
+    )
+    event = result.scalar_one_or_none()
     if event is None or event.status != "pending":
-        return False
+        return None
 
-    settings = get_settings()
-    now = utc_now()
+    stale_result = await db.execute(
+        select(WebhookDelivery)
+        .where(
+            WebhookDelivery.event_id == event.id,
+            WebhookDelivery.status == "pending",
+        )
+        .with_for_update()
+    )
+    for stale_delivery in stale_result.scalars().all():
+        stale_delivery.status = "outcome_unknown"
+        stale_delivery.error = "previous_delivery_not_finalized"
+
     attempt = event.attempt_count + 1
     delivery = WebhookDelivery(
         event_id=event.id,
@@ -115,68 +151,134 @@ async def deliver_claimed_event(db: AsyncSession, event_id: str) -> bool:
         status="pending",
     )
     db.add(delivery)
+    event.attempt_count = attempt
     await db.flush()
 
-    raw_body = json.dumps(event.payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return PreparedWebhookDelivery(
+        event_id=event.id,
+        delivery_id=delivery.id,
+        attempt=attempt,
+        webhook_url=event.webhook_url,
+        webhook_secret_encrypted=event.webhook_secret_encrypted,
+        payload=dict(event.payload),
+    )
+
+
+async def send_prepared_delivery(prepared: PreparedWebhookDelivery) -> WebhookDeliveryOutcome:
+    now = utc_now()
+    raw_body = json.dumps(prepared.payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     timestamp = str(int(now.timestamp()))
-    signature = _signature(event.webhook_secret_encrypted, timestamp, raw_body)
+    signature = _signature(prepared.webhook_secret_encrypted, timestamp, raw_body)
     headers = {
         "Content-Type": "application/json",
         "X-Neironych-Timestamp": timestamp,
-        "X-Neironych-Event-Id": event.id,
-        "X-Neironych-Delivery-Id": delivery.id,
-        "X-Neironych-Attempt": str(attempt),
+        "X-Neironych-Event-Id": prepared.event_id,
+        "X-Neironych-Delivery-Id": prepared.delivery_id,
+        "X-Neironych-Attempt": str(prepared.attempt),
     }
     if signature is not None:
         headers["X-Neironych-Signature"] = f"sha256={signature}"
 
     delivery_started_at = monotonic_seconds()
     try:
-        await validate_public_webhook_url(event.webhook_url)
+        await validate_public_webhook_url(prepared.webhook_url)
         response = await _http_client().post(
-            event.webhook_url,
+            prepared.webhook_url,
             content=raw_body,
             headers=headers,
         )
-        delivery.response_status = response.status_code
         if 200 <= response.status_code < 300:
-            delivery.status = "delivered"
-            event.status = "delivered"
-            event.delivered_at = utc_now()
-            event.next_attempt_at = None
-            event.claimed_until = None
-            event.attempt_count = attempt
             observe_webhook_delivery(
                 outcome="delivered",
                 duration_seconds=monotonic_seconds() - delivery_started_at,
             )
-            await db.flush()
-            return True
-        delivery.status = "failed"
-        delivery.error = f"http_{response.status_code}"
+            return WebhookDeliveryOutcome(
+                delivered=True,
+                response_status=response.status_code,
+            )
         observe_webhook_delivery(
             outcome="http_error",
             duration_seconds=monotonic_seconds() - delivery_started_at,
         )
+        return WebhookDeliveryOutcome(
+            delivered=False,
+            response_status=response.status_code,
+            error=f"http_{response.status_code}",
+        )
     except Exception as exc:
-        delivery.status = "failed"
-        delivery.error = type(exc).__name__
         observe_webhook_delivery(
             outcome="exception",
             duration_seconds=monotonic_seconds() - delivery_started_at,
         )
+        return WebhookDeliveryOutcome(
+            delivered=False,
+            error=type(exc).__name__,
+        )
 
-    event.attempt_count = attempt
+
+async def finalize_prepared_delivery(
+    db: AsyncSession,
+    prepared: PreparedWebhookDelivery,
+    outcome: WebhookDeliveryOutcome,
+) -> bool:
+    event_result = await db.execute(
+        select(WebhookEvent)
+        .where(WebhookEvent.id == prepared.event_id)
+        .with_for_update()
+    )
+    event = event_result.scalar_one_or_none()
+    delivery_result = await db.execute(
+        select(WebhookDelivery)
+        .where(WebhookDelivery.id == prepared.delivery_id)
+        .with_for_update()
+    )
+    delivery = delivery_result.scalar_one_or_none()
+    if event is None or delivery is None:
+        return False
+    if delivery.status != "pending":
+        return delivery.status == "delivered"
+
+    delivery.response_status = outcome.response_status
+    if outcome.delivered:
+        delivery.status = "delivered"
+        delivery.error = None
+        event.status = "delivered"
+        event.delivered_at = utc_now()
+        event.next_attempt_at = None
+        event.claimed_until = None
+        await db.flush()
+        return True
+
+    delivery.status = "failed"
+    delivery.error = outcome.error
     event.claimed_until = None
-    if now - event.created_at >= timedelta(seconds=settings.webhook_retry_window_seconds):
+    now = utc_now()
+    if now - event.created_at >= timedelta(seconds=get_settings().webhook_retry_window_seconds):
         event.status = "failed"
-        event.failed_at = utc_now()
+        event.failed_at = now
         event.next_attempt_at = None
     else:
-        event.next_attempt_at = utc_now() + timedelta(seconds=settings.webhook_retry_interval_seconds)
+        event.next_attempt_at = now + timedelta(seconds=get_settings().webhook_retry_interval_seconds)
 
     await db.flush()
     return False
+
+
+async def deliver_claimed_event(db: AsyncSession, event_id: str) -> bool:
+    """Crash-durable convenience path.
+
+    The delivery identity and attempt number are committed before the external
+    HTTP side effect. If the process dies after the send but before finalization,
+    the next lease creates a new monotonically increasing attempt and delivery id.
+    """
+
+    prepared = await prepare_claimed_delivery(db, event_id)
+    if prepared is None:
+        return False
+    await db.commit()
+
+    outcome = await send_prepared_delivery(prepared)
+    return await finalize_prepared_delivery(db, prepared, outcome)
 
 
 async def close_webhook_http_client() -> None:

@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+from datetime import timedelta
 from decimal import Decimal
 
 import httpx
@@ -9,13 +10,17 @@ from sqlalchemy import select
 from app.accounts.models import Partner
 from app.generations.models import Generation
 from app.infrastructure.config import get_settings
+from app.infrastructure.retry import utc_now
 from app.infrastructure.security import encrypt_secret
 from app.webhooks.models import WebhookDelivery
 from app.webhooks.service import (
     claim_due_events,
     deliver_claimed_event,
     ensure_terminal_webhook_event,
+    finalize_prepared_delivery,
+    prepare_claimed_delivery,
     request_manual_resend,
+    send_prepared_delivery,
 )
 
 
@@ -223,3 +228,105 @@ async def test_webhook_event_identity_is_per_terminal_business_event(db_session)
     )
     events = list(result.scalars().all())
     assert [event.event_type for event in events] == ["timeout", "completed"]
+
+
+async def test_webhook_retry_after_worker_crash_uses_new_attempt_and_delivery_id(
+    db_session,
+    monkeypatch,
+):
+    partner = Partner(
+        telegram_id="webhook-crash-partner",
+        company_name="Webhook Crash Partner",
+        project_name="Webhook Crash Bot",
+    )
+    db_session.add(partner)
+    await db_session.flush()
+
+    generation = Generation(
+        partner_id=partner.id,
+        model_id="model-webhook-crash",
+        model_slug="seedance-2.5",
+        mode="text_to_video",
+        resolution="720p",
+        duration_seconds=5,
+        idempotency_key="webhook-crash-idem",
+        partner_price_rub=Decimal("100.00"),
+        prompt="webhook crash test",
+        request_payload={"duration_seconds": 5},
+        result_url="https://cdn.example.test/crash-result.mp4",
+        status="completed",
+        webhook_url_snapshot="https://partner.example.test/hooks/neironych",
+    )
+    db_session.add(generation)
+    await db_session.flush()
+
+    event = await ensure_terminal_webhook_event(db_session, generation)
+    assert event is not None
+    event_id = event.id
+    await db_session.commit()
+
+    async def allow_test_url(url: str) -> None:
+        assert url == "https://partner.example.test/hooks/neironych"
+
+    recorder = RecordingWebhookClient()
+    monkeypatch.setattr("app.webhooks.service.validate_public_webhook_url", allow_test_url)
+    monkeypatch.setattr("app.webhooks.service._client", recorder)
+
+    claimed = await claim_due_events(db_session, limit=1)
+    assert claimed == [event_id]
+    await db_session.commit()
+
+    first = await prepare_claimed_delivery(db_session, event_id)
+    assert first is not None
+    await db_session.commit()
+
+    first_outcome = await send_prepared_delivery(first)
+    assert first_outcome.delivered is True
+    assert len(recorder.calls) == 1
+
+    # Fault injection: the process dies after HTTP success but before DB finalization.
+    # The first delivery intent is durable, but its outcome is intentionally unknown.
+    await db_session.rollback()
+    event = await db_session.get(type(event), event_id)
+    assert event is not None
+    event.claimed_until = utc_now() - timedelta(seconds=1)
+    event.next_attempt_at = utc_now() - timedelta(seconds=1)
+    await db_session.commit()
+
+    claimed_again = await claim_due_events(db_session, limit=1)
+    assert claimed_again == [event_id]
+    await db_session.commit()
+
+    second = await prepare_claimed_delivery(db_session, event_id)
+    assert second is not None
+    assert second.attempt == 2
+    assert second.delivery_id != first.delivery_id
+    await db_session.commit()
+
+    second_outcome = await send_prepared_delivery(second)
+    assert second_outcome.delivered is True
+    finalized = await finalize_prepared_delivery(db_session, second, second_outcome)
+    assert finalized is True
+    await db_session.commit()
+
+    assert len(recorder.calls) == 2
+    first_headers = recorder.calls[0]["headers"]
+    second_headers = recorder.calls[1]["headers"]
+    assert isinstance(first_headers, dict)
+    assert isinstance(second_headers, dict)
+    assert first_headers["X-Neironych-Event-Id"] == event_id
+    assert second_headers["X-Neironych-Event-Id"] == event_id
+    assert first_headers["X-Neironych-Attempt"] == "1"
+    assert second_headers["X-Neironych-Attempt"] == "2"
+    assert first_headers["X-Neironych-Delivery-Id"] != second_headers["X-Neironych-Delivery-Id"]
+
+    delivery_result = await db_session.execute(
+        select(WebhookDelivery)
+        .where(WebhookDelivery.event_id == event_id)
+        .order_by(WebhookDelivery.attempt)
+    )
+    deliveries = list(delivery_result.scalars().all())
+    assert [delivery.attempt for delivery in deliveries] == [1, 2]
+    assert deliveries[0].status == "outcome_unknown"
+    assert deliveries[0].error == "previous_delivery_not_finalized"
+    assert deliveries[1].status == "delivered"

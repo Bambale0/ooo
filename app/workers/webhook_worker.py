@@ -6,7 +6,13 @@ from contextlib import suppress
 from app.infrastructure.config import get_settings
 from app.infrastructure.database import SessionLocal
 from app.infrastructure.logging import configure_logging
-from app.webhooks.service import claim_due_events, close_webhook_http_client, deliver_claimed_event
+from app.webhooks.service import (
+    claim_due_events,
+    close_webhook_http_client,
+    finalize_prepared_delivery,
+    prepare_claimed_delivery,
+    send_prepared_delivery,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,12 +32,29 @@ async def process_webhook_work_once() -> int:
         async with semaphore:
             async with SessionLocal() as db:
                 try:
-                    delivered = await deliver_claimed_event(db, event_id)
+                    prepared = await prepare_claimed_delivery(db, event_id)
+                    if prepared is None:
+                        await db.rollback()
+                        return False
+                    # Persist delivery_id + monotonically increasing attempt before
+                    # the HTTP side effect. A crash after send can then retry as
+                    # a new delivery rather than reusing the same attempt identity.
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
+                    logger.exception("webhook_delivery_prepare_failed", extra={"event_id": event_id})
+                    return False
+
+            outcome = await send_prepared_delivery(prepared)
+
+            async with SessionLocal() as db:
+                try:
+                    delivered = await finalize_prepared_delivery(db, prepared, outcome)
                     await db.commit()
                     return delivered
                 except Exception:
                     await db.rollback()
-                    logger.exception("webhook_delivery_failed", extra={"event_id": event_id})
+                    logger.exception("webhook_delivery_finalize_failed", extra={"event_id": event_id})
                     return False
 
     await asyncio.gather(*(deliver(event_id) for event_id in event_ids))
