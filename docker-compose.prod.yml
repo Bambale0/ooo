@@ -1,11 +1,17 @@
 # Production Docker Compose override
-# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# Usage:
+#   NEIRONYCH_IMAGE=ghcr.io/owner/ooo:<commit-sha> \
+#   APP_REVISION=<commit-sha> \
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --no-build
 
 services:
   app:
+    image: ${NEIRONYCH_IMAGE:?NEIRONYCH_IMAGE is required}
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       APP_ENV: production
+      APP_REVISION: ${APP_REVISION:?APP_REVISION is required}
       LOG_LEVEL: INFO
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8000/api/v1/health/readiness || exit 1"]
@@ -21,9 +27,12 @@ services:
           memory: 256M
 
   worker:
+    image: ${NEIRONYCH_IMAGE:?NEIRONYCH_IMAGE is required}
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       APP_ENV: production
+      APP_REVISION: ${APP_REVISION:?APP_REVISION is required}
       LOG_LEVEL: INFO
     deploy:
       resources:
@@ -33,9 +42,12 @@ services:
           memory: 256M
 
   webhook_worker:
+    image: ${NEIRONYCH_IMAGE:?NEIRONYCH_IMAGE is required}
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       APP_ENV: production
+      APP_REVISION: ${APP_REVISION:?APP_REVISION is required}
       LOG_LEVEL: INFO
     deploy:
       resources:
