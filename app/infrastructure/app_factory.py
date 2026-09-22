@@ -66,20 +66,51 @@ def create_app() -> FastAPI:
     return app
 
 
-def _bounded_route_label(app: FastAPI, request: Request) -> str:
-    path = request.url.path
-    for route in app.router.routes:
-        template = getattr(route, "path", None)
-        if not isinstance(template, str):
-            continue
-        if "{" not in template and template == path:
-            return template
+_ROUTE_SEGMENT_ALLOWLIST = {
+    "api",
+    "v0",
+    "v1",
+    "health",
+    "readiness",
+    "accounts",
+    "applications",
+    "approve",
+    "reject",
+    "partners",
+    "api-keys",
+    "revoke",
+    "delete",
+    "catalog",
+    "models",
+    "pricing",
+    "enable",
+    "enable-gates",
+    "billing",
+    "manual-adjustments",
+    "balance",
+    "ledger",
+    "generations",
+    "dispatch",
+    "poll-provider",
+    "webhook",
+    "resend",
+    "media",
+    "content",
+    "providers",
+    "credentials",
+    "capabilities",
+    "internal",
+    "metrics",
+}
 
-        path_regex = getattr(route, "path_regex", None)
-        methods = getattr(route, "methods", None)
-        if path_regex is None or path_regex.match(path) is None:
-            continue
-        if methods is not None and request.method not in methods:
-            continue
-        return template
-    return "unmatched"
+
+def _bounded_route_label(app: FastAPI, request: Request) -> str:
+    del app  # Route labels are normalized from an explicit bounded segment vocabulary.
+    segments = [segment for segment in request.url.path.split("/") if segment]
+    if not segments:
+        return "/"
+    normalized = [
+        segment if segment in _ROUTE_SEGMENT_ALLOWLIST else "{param}"
+        for segment in segments
+    ]
+    return "/" + "/".join(normalized)
