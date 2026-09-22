@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.billing.service import release_generation_reserve, settle_generation_reserve
 from app.generations.models import Generation
 from app.infrastructure.config import get_settings
+from app.infrastructure.metrics import monotonic_seconds, observe_provider_request
 from app.infrastructure.retry import is_due, is_older_than, next_poll_at, next_retry_at
 from app.media.service import create_provider_ready_asset
 from app.providers.base import ProviderAdapterError, ProviderGenerationRequest
@@ -80,7 +81,23 @@ async def dispatch_generation_to_provider(
     )
     try:
         await get_provider_rate_limiter(provider, "submit").acquire()
-        result = await adapter.submit_generation(request)
+        provider_started_at = monotonic_seconds()
+        try:
+            result = await adapter.submit_generation(request)
+        except Exception:
+            observe_provider_request(
+                provider=provider,
+                operation="submit",
+                outcome="error",
+                duration_seconds=monotonic_seconds() - provider_started_at,
+            )
+            raise
+        observe_provider_request(
+            provider=provider,
+            operation="submit",
+            outcome="success",
+            duration_seconds=monotonic_seconds() - provider_started_at,
+        )
         if attempt is None:
             attempt = ProviderAttempt(generation_id=generation.id, provider=provider)
             db.add(attempt)
@@ -169,7 +186,23 @@ async def poll_generation_provider(
     adapter = await get_partner_provider_adapter(db, generation.partner_id, provider)
     try:
         await get_provider_rate_limiter(provider, "poll").acquire()
-        result = await adapter.poll_generation(attempt.provider_task_id)
+        provider_started_at = monotonic_seconds()
+        try:
+            result = await adapter.poll_generation(attempt.provider_task_id)
+        except Exception:
+            observe_provider_request(
+                provider=provider,
+                operation="poll",
+                outcome="error",
+                duration_seconds=monotonic_seconds() - provider_started_at,
+            )
+            raise
+        observe_provider_request(
+            provider=provider,
+            operation="poll",
+            outcome=result.status if result.status in {"completed", "failed", "processing"} else "success",
+            duration_seconds=monotonic_seconds() - provider_started_at,
+        )
     except Exception as exc:
         normalized = adapter.normalize_error(exc)
         if reconciling_late_success:
