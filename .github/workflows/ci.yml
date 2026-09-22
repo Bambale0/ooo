@@ -70,7 +70,36 @@ jobs:
 
       - name: Secret scan
         run: |
-          detect-secrets scan app ops .github Dockerfile docker-compose.yml .env.example --exclude-files 'ops/load/README\\.md' > /tmp/secrets.json
+          detect-secrets scan app ops .github Dockerfile docker-compose.yml .env.example --exclude-files '^ops/load/README[.]md > /tmp/secrets.json
+          python - <<'PY'
+          import json
+          import sys
+
+          with open("/tmp/secrets.json", encoding="utf-8") as handle:
+              report = json.load(handle)
+
+          findings = {
+              path: items
+              for path, items in report.get("results", {}).items()
+              if items
+          }
+          for path, items in sorted(findings.items()):
+              for item in items:
+                  print(f"{path}:{item.get('line_number')}: {item.get('type')}")
+          sys.exit(1 if findings else 0)
+          PY
+
+      - name: Apply migrations
+        run: alembic upgrade head
+
+      - name: Test
+        run: python -m pytest -q
+
+      - name: Build production image
+        env:
+          IMAGE_TAG: neironych-ci:${{ github.sha }}
+        run: docker build --tag "$IMAGE_TAG" .
+ > /tmp/secrets.json
           python - <<'PY'
           import json
           import sys
