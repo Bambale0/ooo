@@ -167,7 +167,7 @@ async def seed() -> None:
                         label="load-test-never-send",
                         key_hash=hash_secret(dummy_secret),
                         key_prefix="loadtest",
-                        encrypted_api_key="invalid-load-test-ciphertext",
+                        encrypted_api_key="invalid-load-test-ciphertext",  # pragma: allowlist secret
                         partner_id=partner.id,
                         is_active=True,
                     )
