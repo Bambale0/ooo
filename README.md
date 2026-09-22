@@ -6,6 +6,9 @@
 
 > **Статус репозитория:** здесь зафиксирована продуктовая спецификация, implementation epics, launch checklist и начальный runtime-код EPIC 01. Реализованы базовый FastAPI-каркас, настройки, async SQLAlchemy/Alembic, Redis abstraction, health/readiness, Docker Compose, Nginx и первый партнёрский API-срез. Остальные функции из документации не считать готовыми, пока они не покрыты кодом и тестами.
 
+Актуальная проверка: [production review](docs/PRODUCTION_REVIEW.md), [сверка ArgoLink](docs/ARGOLINK_CONTRACT.md), [операции](docs/OPERATIONS.md). Полный resale PASS пока не выдан; ограничения перечислены в review.
+
+
 ## Содержание
 
 - [Что строим](#что-строим)

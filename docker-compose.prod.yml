@@ -1,6 +1,6 @@
 # Standalone production stack: docker compose --env-file .env -f docker-compose.prod.yml up -d
 x-runtime: &runtime
-  image: ${APP_IMAGE:?Set APP_IMAGE to an immutable image digest or commit tag}
+  image: ${NEIRONYCH_IMAGE:?Set NEIRONYCH_IMAGE to an immutable image digest or commit tag}
   env_file: .env
   environment:
     APP_ENV: production

@@ -1,5 +1,8 @@
 # Нейроныч — implementation status
 
+> Обновление 2026-09-23: текущее состояние и ограничения — в [docs/PRODUCTION_REVIEW.md](docs/PRODUCTION_REVIEW.md). Нижележащие исторические записи не являются доказательством текущей готовности.
+
+
 > Этот файл отражает текущее состояние runtime-реализации и не заменяет `PRODUCTION_LAUNCH_CHECKLIST.md`.
 > Production launch по-прежнему возможен только после полного checklist PASS.
 

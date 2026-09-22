@@ -1,30 +1,143 @@
-name: Build release candidate
+name: Deploy to Production
 
-# Building a candidate is safe; production deployment is an explicit environment operation.
 on:
-  workflow_dispatch:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+    branches:
+      - main
 
 permissions:
   contents: read
-  actions: read
   packages: write
 
 jobs:
-  image:
+  deploy:
     runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    environment: production
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+    env:
+      RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - name: Require successful CI for this exact revision
+      - name: Checkout verified revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Normalize registry path
+        run: echo "IMAGE_REPOSITORY=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - name: Build and push immutable production image
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+        with:
+          context: .
+          push: true
+          tags: ${{ env.IMAGE_REPOSITORY }}:${{ env.RELEASE_SHA }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install pinned SSH identity
         env:
-          GH_TOKEN: ${{ github.token }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
         run: |
-          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&status=success" --jq '.total_count > 0' | grep -qx true
-      - name: Authenticate registry
+          set -euo pipefail
+          test -n "$DEPLOY_SSH_KEY"
+          test -n "$DEPLOY_KNOWN_HOSTS"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/deploy_key ~/.ssh/known_hosts
+
+      - name: Deploy verified revision with automatic rollback
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-      - name: Build immutable candidate
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
         run: |
-          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}:$GITHUB_SHA"
-          docker build --tag "$IMAGE" .
-          docker push "$IMAGE"
+          set -euo pipefail
+          test -n "$DEPLOY_HOST"
+          ssh -o BatchMode=yes -i ~/.ssh/deploy_key "deploy@$DEPLOY_HOST" \
+            "RELEASE_SHA='${RELEASE_SHA}' REPOSITORY='${{ github.repository }}' bash -s" <<'SSH'
+          set -euo pipefail
+
+          REPO="ghcr.io/${REPOSITORY,,}"
+          TAG="${RELEASE_SHA}"
+          COMPOSE_DIR="/opt/neironych"
+          REVISION_FILE="${COMPOSE_DIR}/REVISION"
+          PREVIOUS_TAG="$(cat "${REVISION_FILE}" 2>/dev/null || true)"
+
+          cd "${COMPOSE_DIR}"
+
+          compose() {
+            docker compose \
+              -f "${COMPOSE_DIR}/docker-compose.prod.yml" \
+              "$@"
+          }
+
+          verify_revision() {
+            expected="$1"
+            for attempt in $(seq 1 12); do
+              sleep 5
+              status="$(curl -fsS http://localhost:8000/api/v1/readiness 2>/dev/null || true)"
+              if printf '%s' "$status" | grep -Fq "\"revision\":\"${expected}\""; then
+                return 0
+              fi
+              echo "Waiting for revision ${expected}; attempt ${attempt}/12"
+            done
+            return 1
+          }
+
+          rollback() {
+            if [ -z "${PREVIOUS_TAG}" ]; then
+              echo "No previous revision recorded; automatic rollback is unavailable"
+              return 1
+            fi
+
+            echo "Rolling back to ${PREVIOUS_TAG}"
+            export NEIRONYCH_IMAGE="${REPO}:${PREVIOUS_TAG}"
+            export APP_REVISION="${PREVIOUS_TAG}"
+            docker pull "${NEIRONYCH_IMAGE}"
+            compose up -d --no-build app worker webhook_worker
+            verify_revision "${PREVIOUS_TAG}"
+          }
+
+          export NEIRONYCH_IMAGE="${REPO}:${TAG}"
+          export APP_REVISION="${TAG}"
+
+          docker pull "${NEIRONYCH_IMAGE}"
+
+          # Migrations must follow the project's expand/deploy/contract rule so the
+          # previous application image remains compatible if health verification fails.
+          compose run --rm -e APP_REVISION="${TAG}" app alembic upgrade head
+
+          compose up -d --no-build app worker webhook_worker
+
+          if verify_revision "${TAG}"; then
+            printf '%s\n' "${TAG}" > "${REVISION_FILE}"
+            echo "Deploy verified: revision ${TAG} is live"
+            exit 0
+          fi
+
+          echo "ERROR: revision ${TAG} did not become ready; attempting rollback"
+          if rollback; then
+            echo "Rollback verified: revision ${PREVIOUS_TAG} is live"
+          else
+            echo "CRITICAL: automatic rollback failed"
+          fi
+          exit 1
+          SSH

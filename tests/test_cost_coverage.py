@@ -191,3 +191,49 @@ async def test_manual_retail_adjustment_does_not_increase_cost_coverage(client, 
     await db_session.refresh(partner)
     assert Decimal(partner.balance_rub) == Decimal("500.00")
     assert Decimal(partner.cost_coverage_rub) == Decimal("300.00")
+
+
+async def test_invalid_duration_does_not_reserve_funds_or_consume_key(client, db_session):
+    partner_id, token = await _seed_generation_preflight(db_session)
+    headers = {"Authorization": f"Bearer {token}"}
+    invalid = await client.post(
+        "/api/v1/generations",
+        headers=headers,
+        json={
+            "model_slug": "seedance-2.5",
+            "mode": "text_to_video",
+            "resolution": "720p",
+            "duration_seconds": 3,
+            "prompt": "test",
+            "idempotency_key": "invalid-duration",
+        },
+    )
+    assert invalid.status_code == 422
+    assert invalid.json()["detail"] == "unsupported_duration"
+    assert (await db_session.execute(select(Generation))).scalars().all() == []
+    partner = await db_session.get(Partner, partner_id)
+    assert partner.balance_rub == Decimal("1000.00")
+
+
+async def test_fx_cost_increase_rejects_before_creation_and_key_can_be_reused(client, db_session, monkeypatch):
+    partner_id, token = await _seed_generation_preflight(db_session)
+    partner = await db_session.get(Partner, partner_id)
+    partner.cost_coverage_rub = Decimal("1000")
+    await db_session.commit()
+    settings = get_settings()
+    monkeypatch.setattr(settings, "rub_per_usdt", Decimal("200"))
+    payload = {
+        "model_slug": "seedance-2.5",
+        "mode": "text_to_video",
+        "resolution": "720p",
+        "duration_seconds": 5,
+        "prompt": "test",
+        "idempotency_key": "fx-retry-same-key",
+    }
+    headers = {"Authorization": f"Bearer {token}"}
+    rejected = await client.post("/api/v1/generations", headers=headers, json=payload)
+    assert rejected.status_code == 503
+    assert (await db_session.execute(select(Generation))).scalars().all() == []
+    monkeypatch.setattr(settings, "rub_per_usdt", Decimal("100"))
+    accepted = await client.post("/api/v1/generations", headers=headers, json=payload)
+    assert accepted.status_code == 202
