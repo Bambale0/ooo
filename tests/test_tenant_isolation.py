@@ -57,7 +57,7 @@ async def test_partner_cannot_read_another_partners_generation(client, db_sessio
         result_url="https://cdn.example.test/private-b.mp4",
     )
     db_session.add(generation)
-    await db_session.flush()
+    await db_session.commit()
 
     unauthorized = await client.get(
         f"/api/v1/generations/{generation.id}",
@@ -115,7 +115,7 @@ async def test_partner_cannot_resend_another_partners_webhook_or_mutate_event(cl
         next_attempt_at=None,
     )
     db_session.add(event)
-    await db_session.flush()
+    await db_session.commit()
 
     response = await client.post(
         f"/api/v1/generations/{generation.id}/webhook/resend",
@@ -171,7 +171,7 @@ async def test_partner_cannot_stream_another_partners_media_before_provider_acce
         content_type="video/mp4",
     )
     db_session.add(asset)
-    await db_session.flush()
+    await db_session.commit()
 
     async def provider_access_must_not_happen(*args, **kwargs):
         raise AssertionError("provider access occurred before tenant ownership check")
@@ -200,6 +200,7 @@ async def test_partner_key_cannot_access_admin_billing_of_another_partner(client
         telegram_id="tenant-b-admin-boundary",
         token="nrn_tenant_b_admin_boundary_key",
     )
+    await db_session.commit()
 
     response = await client.get(
         f"/api/v1/billing/partners/{partner_b.id}/balance",
