@@ -327,10 +327,6 @@ async def _poll_active_generations(
     return count
 
 
-if __name__ == "__main__":
-    asyncio.run(run_generation_worker_forever())
-
-
 async def _refresh_generation_queue_metrics(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -349,8 +345,9 @@ async def _refresh_generation_queue_metrics_with_session(db: AsyncSession) -> No
         .where(Generation.status.in_(statuses))
         .group_by(Generation.status)
     )
-    rows = {
-        status: (int(depth), oldest)
-        for status, depth, oldest in result.all()
-    }
+    rows = {status: (int(depth), oldest) for status, depth, oldest in result.all()}
     update_generation_queue_metrics(rows, now=utc_now())
+
+
+if __name__ == "__main__":
+    asyncio.run(run_generation_worker_forever())
