@@ -1,3 +1,4 @@
+# Python
 *.db
 *.sqlite
 *.sqlite3
@@ -9,3 +10,34 @@ __pycache__/
 venv/
 .env
 var/
+
+# Secrets
+**/secrets.*
+**/private_key*
+**/*.pem
+nginx/ssl/
+
+# Build
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp
+.pytest_cache/
+.ruff_cache/
+.commitshow/
+
+# Backup
+ops/backup/*.sql.gz*
+ops/backup/wal/
+!ops/backup/backup.sh

@@ -4,13 +4,14 @@ from sqlalchemy import text
 
 from app.api.dependencies import DbSession
 from app.infrastructure.redis import create_redis_client
+from app.infrastructure.state import APP_REVISION
 
 router = APIRouter()
 
 
 @router.get("/health")
-async def health() -> dict[str, str]:
-    return {"status": "ok"}
+async def health() -> JSONResponse:
+    return JSONResponse({"status": "ok", "revision": APP_REVISION})
 
 
 @router.get("/readiness")
@@ -34,5 +35,5 @@ async def readiness(db: DbSession) -> JSONResponse:
 
     return JSONResponse(
         status_code=status.HTTP_200_OK if ready else status.HTTP_503_SERVICE_UNAVAILABLE,
-        content={"status": "ready" if ready else "not_ready", "checks": checks},
+        content={"status": "ready" if ready else "not_ready", "checks": checks, "revision": APP_REVISION},
     )

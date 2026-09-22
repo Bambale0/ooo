@@ -2,7 +2,8 @@ async def test_health_returns_ok(client):
     response = await client.get("/api/v1/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    body = response.json()
+    assert body["status"] == "ok"
 
 
 async def test_readiness_is_ready_when_database_works_even_if_redis_degraded(client):

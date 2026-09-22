@@ -1,19 +1,22 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, status
-from fastapi.responses import JSONResponse, Response
+from fastapi import FastAPI, Request, Response, status
+from fastapi.responses import JSONResponse
 
 from app.api.router import api_router
 from app.infrastructure.config import get_settings
 from app.infrastructure.database import engine
 from app.infrastructure.logging import configure_logging
 from app.infrastructure.metrics import metrics_payload, monotonic_seconds, observe_http_request, refresh_db_pool_metrics
+from app.infrastructure.state import APP_REVISION, _load_revision
 from app.providers.http_client import close_provider_http_clients
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    global APP_REVISION
+    APP_REVISION = _load_revision()
     configure_logging()
     try:
         yield
@@ -67,45 +70,23 @@ def create_app() -> FastAPI:
 
 
 _ROUTE_SEGMENT_ALLOWLIST = {
-    "api",
-    "v0",
-    "v1",
-    "health",
-    "readiness",
-    "accounts",
-    "applications",
-    "approve",
-    "reject",
-    "partners",
-    "api-keys",
-    "revoke",
-    "delete",
-    "catalog",
-    "models",
-    "pricing",
-    "enable",
-    "enable-gates",
-    "billing",
-    "manual-adjustments",
-    "balance",
-    "ledger",
-    "generations",
-    "dispatch",
-    "poll-provider",
-    "webhook",
-    "resend",
+    "api", "v0", "v1", "health", "readiness",
+    "accounts", "applications", "approve", "reject",
+    "partners", "api-keys", "revoke", "delete",
+    "catalog", "models", "pricing", "enable", "enable-gates",
+    "billing", "manual-adjustments", "balance", "ledger",
+    "generations", "dispatch", "poll-provider",
+    "webhook", "resend",
     "media",
+    "payments", "invoices", "cancel", "credit", "refunds", "crypto-pay",
     "content",
-    "providers",
-    "credentials",
-    "capabilities",
-    "internal",
-    "metrics",
+    "providers", "credentials", "capabilities",
+    "internal", "metrics",
 }
 
 
 def _bounded_route_label(app: FastAPI, request: Request) -> str:
-    del app  # Route labels are normalized from an explicit bounded segment vocabulary.
+    del app
     segments = [segment for segment in request.url.path.split("/") if segment]
     if not segments:
         return "/"
