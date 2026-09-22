@@ -14,6 +14,7 @@ from app.generations import models as generation_models  # noqa: F401
 from app.infrastructure.config import get_settings
 from app.infrastructure.database import Base
 from app.media import models as media_models  # noqa: F401
+from app.payments import models as payment_models  # noqa: F401
 from app.providers import models as provider_models  # noqa: F401
 from app.support import models as support_models  # noqa: F401
 from app.webhooks import models as webhook_models  # noqa: F401

@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     argolink_http_keepalive_expiry_seconds: float = Field(default=30.0, gt=0)
     argolink_submit_rps: float = Field(default=10.0, ge=0)
     argolink_poll_rps: float = Field(default=50.0, ge=0)
+    crypto_pay_api_token: str | None = None
+    crypto_pay_base_url: str = "https://pay.crypt.bot"
+    crypto_pay_timeout_seconds: float = Field(default=10.0, gt=0)
     public_api_base_url: str = "http://localhost:8000"
     public_media_base_url: str | None = None
     media_storage_backend: str = "local"
