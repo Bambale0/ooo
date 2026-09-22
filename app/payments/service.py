@@ -131,7 +131,10 @@ async def apply_paid_provider_invoice(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="payment_provider_id_conflict")
 
     was_expired = payment.status == "expired"
-    if payment.expires_at is not None and payment.expires_at <= utc_now():
+    expires_at_2 = payment.expires_at
+    if expires_at_2 is not None and expires_at_2.tzinfo is None:
+        expires_at_2 = expires_at_2.replace(tzinfo=UTC)
+    if expires_at_2 is not None and expires_at_2 <= utc_now():
         was_expired = True
 
     _apply_provider_invoice(payment, provider_invoice)
@@ -286,7 +289,10 @@ def _apply_provider_invoice(payment: PaymentInvoice, invoice: CryptoPayInvoice) 
 
 
 def _mark_expired_if_needed(payment: PaymentInvoice) -> None:
-    if payment.status == "active" and payment.expires_at is not None and payment.expires_at <= utc_now():
+    expires_at = payment.expires_at
+    if expires_at is not None and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    if payment.status == "active" and expires_at is not None and expires_at <= utc_now():
         payment.status = "expired"
 
 

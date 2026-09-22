@@ -1,5 +1,4 @@
 import json
-from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy import select
