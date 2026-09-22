@@ -32,7 +32,7 @@ _BLOCKED_HOSTS = {
     "localhost",
     "127.0.0.1",
     "::1",
-    "0.0.0.0",
+    "0.0.0.0",  # nosec B104 - blocked SSRF destination, not a bind address
     "[::1]",
 }
 _BLOCKED_DOMAINS = {
