@@ -9,7 +9,6 @@ from sqlalchemy import ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.database import Base
-from app.infrastructure.retry import utc_now
 from app.infrastructure.types import utc_created_at, uuid_pk
 
 
