@@ -166,7 +166,7 @@ async def test_partner_cannot_stream_another_partners_media_before_provider_acce
         partner_id=partner_b.id,
         provider="argolink",
         provider_content_url="https://argolink.io/v1/videos/private-b/content",
-        public_url=f"http://localhost:8000/api/v1/media/private-b/content",
+        public_url="http://localhost:8000/api/v1/media/private-b/content",
         status="provider_ready",
         content_type="video/mp4",
     )
