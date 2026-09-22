@@ -30,6 +30,7 @@ jobs:
       REDIS_URL: redis://localhost:6399/0
       ADMIN_API_TOKEN: ci-admin-token
       ARGOLINK_API_KEY: ci-argolink-key
+      PROVIDER_CREDENTIALS_MASTER_KEY: ci-provider-credentials-master-key-32
 
     steps:
       - name: Checkout
