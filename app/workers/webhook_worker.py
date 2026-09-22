@@ -6,6 +6,7 @@ from contextlib import suppress
 from app.infrastructure.config import get_settings
 from app.infrastructure.database import SessionLocal
 from app.infrastructure.logging import configure_logging
+from app.infrastructure.production_check import require_production_config
 from app.webhooks.service import (
     claim_due_events,
     close_webhook_http_client,
@@ -62,6 +63,7 @@ async def process_webhook_work_once() -> int:
 
 
 async def run_webhook_worker_forever() -> None:
+    require_production_config()
     configure_logging()
     settings = get_settings()
     stop_event = asyncio.Event()

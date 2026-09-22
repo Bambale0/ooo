@@ -4,7 +4,7 @@ Support ticket system for partner support within Telegram.
 
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, String, Text
+from sqlalchemy import BigInteger, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.database import Base
@@ -19,7 +19,7 @@ class SupportTicket(Base):
     subject: Mapped[str] = mapped_column(String(200), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="open", index=True)
     priority: Mapped[str] = mapped_column(String(20), nullable=False, default="normal")
-    closed_at: Mapped[datetime | None] = mapped_column(default=None)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     created_at: Mapped[object] = utc_created_at()
 
 
@@ -41,6 +41,6 @@ class SupportAttachment(Base):
     id: Mapped[str] = uuid_pk()
     message_id: Mapped[str] = mapped_column(ForeignKey("support_messages.id"), nullable=False, index=True)
     file_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    file_size_bytes: Mapped[int] = mapped_column(nullable=False)
+    file_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     storage_path: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[object] = utc_created_at()

@@ -22,6 +22,8 @@ services:
   worker:
     build: .
     command: ["python", "-m", "app.workers.generation_worker"]
+    healthcheck:
+      disable: true
     environment:
       APP_ENV: test
       APP_NAME: neironych
@@ -41,6 +43,8 @@ services:
   webhook_worker:
     build: .
     command: ["python", "-m", "app.workers.webhook_worker"]
+    healthcheck:
+      disable: true
     environment:
       APP_ENV: test
       APP_NAME: neironych

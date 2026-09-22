@@ -1,3 +1,4 @@
+import re
 from typing import Any
 
 import httpx
@@ -12,6 +13,7 @@ from app.providers.base import (
     ProviderSubmitResult,
 )
 from app.providers.http_client import get_provider_http_client
+from app.providers.video_contract import video_request_body
 
 
 class ArgoLinkAdapter:
@@ -48,7 +50,20 @@ class ArgoLinkAdapter:
                 )
             except httpx.HTTPError:
                 return False
-            return response.status_code not in {401, 403}
+            # A protected not-found response is the only expected success for this sentinel.
+            # Compare with an invalid-key control; a proxy returning 404 for everything
+            # must never activate a credential.
+            if response.status_code != 404:
+                return False
+            try:
+                data = response.json()
+                control = await client.get(
+                    "/v1/videos/00000000-0000-0000-0000-000000000000",
+                    headers={"Authorization": "Bearer invalid-contract-probe"},
+                )
+            except (httpx.HTTPError, ValueError):
+                return False
+            return isinstance(data, dict) and control.status_code == 401
 
     async def submit_generation(self, payload: ProviderGenerationRequest) -> ProviderSubmitResult:
         if not self.api_key:
@@ -56,28 +71,24 @@ class ArgoLinkAdapter:
                 public_code="provider_temporarily_unavailable",
                 raw_error="ARGOLINK_API_KEY is not configured",
             )
-        request_body: dict[str, object] = {
-            "model": payload.model_slug,
-            "prompt": payload.prompt,
-            "duration": payload.duration_seconds,
-            "metadata": {
-                "generation_id": payload.generation_id,
-                "mode": payload.mode,
-                "resolution": payload.resolution,
-            },
-        }
-        if payload.resolution != "default":
-            request_body["resolution"] = payload.resolution
-        if payload.aspect_ratio:
-            request_body["aspect_ratio"] = payload.aspect_ratio
-        if payload.reference_images:
-            request_body["reference_images"] = [{"url": url} for url in payload.reference_images]
+        try:
+            request_body = video_request_body(payload)
+        except ValueError as exc:
+            raise ProviderAdapterError("provider_rejected_request", str(exc), retryable=False) from exc
         async with self._http_client() as client:
             try:
                 response = await client.post("/v1/videos/generations", json=request_body, headers=self._auth_headers())
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:
-                raise self._http_error_to_provider_error(exc.response) from exc
+                error = self._http_error_to_provider_error(exc.response)
+                # Without upstream idempotency, server errors can follow acceptance.
+                if exc.response.status_code == 408 or exc.response.status_code >= 500:
+                    error = ProviderAdapterError(
+                        "provider_temporarily_unavailable",
+                        "argolink_submit_outcome_unknown",
+                        retryable=False,
+                    )
+                raise error from exc
             except (httpx.ConnectTimeout, httpx.PoolTimeout, httpx.ConnectError) as exc:
                 raise ProviderAdapterError(
                     "provider_temporarily_unavailable",
@@ -129,6 +140,7 @@ class ArgoLinkAdapter:
                 public_code="provider_temporarily_unavailable",
                 raw_error="ARGOLINK_API_KEY is not configured",
             )
+        self._validate_task_id(provider_task_id)
         async with self._http_client() as client:
             try:
                 response = await client.get(f"/v1/videos/{provider_task_id}", headers=self._auth_headers())
@@ -147,7 +159,10 @@ class ArgoLinkAdapter:
                     type(exc).__name__,
                     retryable=True,
                 ) from exc
-        data = response.json()
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise ProviderAdapterError("provider_temporarily_unavailable", "invalid_provider_poll_response") from exc
         status = self._normalize_video_status(data)
         result_url = f"{self.base_url}/v1/videos/{provider_task_id}/content" if status == "completed" else None
         raw_error = self._extract_error(data) if status == "failed" else None
@@ -159,7 +174,9 @@ class ArgoLinkAdapter:
         *,
         range_header: str | None = None,
     ) -> ProviderResultStream:
-        if not provider_content_url.startswith(f"{self.base_url}/v1/videos/"):
+        if not re.fullmatch(
+            re.escape(self.base_url) + r"/v1/videos/[A-Za-z0-9_-]{1,255}/content", provider_content_url
+        ):
             raise ProviderAdapterError("provider_rejected_request", "unexpected_result_url")
         if not self.api_key:
             raise ProviderAdapterError(
@@ -175,7 +192,7 @@ class ArgoLinkAdapter:
         response: httpx.Response | None = None
         try:
             request = client.build_request("GET", provider_content_url, headers=headers)
-            response = await client.send(request, stream=True, follow_redirects=True)
+            response = await client.send(request, stream=True, follow_redirects=False)
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
             if response is not None:
@@ -239,14 +256,15 @@ class ArgoLinkAdapter:
     def _extract_task_id(data: Any) -> str | None:
         if not isinstance(data, dict):
             return None
-        for key in ("request_id", "id", "task_id", "generation_id"):
-            value = data.get(key)
-            if isinstance(value, str) and value:
-                return value
-        nested = data.get("data")
-        if isinstance(nested, dict):
-            return ArgoLinkAdapter._extract_task_id(nested)
+        value = data.get("request_id")
+        if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,255}", value):
+            return value
         return None
+
+    @staticmethod
+    def _validate_task_id(value: str) -> None:
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,255}", value):
+            raise ProviderAdapterError("provider_rejected_request", "invalid_provider_task_id", retryable=False)
 
     @staticmethod
     def _http_error_to_provider_error(response: httpx.Response) -> ProviderAdapterError:
@@ -258,11 +276,7 @@ class ArgoLinkAdapter:
                 retryable=False,
             )
         if response.status_code in {408, 429} or response.status_code >= 500:
-            raw_error = (
-                "argolink_rate_limited"
-                if response.status_code == 429
-                else f"argolink_{response.status_code}"
-            )
+            raw_error = "argolink_rate_limited" if response.status_code == 429 else f"argolink_{response.status_code}"
             return ProviderAdapterError(
                 "provider_temporarily_unavailable",
                 raw_error,
@@ -278,7 +292,7 @@ class ArgoLinkAdapter:
     @staticmethod
     def _normalize_video_status(data: Any) -> str:
         if not isinstance(data, dict):
-            return "processing"
+            raise ProviderAdapterError("provider_temporarily_unavailable", "invalid_provider_poll_response")
         raw_status = str(data.get("status", "")).lower()
         if raw_status in {"done", "completed", "succeeded", "success"}:
             return "completed"
@@ -286,7 +300,7 @@ class ArgoLinkAdapter:
             return "failed"
         if raw_status in {"pending", "queued", "processing", "running"}:
             return "processing"
-        return "processing"
+        raise ProviderAdapterError("provider_temporarily_unavailable", "unknown_provider_status")
 
     @staticmethod
     def _extract_error(data: Any) -> str | None:

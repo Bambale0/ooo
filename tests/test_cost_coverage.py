@@ -34,7 +34,7 @@ async def _seed_generation_preflight(db_session):
     )
 
     model = Model(
-        slug="coverage-test-video",
+        slug="seedance-2.5",
         name="Coverage Test Video",
         modality="video",
         status="production",
@@ -90,7 +90,7 @@ async def test_generation_rejects_before_creation_when_cost_coverage_is_insuffic
     partner_id, token = await _seed_generation_preflight(db_session)
     headers = {"Authorization": f"Bearer {token}"}
     payload = {
-        "model_slug": "coverage-test-video",
+        "model_slug": "seedance-2.5",
         "mode": "text_to_video",
         "resolution": "720p",
         "duration_seconds": 5,

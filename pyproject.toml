@@ -32,6 +32,7 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+pythonpath = ["."]
 markers = [
     "integration: tests that require real external infrastructure such as PostgreSQL",
 ]

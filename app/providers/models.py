@@ -48,6 +48,7 @@ class ProviderAttempt(Base):
     id: Mapped[str] = uuid_pk()
     generation_id: Mapped[str] = mapped_column(ForeignKey("generations.id"), nullable=False, index=True)
     provider: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    credential_id: Mapped[str | None] = mapped_column(ForeignKey("provider_credentials.id"), index=True)
     provider_task_id: Mapped[str | None] = mapped_column(String(255), index=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     public_error_code: Mapped[str | None] = mapped_column(String(80))

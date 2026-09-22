@@ -2,7 +2,7 @@
 Нейроныч SaaS — Telegram bot (partner cabinet + admin panel)
 """
 
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, F, Router, types
 from aiogram.filters import Command
 from aiogram.types import BotCommand, BotCommandScopeDefault, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -12,7 +12,8 @@ from app.accounts.models import ApiKey, Partner, PartnerApplication
 from app.billing.models import LedgerEntry
 from app.billing.safe_to_withdraw import calculate_safe_to_withdraw
 from app.infrastructure.config import get_settings
-from app.infrastructure.database import get_db_session
+from app.infrastructure.database import SessionLocal
+from app.telegram.security import CabinetAccessMiddleware
 
 _M = "Neyronych SaaS - Cabinet\n\nSelect:"
 _A = "Admin Panel\n\nSelect:"
@@ -32,7 +33,7 @@ def _kb(partner: Partner):
         InlineKeyboardButton(text="Docs", callback_data="docs"),
         InlineKeyboardButton(text="Support", callback_data="support"),
     )
-    if getattr(partner, "is_admin", False):
+    if partner.telegram_id == get_settings().admin_telegram_id:
         builder.row(InlineKeyboardButton(text="Admin", callback_data="admin_menu"))
     return builder.as_markup()
 
@@ -70,55 +71,53 @@ def create_bot():
 
 
 async def _db():
-    async for session in get_db_session():
-        return session
-    raise RuntimeError("database_session_unavailable")
+    return SessionLocal()
 
 
 def create_dispatcher() -> Dispatcher:
     dispatcher = Dispatcher()
+    router = Router()
+    router.message.outer_middleware(CabinetAccessMiddleware())
+    router.callback_query.outer_middleware(CabinetAccessMiddleware())
+    dispatcher.include_router(router)
 
-    @dispatcher.message(Command("start"))
+    @router.message(Command("start"))
     async def start(message: types.Message) -> None:
         keyboard = InlineKeyboardBuilder().button(text="Enter", callback_data="main_menu").as_markup()
         await message.answer("Welcome!", reply_markup=keyboard)
 
-    @dispatcher.callback_query(lambda callback: callback.data == "main_menu")
+    @router.callback_query(F.data == "main_menu")
     async def main_menu(callback: types.CallbackQuery) -> None:
         partner = Partner(telegram_id=str(callback.from_user.id))
         await callback.message.edit_text(_M, reply_markup=_kb(partner))
         await callback.answer()
 
-    @dispatcher.callback_query(lambda callback: callback.data == "admin_menu")
+    @router.callback_query(F.data == "admin_menu")
     async def admin_menu(callback: types.CallbackQuery) -> None:
         await callback.message.edit_text(_A, reply_markup=_akb())
         await callback.answer()
 
-    @dispatcher.callback_query(lambda callback: callback.data == "balance")
+    @router.callback_query(F.data == "balance")
     async def balance(callback: types.CallbackQuery) -> None:
         session = await _db()
         try:
             result = await session.execute(
-                select(Partner).where(Partner.telegram_id == str(callback.from_user.id))
+                select(Partner).where(Partner.telegram_id == str(callback.from_user.id), Partner.status == "active")
             )
             partner = result.scalar_one_or_none()
-            text = (
-                f"Balance: {partner.balance_rub} RUB\nCoverage: {partner.cost_coverage_rub} RUB"
-                if partner
-                else "Not found"
-            )
+            text = f"Balance: {partner.balance_rub} RUB" if partner else "Not found"
             await callback.message.edit_text(text, reply_markup=_back())
         finally:
             await session.close()
         await callback.answer()
 
-    @dispatcher.callback_query(lambda callback: callback.data.startswith("history:"))
+    @router.callback_query(F.data.startswith("history:"))
     async def history(callback: types.CallbackQuery) -> None:
         page = int(callback.data.split(":")[1]) if ":" in callback.data else 0
         session = await _db()
         try:
             result = await session.execute(
-                select(Partner).where(Partner.telegram_id == str(callback.from_user.id))
+                select(Partner).where(Partner.telegram_id == str(callback.from_user.id), Partner.status == "active")
             )
             partner = result.scalar_one_or_none()
             if not partner:
@@ -144,12 +143,12 @@ def create_dispatcher() -> Dispatcher:
             await session.close()
         await callback.answer()
 
-    @dispatcher.callback_query(lambda callback: callback.data.startswith("api_keys:"))
+    @router.callback_query(F.data.startswith("api_keys:"))
     async def api_keys(callback: types.CallbackQuery) -> None:
         session = await _db()
         try:
             result = await session.execute(
-                select(Partner).where(Partner.telegram_id == str(callback.from_user.id))
+                select(Partner).where(Partner.telegram_id == str(callback.from_user.id), Partner.status == "active")
             )
             partner = result.scalar_one_or_none()
             if not partner:
@@ -166,47 +165,51 @@ def create_dispatcher() -> Dispatcher:
             await session.close()
         await callback.answer()
 
-    @dispatcher.callback_query(lambda callback: callback.data == "search_prompt")
+    @router.callback_query(F.data == "search_prompt")
     async def search_prompt(callback: types.CallbackQuery) -> None:
         await callback.message.edit_text("Enter UUID:", reply_markup=_back())
         await callback.answer()
 
-    @dispatcher.callback_query(lambda callback: callback.data == "docs")
+    @router.callback_query(F.data == "docs")
     async def docs(callback: types.CallbackQuery) -> None:
-        await callback.message.edit_text("https://api.neyronych.online/docs", reply_markup=_back())
+        await callback.message.edit_text(f"{get_settings().public_api_base_url.rstrip('/')}/docs", reply_markup=_back())
         await callback.answer()
 
-    @dispatcher.callback_query(lambda callback: callback.data == "support")
+    @router.callback_query(F.data == "support")
     async def support(callback: types.CallbackQuery) -> None:
         await callback.message.edit_text("@support", reply_markup=_back())
         await callback.answer()
 
-    @dispatcher.callback_query(lambda callback: callback.data == "admin_stw")
+    @router.callback_query(F.data == "admin_stw")
     async def safe_to_withdraw(callback: types.CallbackQuery) -> None:
         session = await _db()
         try:
             data = await calculate_safe_to_withdraw(session)
             await callback.message.edit_text(
-                f"STW: {data['safe_to_withdraw_usdt']:.2f} USDT",
+                (
+                    "STW unavailable: wallet and reserve reconciliation required"
+                    if data["safe_to_withdraw_usdt"] is None
+                    else f"STW: {data['safe_to_withdraw_usdt']:.2f} USDT"
+                ),
                 reply_markup=_back(),
             )
         finally:
             await session.close()
         await callback.answer()
 
-    @dispatcher.callback_query(lambda callback: callback.data == "admin_health")
+    @router.callback_query(F.data == "admin_health")
     async def health(callback: types.CallbackQuery) -> None:
-        await callback.message.edit_text("OK", reply_markup=_back())
+        await callback.message.edit_text(
+            "Use the authenticated operations dashboard for health checks", reply_markup=_back()
+        )
         await callback.answer()
 
-    @dispatcher.callback_query(lambda callback: callback.data.startswith("admin_apps:"))
+    @router.callback_query(F.data.startswith("admin_apps:"))
     async def applications(callback: types.CallbackQuery) -> None:
         session = await _db()
         try:
             result = await session.execute(
-                select(PartnerApplication)
-                .where(PartnerApplication.status == "pending")
-                .limit(10)
+                select(PartnerApplication).where(PartnerApplication.status == "pending").limit(10)
             )
             rows = result.scalars().all()
             lines = ["Applications"]

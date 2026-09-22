@@ -74,7 +74,7 @@ async def calculate_safe_to_withdraw(db: AsyncSession) -> dict:
     accessible_wallet_usdt = Decimal("0")
     
     # Net safe-to-withdraw
-    safe_to_withdraw_usdt = accessible_wallet_usdt - working_capital_required
+    safe_to_withdraw_usdt = None  # No trustworthy wallet/FX/reserve snapshot: do not fabricate a monetary value.
     
     return {
         "safe_to_withdraw_usdt": safe_to_withdraw_usdt,
@@ -88,7 +88,7 @@ async def calculate_safe_to_withdraw(db: AsyncSession) -> dict:
             "total_credits_rub": total_credits,
             "total_debits_rub": abs(total_debits),
         },
-        "freshness": "stale",
+        "freshness": "unavailable",
     }
 
 

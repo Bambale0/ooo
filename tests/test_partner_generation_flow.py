@@ -163,7 +163,7 @@ async def test_partner_can_create_idempotent_generation_after_manual_credit(
         headers=admin_headers,
         json={
             "model_slug": "seedance-2.5",
-            "mode": "text_to_video",
+            "mode": "reference",
             "resolution": "720p",
             "price_rub": "10.00",
             "provider_cost_usdt": "0.170000",
@@ -178,7 +178,7 @@ async def test_partner_can_create_idempotent_generation_after_manual_credit(
         headers=admin_headers,
         json={
             "model_slug": "seedance-2.5",
-            "mode": "text_to_video",
+            "mode": "reference",
             "resolution": "720p",
             "price_rub": "20.00",
             "provider_cost_usdt": "0.170000",
@@ -240,7 +240,7 @@ async def test_partner_can_create_idempotent_generation_after_manual_credit(
     partner_headers = {"Authorization": f"Bearer {api_key}"}
     generation_payload = {
         "model_slug": "seedance-2.5",
-        "mode": "text_to_video",
+        "mode": "reference",
         "resolution": "720p",
         "duration_seconds": 5,
         "aspect_ratio": "9:16",
@@ -262,7 +262,7 @@ async def test_partner_can_create_idempotent_generation_after_manual_credit(
         json={
             "provider": "argolink",
             "model_slug": "seedance-2.5",
-            "mode": "text_to_video",
+            "mode": "reference",
             "resolution": "720p",
             "is_active": True,
         },

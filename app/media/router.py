@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
+from sqlalchemy import select
 
 from app.accounts.models import Partner
 from app.api.dependencies import DbSession, get_current_partner
 from app.media.models import MediaAsset
 from app.providers.base import ProviderAdapterError
+from app.providers.models import ProviderAttempt
 from app.providers.service import get_partner_provider_adapter
 
 router = APIRouter()
@@ -23,7 +25,20 @@ async def read_media_content(
     if asset.status != "provider_ready":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="media_asset_not_ready")
 
-    adapter = await get_partner_provider_adapter(db, partner.id, asset.provider)
+    attempt = (
+        await db.execute(
+            select(ProviderAttempt).where(
+                ProviderAttempt.generation_id == asset.generation_id,
+                ProviderAttempt.provider == asset.provider,
+            )
+        )
+    ).scalar_one_or_none()
+    adapter = await get_partner_provider_adapter(
+        db,
+        partner.id,
+        asset.provider,
+        **({"credential_id": attempt.credential_id} if attempt and attempt.credential_id else {}),
+    )
     try:
         provider_stream = await adapter.open_result_stream(
             asset.provider_content_url,

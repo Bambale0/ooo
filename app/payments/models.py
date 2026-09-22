@@ -38,9 +38,10 @@ class PaymentInvoice(Base):
 
 class CryptoPayWebhookEvent(Base):
     __tablename__ = "crypto_pay_webhook_events"
+    __table_args__ = (UniqueConstraint("update_id", name="uq_crypto_pay_webhook_events_update_id"),)
 
     id: Mapped[str] = uuid_pk()
-    update_id: Mapped[int] = mapped_column(BigInteger, nullable=False, unique=True, index=True)
+    update_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
     update_type: Mapped[str] = mapped_column(String(80), nullable=False)
     provider_invoice_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
     created_at: Mapped[object] = utc_created_at()

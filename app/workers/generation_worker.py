@@ -18,6 +18,7 @@ from app.infrastructure.config import get_settings
 from app.infrastructure.database import SessionLocal
 from app.infrastructure.logging import configure_logging
 from app.infrastructure.metrics import update_generation_queue_metrics
+from app.infrastructure.production_check import require_production_config
 from app.infrastructure.retry import utc_now
 from app.providers.http_client import close_provider_http_clients
 from app.providers.models import ProviderAttempt
@@ -85,6 +86,7 @@ async def process_generation_work_concurrently_once(
 
 
 async def run_generation_worker_forever() -> None:
+    require_production_config()
     configure_logging()
     settings = get_settings()
     stop_event = asyncio.Event()
@@ -138,6 +140,7 @@ async def _load_candidate_ids(
 
 
 def _fair_candidate_ids_query(statuses: tuple[str, ...], *, limit: int):
+    deferred = select(ProviderAttempt.generation_id).where(ProviderAttempt.next_attempt_at > utc_now())
     ranked = (
         select(
             Generation.id.label("generation_id"),
@@ -149,7 +152,7 @@ def _fair_candidate_ids_query(statuses: tuple[str, ...], *, limit: int):
             )
             .label("partner_position"),
         )
-        .where(Generation.status.in_(statuses))
+        .where(Generation.status.in_(statuses), Generation.id.not_in(deferred))
         .subquery()
     )
     return (

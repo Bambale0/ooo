@@ -7,6 +7,7 @@ from app.api.dependencies import DbSession, require_admin
 from app.catalog.models import Model, PartnerPrice, PartnerPriceHistory
 from app.catalog.schemas import ModelCreate, ModelEnableGateUpdate, ModelRead, PartnerPriceUpsert, PricingRead
 from app.infrastructure.config import get_settings
+from app.providers.video_contract import VIDEO_MODELS
 
 router = APIRouter()
 
@@ -65,6 +66,8 @@ async def enable_model(model_slug: str, db: DbSession) -> Model:
     model = model_result.scalar_one_or_none()
     if model is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="model_not_found")
+    if model.modality != "video" or model.slug not in VIDEO_MODELS:
+        raise HTTPException(status_code=409, detail="model_contract_not_supported")
     await ensure_model_can_be_enabled(db, model)
     model.status = "production"
     await db.flush()

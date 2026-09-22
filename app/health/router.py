@@ -3,15 +3,16 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.api.dependencies import DbSession
+from app.infrastructure import state as infrastructure_state
+from app.infrastructure.config import get_settings
 from app.infrastructure.redis import create_redis_client
-from app.infrastructure.state import APP_REVISION
 
 router = APIRouter()
 
 
 @router.get("/health")
 async def health() -> JSONResponse:
-    return JSONResponse({"status": "ok", "revision": APP_REVISION})
+    return JSONResponse({"status": "ok", "revision": infrastructure_state.APP_REVISION})
 
 
 @router.get("/readiness")
@@ -32,8 +33,14 @@ async def readiness(db: DbSession) -> JSONResponse:
         checks["redis"] = "degraded"
     finally:
         await redis_client.close()
+    if get_settings().app_env == "production" and checks.get("redis") != "ok":
+        ready = False
 
     return JSONResponse(
         status_code=status.HTTP_200_OK if ready else status.HTTP_503_SERVICE_UNAVAILABLE,
-        content={"status": "ready" if ready else "not_ready", "checks": checks, "revision": APP_REVISION},
+        content={
+            "status": "ready" if ready else "not_ready",
+            "checks": checks,
+            "revision": infrastructure_state.APP_REVISION,
+        },
     )

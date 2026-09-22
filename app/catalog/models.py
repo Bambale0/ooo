@@ -9,9 +9,10 @@ from app.infrastructure.types import utc_created_at, uuid_pk
 
 class Model(Base):
     __tablename__ = "models"
+    __table_args__ = (UniqueConstraint("slug", name="uq_models_slug"),)
 
     id: Mapped[str] = uuid_pk()
-    slug: Mapped[str] = mapped_column(String(80), nullable=False, unique=True, index=True)
+    slug: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     modality: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft", index=True)

@@ -41,3 +41,9 @@ Thumbs.db
 ops/backup/*.sql.gz*
 ops/backup/wal/
 !ops/backup/backup.sh
+
+# Local verification artifacts
+.coverage*
+htmlcov/
+DEPLOYED_IMAGE
+REVISION

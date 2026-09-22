@@ -23,7 +23,7 @@ async def test_argolink_adapter_validates_key_against_authenticated_video_status
         assert await adapter.validate_key("valid-key") is True
         assert await adapter.validate_key("bad-key") is False
 
-    assert seen_authorization == ["Bearer valid-key", "Bearer bad-key"]
+    assert seen_authorization == ["Bearer valid-key", "Bearer invalid-contract-probe", "Bearer bad-key"]
 
 
 async def test_argolink_adapter_submits_polls_and_streams_with_configured_key():
@@ -35,9 +35,9 @@ async def test_argolink_adapter_submits_polls_and_streams_with_configured_key():
         if request.method == "POST" and request.url.path == "/v1/videos/generations":
             body = request.read().decode("utf-8")
             assert "seedance-2.5" in body
-            assert "generation-1" in body
-            assert "\"duration\":5" in body
-            assert "\"aspect_ratio\":\"9:16\"" in body
+            assert "metadata" not in body
+            assert '"duration":5' in body
+            assert '"aspect_ratio":"9:16"' in body
             assert "https://cdn.example.test/reference.jpg" in body
             return httpx.Response(202, json={"request_id": "video_task_123"})
         if request.method == "GET" and request.url.path == "/v1/videos/video_task_123":
@@ -72,7 +72,7 @@ async def test_argolink_adapter_submits_polls_and_streams_with_configured_key():
             ProviderGenerationRequest(
                 generation_id="generation-1",
                 model_slug="seedance-2.5",
-                mode="text_to_video",
+                mode="reference",
                 resolution="720p",
                 prompt="launch video",
                 duration_seconds=5,
@@ -198,3 +198,70 @@ async def test_argolink_missing_task_id_is_not_replayed_automatically():
     error = exc_info.value
     assert error.raw_error == "missing_provider_task_id"
     assert error.retryable is False
+
+
+@pytest.mark.parametrize("status", [200, 302, 400, 401, 403, 404, 429, 500, 503])
+async def test_key_probe_rejects_outage_or_identical_invalid_key_response(status):
+    async with httpx.AsyncClient(
+        base_url="https://argolink.io",
+        transport=httpx.MockTransport(lambda request: httpx.Response(status, json={})),
+    ) as client:
+        assert await ArgoLinkAdapter(client=client).validate_key("candidate") is False
+
+
+@pytest.mark.parametrize("status", [408, 500, 502, 503, 504])
+async def test_ambiguous_submit_server_error_is_not_replayed(status):
+    async with httpx.AsyncClient(
+        base_url="https://argolink.io",
+        transport=httpx.MockTransport(lambda request: httpx.Response(status)),
+    ) as client:
+        with pytest.raises(ProviderAdapterError) as exc:
+            await ArgoLinkAdapter(api_key="test-key", client=client).submit_generation(
+                ProviderGenerationRequest(
+                    generation_id="test",
+                    model_slug="seedance-2.5",
+                    mode="text_to_video",
+                    resolution="720p",
+                    prompt="test",
+                    duration_seconds=5,
+                )
+            )
+        assert exc.value.retryable is False
+
+
+@pytest.mark.parametrize("data", [[], {}, {"status": "surprise"}])
+async def test_poll_rejects_malformed_or_unknown_status(data):
+    async with httpx.AsyncClient(
+        base_url="https://argolink.io",
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=data)),
+    ) as client:
+        with pytest.raises(ProviderAdapterError):
+            await ArgoLinkAdapter(api_key="test-key", client=client).poll_generation("task-1")
+
+
+async def test_content_redirect_does_not_reach_private_network():
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(302, headers={"Location": "http://169.254.169.254/latest/meta-data/"})
+
+    async with httpx.AsyncClient(base_url="https://argolink.io", transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ProviderAdapterError):
+            await ArgoLinkAdapter(api_key="test-key", client=client).open_result_stream(
+                "https://argolink.io/v1/videos/task-1/content",
+            )
+    assert len(requests) == 1
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://argolink.io/v1/videos/../admin/content",
+        "https://argolink.io/v1/videos/id/content?url=http://localhost",
+        "https://argolink.io.evil.test/v1/videos/id/content",
+    ],
+)
+async def test_content_url_must_match_exact_protected_path(url):
+    with pytest.raises(ProviderAdapterError):
+        await ArgoLinkAdapter(api_key="test-key").open_result_stream(url)

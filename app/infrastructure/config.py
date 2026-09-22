@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     admin_telegram_id: str | None = None
     telegram_bot_token: str | None = None
     log_level: str = "INFO"
-    rub_per_usdt: Decimal = Decimal("100.00")
+    rub_per_usdt: Decimal = Field(default=Decimal("100.00"), gt=0)
     argolink_base_url: str = "https://argolink.io"
     argolink_api_key: str | None = None
     provider_credentials_master_key: str | None = Field(default=None, min_length=32)

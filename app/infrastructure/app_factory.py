@@ -10,6 +10,7 @@ from app.infrastructure.config import get_settings
 from app.infrastructure.database import engine
 from app.infrastructure.logging import configure_logging
 from app.infrastructure.metrics import metrics_payload, monotonic_seconds, observe_http_request, refresh_db_pool_metrics
+from app.infrastructure.production_check import require_production_config
 from app.payments.crypto_pay import close_crypto_pay_client
 from app.providers.http_client import close_provider_http_clients
 
@@ -17,6 +18,7 @@ from app.providers.http_client import close_provider_http_clients
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     infrastructure_state.APP_REVISION = infrastructure_state._load_revision()
+    require_production_config()
     configure_logging()
     try:
         yield

@@ -28,6 +28,8 @@ from app.generations.service import (
     poll_generation_provider,
 )
 from app.infrastructure.config import get_settings
+from app.providers.base import ProviderGenerationRequest
+from app.providers.video_contract import validate_video_request
 
 router = APIRouter()
 _RUB_QUANTUM = Decimal("0.01")
@@ -58,6 +60,23 @@ async def create_generation(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="model_or_price_not_available")
     model, price = row
+    try:
+        validate_video_request(
+            ProviderGenerationRequest(
+                generation_id="validation",
+                model_slug=payload.model_slug,
+                mode=payload.mode,
+                resolution=payload.resolution,
+                prompt=payload.prompt,
+                duration_seconds=payload.duration_seconds,
+                aspect_ratio=payload.aspect_ratio,
+                reference_images=tuple(item.url for item in payload.reference_images),
+                start_image=payload.start_image.url if payload.start_image else None,
+                end_image=payload.end_image.url if payload.end_image else None,
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     billable_units = payload.duration_seconds if price.billing_unit == "second" else 1
     price_rub = Decimal(price.price_rub) * Decimal(billable_units)
 
@@ -68,6 +87,9 @@ async def create_generation(
         _RUB_QUANTUM,
         rounding=ROUND_HALF_UP,
     )
+
+    if price_rub < provider_cost_reserve_rub:
+        raise HTTPException(status_code=503, detail="provider_temporarily_unavailable")
 
     if not await has_active_provider_credential(db, partner.id):
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="provider_temporarily_unavailable")
@@ -103,6 +125,8 @@ async def create_generation(
             "duration_seconds": payload.duration_seconds,
             "aspect_ratio": payload.aspect_ratio,
             "reference_images": [reference.model_dump() for reference in payload.reference_images],
+            "start_image": payload.start_image.model_dump() if payload.start_image else None,
+            "end_image": payload.end_image.model_dump() if payload.end_image else None,
             "billing_unit": price.billing_unit,
             "unit_price_rub": str(price.price_rub),
             "billable_units": billable_units,
@@ -140,7 +164,9 @@ async def create_generation(
     dependencies=[Depends(require_admin)],
 )
 async def dispatch_generation(generation_id: str, db: DbSession) -> ProviderDispatchRead:
-    generation = await db.get(Generation, generation_id)
+    generation = (
+        await db.execute(select(Generation).where(Generation.id == generation_id).with_for_update())
+    ).scalar_one_or_none()
     if generation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="generation_not_found")
     if generation.status not in {"queued", "sent_to_provider"}:
@@ -161,7 +187,9 @@ async def dispatch_generation(generation_id: str, db: DbSession) -> ProviderDisp
     dependencies=[Depends(require_admin)],
 )
 async def poll_generation(generation_id: str, db: DbSession) -> ProviderPollRead:
-    generation = await db.get(Generation, generation_id)
+    generation = (
+        await db.execute(select(Generation).where(Generation.id == generation_id).with_for_update())
+    ).scalar_one_or_none()
     if generation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="generation_not_found")
     generation = await poll_generation_provider(db, generation, PRIMARY_PROVIDER)

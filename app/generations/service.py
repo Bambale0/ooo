@@ -56,7 +56,7 @@ async def dispatch_generation_to_provider(
     )
     existing = existing_result.scalar_one_or_none()
     if existing is not None:
-        if existing.provider_task_id or existing.status not in {"retry_pending", "failed"}:
+        if existing.provider_task_id or existing.status != "retry_pending":
             return existing
         if not is_due(existing.next_attempt_at):
             return existing
@@ -73,6 +73,8 @@ async def dispatch_generation_to_provider(
         prompt=generation.prompt,
         duration_seconds=generation.duration_seconds,
         aspect_ratio=generation.aspect_ratio,
+        start_image=((generation.request_payload or {}).get("start_image") or {}).get("url"),
+        end_image=((generation.request_payload or {}).get("end_image") or {}).get("url"),
         reference_images=tuple(
             item["url"]
             for item in (generation.request_payload or {}).get("reference_images", [])
@@ -81,6 +83,18 @@ async def dispatch_generation_to_provider(
     )
     try:
         await get_provider_rate_limiter(provider, "submit").acquire()
+        # Persist the submit intent BEFORE the external side effect. If the process
+        # dies after acceptance, a restart must not blindly create a second paid job.
+        # A submitting attempt without an ID requires operator reconciliation.
+        if attempt is None:
+            attempt = ProviderAttempt(generation_id=generation.id, provider=provider, status="submitting")
+            db.add(attempt)
+        credential = await get_active_provider_credential(db, generation.partner_id, provider)
+        if credential is not None:
+            attempt.credential_id = credential.id
+        attempt.status = "submitting"
+        generation.status = "sent_to_provider"
+        await db.commit()
         provider_started_at = monotonic_seconds()
         try:
             result = await adapter.submit_generation(request)
@@ -148,6 +162,9 @@ async def poll_generation_provider(
     if attempt is None or not attempt.provider_task_id:
         return generation
 
+    if generation.status in {"completed", "failed", "cancelled"}:
+        return generation
+
     settings = get_settings()
     reconciling_late_success = generation.status == "timeout" or attempt.status == "timeout"
     if not reconciling_late_success and is_older_than(
@@ -183,7 +200,10 @@ async def poll_generation_provider(
     elif not is_due(attempt.next_poll_at):
         return generation
 
-    adapter = await get_partner_provider_adapter(db, generation.partner_id, provider)
+    adapter = await get_partner_provider_adapter(
+        db, generation.partner_id, provider,
+        **({"credential_id": attempt.credential_id} if attempt.credential_id else {}),
+    )
     try:
         await get_provider_rate_limiter(provider, "poll").acquire()
         provider_started_at = monotonic_seconds()

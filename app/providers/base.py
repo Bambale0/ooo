@@ -13,6 +13,8 @@ class ProviderGenerationRequest:
     duration_seconds: int = 1
     aspect_ratio: str | None = None
     reference_images: tuple[str, ...] = ()
+    start_image: str | None = None
+    end_image: str | None = None
 
 
 @dataclass(frozen=True)
