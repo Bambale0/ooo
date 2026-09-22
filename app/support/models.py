@@ -2,6 +2,8 @@
 Support ticket system for partner support within Telegram.
 """
 
+from datetime import datetime
+
 from sqlalchemy import ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -17,7 +19,7 @@ class SupportTicket(Base):
     subject: Mapped[str] = mapped_column(String(200), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="open", index=True)
     priority: Mapped[str] = mapped_column(String(20), nullable=False, default="normal")
-    closed_at: Mapped[object | None] = mapped_column(default=None)
+    closed_at: Mapped[datetime | None] = mapped_column(default=None)
     created_at: Mapped[object] = utc_created_at()
 
 
