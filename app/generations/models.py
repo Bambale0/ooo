@@ -22,6 +22,15 @@ class Generation(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued", index=True)
     idempotency_key: Mapped[str] = mapped_column(String(160), nullable=False)
     partner_price_rub: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    provider_cost_usdt_snapshot: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6), nullable=False, default=Decimal("0")
+    )
+    rub_per_usdt_snapshot: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6), nullable=False, default=Decimal("0")
+    )
+    provider_cost_reserve_rub: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), nullable=False, default=Decimal("0.00")
+    )
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
     request_payload: Mapped[dict[str, object] | None] = mapped_column(JSON)
     result_url: Mapped[str | None] = mapped_column(Text)
