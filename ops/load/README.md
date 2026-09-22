@@ -22,7 +22,7 @@ Choose one or more long random test API keys:
 
 ```bash
 export APP_ENV=test
-export LOAD_TEST_API_KEYS='nrn_load_test_partner_one_123456789,nrn_load_test_partner_two_123456789'
+export LOAD_TEST_API_KEYS='nrn_load_test_partner_one_123456789,nrn_load_test_partner_two_123456789' # pragma: allowlist secret
 python -m ops.load.seed seed
 ```
 
