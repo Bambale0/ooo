@@ -1,11 +1,17 @@
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 
 from app.accounts.models import Partner
 from app.api.dependencies import DbSession, PartnerAuth, get_current_partner, get_partner_auth, require_admin
-from app.billing.service import apply_partner_balance_change, lock_partner_for_update
+from app.billing.service import (
+    apply_cost_coverage_change,
+    apply_partner_balance_change,
+    lock_partner_for_update,
+    require_sufficient_balance,
+    require_sufficient_cost_coverage,
+)
 from app.catalog.models import Model, PartnerPrice
 from app.generations.models import Generation
 from app.generations.schemas import (
@@ -21,8 +27,10 @@ from app.generations.service import (
     has_provider_capability,
     poll_generation_provider,
 )
+from app.infrastructure.config import get_settings
 
 router = APIRouter()
+_RUB_QUANTUM = Decimal("0.01")
 
 
 @router.post("", response_model=GenerationRead, status_code=status.HTTP_202_ACCEPTED)
@@ -53,6 +61,14 @@ async def create_generation(
     billable_units = payload.duration_seconds if price.billing_unit == "second" else 1
     price_rub = Decimal(price.price_rub) * Decimal(billable_units)
 
+    settings = get_settings()
+    provider_cost_usdt = Decimal(price.provider_cost_usdt) * Decimal(billable_units)
+    rub_per_usdt = Decimal(settings.rub_per_usdt)
+    provider_cost_reserve_rub = (provider_cost_usdt * rub_per_usdt).quantize(
+        _RUB_QUANTUM,
+        rounding=ROUND_HALF_UP,
+    )
+
     if not await has_active_provider_credential(db, partner.id):
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="provider_temporarily_unavailable")
     if not await has_provider_capability(db, model.id, payload.mode, payload.resolution):
@@ -62,6 +78,10 @@ async def create_generation(
     existing = await _find_generation_by_idempotency_key(db, locked_partner.id, payload.idempotency_key)
     if existing is not None:
         return existing
+
+    # Both funding gates happen before a generation UUID/row or either reserve is created.
+    await require_sufficient_balance(locked_partner, price_rub)
+    await require_sufficient_cost_coverage(locked_partner, provider_cost_reserve_rub)
 
     generation = Generation(
         partner_id=locked_partner.id,
@@ -73,6 +93,9 @@ async def create_generation(
         aspect_ratio=payload.aspect_ratio,
         idempotency_key=payload.idempotency_key,
         partner_price_rub=price_rub,
+        provider_cost_usdt_snapshot=provider_cost_usdt,
+        rub_per_usdt_snapshot=rub_per_usdt,
+        provider_cost_reserve_rub=provider_cost_reserve_rub,
         prompt=payload.prompt,
         webhook_url_snapshot=auth.api_key.webhook_url,
         webhook_secret_encrypted_snapshot=auth.api_key.webhook_secret_encrypted,
@@ -95,6 +118,16 @@ async def create_generation(
         idempotency_key=f"generation-reserve:{generation.id}",
         generation_id=generation.id,
         description=f"Reserved partner price for {model.slug} ({billable_units} {price.billing_unit})",
+        allow_negative=False,
+    )
+    await apply_cost_coverage_change(
+        db=db,
+        partner=locked_partner,
+        amount_rub=-provider_cost_reserve_rub,
+        operation_type="provider_cost_reserve",
+        idempotency_key=f"provider-cost-reserve:{generation.id}",
+        generation_id=generation.id,
+        description="Reserved configured upstream procurement cost snapshot",
         allow_negative=False,
     )
     await db.refresh(generation)
