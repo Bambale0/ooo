@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse, Response
+from starlette.routing import Match
 
 from app.api.router import api_router
 from app.infrastructure.config import get_settings
@@ -41,8 +42,7 @@ def create_app() -> FastAPI:
             status_code = response.status_code
             return response
         finally:
-            route_object = request.scope.get("route")
-            route = getattr(route_object, "path", "unmatched")
+            route = _matched_route_template(app, request)
             if route != "/internal/metrics":
                 observe_http_request(
                     method=request.method,
@@ -65,3 +65,13 @@ def create_app() -> FastAPI:
         )
 
     return app
+
+
+def _matched_route_template(app: FastAPI, request: Request) -> str:
+    for route in app.router.routes:
+        matches, _ = route.matches(request.scope)
+        if matches is Match.FULL:
+            path = getattr(route, "path", None)
+            if isinstance(path, str):
+                return path
+    return "unmatched"
