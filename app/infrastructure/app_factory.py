@@ -3,7 +3,6 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse, Response
-from starlette.routing import Match
 
 from app.api.router import api_router
 from app.infrastructure.config import get_settings
@@ -69,9 +68,13 @@ def create_app() -> FastAPI:
 
 def _matched_route_template(app: FastAPI, request: Request) -> str:
     for route in app.router.routes:
-        matches, _ = route.matches(request.scope)
-        if matches is Match.FULL:
-            path = getattr(route, "path", None)
-            if isinstance(path, str):
-                return path
+        path_regex = getattr(route, "path_regex", None)
+        methods = getattr(route, "methods", None)
+        if path_regex is None or path_regex.fullmatch(request.url.path) is None:
+            continue
+        if methods is not None and request.method not in methods:
+            continue
+        path = getattr(route, "path", None)
+        if isinstance(path, str):
+            return path
     return "unmatched"
