@@ -3,7 +3,6 @@ Critical alerts system — detects and notifies about operational/financial inci
 """
 
 from dataclasses import dataclass
-from datetime import datetime
 from decimal import Decimal
 from enum import Enum
 
@@ -11,9 +10,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.accounts.models import Partner
-from app.billing.models import CoverageLedgerEntry, LedgerEntry
-from app.generations.models import Generation
-from app.infrastructure.retry import utc_now
 from app.payments.models import PaymentInvoice
 from app.webhooks.models import WebhookEvent
 
@@ -46,7 +42,6 @@ class Alert:
 
 async def check_alerts(db: AsyncSession) -> list[Alert]:
     """Run all alert checks and return active alerts."""
-    now = utc_now()
     alerts: list[Alert] = []
     
     # 1. Low partner balance
