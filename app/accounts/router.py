@@ -14,6 +14,7 @@ from app.accounts.schemas import (
     ApiKeyCreate,
     ApiKeyCreated,
     ApiKeyRead,
+    ApiKeyWebhookUpdate,
     DeletePartnerCreate,
     PartnerApplicationCreate,
     PartnerApplicationRead,
@@ -21,8 +22,10 @@ from app.accounts.schemas import (
     RejectApplicationCreate,
 )
 from app.api.dependencies import DbSession, require_admin
-from app.infrastructure.security import create_api_key
+from app.infrastructure.config import get_settings
+from app.infrastructure.security import create_api_key, encrypt_secret
 from app.providers.models import ProviderCredential
+from app.webhooks.security import validate_public_webhook_url
 
 router = APIRouter()
 
@@ -206,6 +209,43 @@ async def revoke_partner_api_key(partner_id: str, api_key_id: str, db: DbSession
     if api_key is None or api_key.partner_id != partner_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="api_key_not_found")
     api_key.is_active = False
+    await db.flush()
+    await db.refresh(api_key)
+    return api_key
+
+
+@router.put(
+    "/partners/{partner_id}/api-keys/{api_key_id}/webhook",
+    response_model=ApiKeyRead,
+    dependencies=[Depends(require_admin)],
+)
+async def update_partner_api_key_webhook(
+    partner_id: str,
+    api_key_id: str,
+    payload: ApiKeyWebhookUpdate,
+    db: DbSession,
+) -> ApiKey:
+    api_key = await db.get(ApiKey, api_key_id)
+    if api_key is None or api_key.partner_id != partner_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="api_key_not_found")
+
+    if payload.webhook_url is None:
+        api_key.webhook_url = None
+        api_key.webhook_secret_encrypted = None
+    else:
+        await validate_public_webhook_url(payload.webhook_url)
+        api_key.webhook_url = payload.webhook_url
+        if payload.webhook_secret:
+            master_key = get_settings().provider_credentials_master_key
+            if not master_key:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="webhook_secret_encryption_not_configured",
+                )
+            api_key.webhook_secret_encrypted = encrypt_secret(payload.webhook_secret, master_key)
+        elif payload.webhook_secret is not None:
+            api_key.webhook_secret_encrypted = None
+
     await db.flush()
     await db.refresh(api_key)
     return api_key

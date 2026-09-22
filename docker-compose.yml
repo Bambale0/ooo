@@ -10,6 +10,7 @@ services:
       ADMIN_API_TOKEN: change-me
       ARGOLINK_BASE_URL: https://argolink.io
       ARGOLINK_API_KEY: ""
+      PROVIDER_CREDENTIALS_MASTER_KEY: change-this-to-a-random-secret-at-least-32-characters
       WORKER_POLL_INTERVAL_SECONDS: 5
       WORKER_BATCH_SIZE: 10
     depends_on:
@@ -30,11 +31,27 @@ services:
       ADMIN_API_TOKEN: change-me
       ARGOLINK_BASE_URL: https://argolink.io
       ARGOLINK_API_KEY: ""
+      PROVIDER_CREDENTIALS_MASTER_KEY: change-this-to-a-random-secret-at-least-32-characters
       WORKER_POLL_INTERVAL_SECONDS: 5
       WORKER_BATCH_SIZE: 10
     depends_on:
       - postgres
       - redis
+
+  webhook_worker:
+    build: .
+    command: ["python", "-m", "app.workers.webhook_worker"]
+    environment:
+      APP_ENV: test
+      APP_NAME: neironych
+      API_PREFIX: /api/v1
+      DATABASE_URL: postgresql+asyncpg://neironych:neironych@postgres:5432/neironych
+      REDIS_URL: redis://redis:6379/0
+      ADMIN_API_TOKEN: change-me
+      PROVIDER_CREDENTIALS_MASTER_KEY: change-this-to-a-random-secret-at-least-32-characters
+      WORKER_POLL_INTERVAL_SECONDS: 5
+    depends_on:
+      - postgres
 
   postgres:
     image: postgres:16-alpine

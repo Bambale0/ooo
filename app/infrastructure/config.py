@@ -53,6 +53,12 @@ class Settings(BaseSettings):
     worker_retry_max_seconds: float = 300.0
     worker_provider_processing_timeout_seconds: float = 30 * 60
     worker_shutdown_grace_seconds: float = 25.0
+    webhook_timeout_seconds: float = Field(default=10.0, gt=0)
+    webhook_retry_interval_seconds: float = Field(default=15 * 60, gt=0)
+    webhook_retry_window_seconds: float = Field(default=24 * 60 * 60, gt=0)
+    webhook_claim_lease_seconds: float = Field(default=60.0, gt=0)
+    webhook_worker_batch_size: int = Field(default=50, ge=1)
+    webhook_worker_concurrency: int = Field(default=10, ge=1)
 
 
 @lru_cache

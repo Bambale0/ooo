@@ -52,6 +52,7 @@ class ApiKeyRead(BaseModel):
     name: str
     key_prefix: str
     is_active: bool
+    webhook_url: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -62,3 +63,8 @@ class RejectApplicationCreate(BaseModel):
 
 class DeletePartnerCreate(BaseModel):
     reason: str = Field(default="partner_requested_delete", max_length=2000)
+
+
+class ApiKeyWebhookUpdate(BaseModel):
+    webhook_url: str | None = Field(default=None, max_length=2048)
+    webhook_secret: str | None = Field(default=None, max_length=4096)
