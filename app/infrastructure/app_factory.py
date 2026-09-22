@@ -9,6 +9,7 @@ from app.infrastructure.config import get_settings
 from app.infrastructure.database import engine
 from app.infrastructure.logging import configure_logging
 from app.infrastructure.metrics import metrics_payload, monotonic_seconds, observe_http_request, refresh_db_pool_metrics
+from app.payments.crypto_pay import close_crypto_pay_client
 from app.providers.http_client import close_provider_http_clients
 
 
@@ -18,6 +19,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        await close_crypto_pay_client()
         await close_provider_http_clients()
 
 
@@ -95,6 +97,12 @@ _ROUTE_SEGMENT_ALLOWLIST = {
     "webhook",
     "resend",
     "media",
+    "payments",
+    "invoices",
+    "cancel",
+    "credit",
+    "refunds",
+    "crypto-pay",
     "content",
     "providers",
     "credentials",
