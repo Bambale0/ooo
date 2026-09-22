@@ -132,6 +132,18 @@ async def prepare_claimed_delivery(
     if event is None or event.status != "pending":
         return None
 
+    stale_result = await db.execute(
+        select(WebhookDelivery)
+        .where(
+            WebhookDelivery.event_id == event.id,
+            WebhookDelivery.status == "pending",
+        )
+        .with_for_update()
+    )
+    for stale_delivery in stale_result.scalars().all():
+        stale_delivery.status = "outcome_unknown"
+        stale_delivery.error = "previous_delivery_not_finalized"
+
     attempt = event.attempt_count + 1
     delivery = WebhookDelivery(
         event_id=event.id,
