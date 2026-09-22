@@ -12,6 +12,10 @@ class Settings(BaseSettings):
     app_env: str = "test"
     api_prefix: str = "/api/v1"
     database_url: str = "sqlite+aiosqlite:///./neironych.db"
+    database_pool_size: int = Field(default=10, ge=1)
+    database_max_overflow: int = Field(default=10, ge=0)
+    database_pool_timeout_seconds: float = Field(default=10.0, gt=0)
+    database_pool_recycle_seconds: int = Field(default=1800, ge=1)
     redis_url: str = "redis://localhost:6379/0"
     admin_api_token: str = Field(default="change-me", min_length=1)
     admin_telegram_id: str | None = None
