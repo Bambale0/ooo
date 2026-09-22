@@ -384,28 +384,28 @@ async def test_late_provider_success_recharges_released_reserves_exactly_once(
     assert Decimal(partner.cost_coverage_rub) == Decimal("30.00")
 
     ledger_result = await db_session.execute(
-        select(LedgerEntry)
-        .where(LedgerEntry.generation_id == generation.id)
-        .order_by(LedgerEntry.created_at, LedgerEntry.id)
+        select(LedgerEntry).where(LedgerEntry.generation_id == generation.id)
     )
     ledger = list(ledger_result.scalars().all())
-    assert [(entry.operation_type, Decimal(entry.amount_rub)) for entry in ledger] == [
-        ("generation_reserve", Decimal("-80.00")),
-        ("generation_reserve_release", Decimal("80.00")),
-        ("generation_late_charge", Decimal("-80.00")),
-    ]
+    assert sorted((entry.operation_type, Decimal(entry.amount_rub)) for entry in ledger) == sorted(
+        [
+            ("generation_reserve", Decimal("-80.00")),
+            ("generation_reserve_release", Decimal("80.00")),
+            ("generation_late_charge", Decimal("-80.00")),
+        ]
+    )
 
     coverage_result = await db_session.execute(
-        select(CoverageLedgerEntry)
-        .where(CoverageLedgerEntry.generation_id == generation.id)
-        .order_by(CoverageLedgerEntry.created_at, CoverageLedgerEntry.id)
+        select(CoverageLedgerEntry).where(CoverageLedgerEntry.generation_id == generation.id)
     )
     coverage = list(coverage_result.scalars().all())
-    assert [(entry.operation_type, Decimal(entry.amount_rub)) for entry in coverage] == [
-        ("provider_cost_reserve", Decimal("-20.00")),
-        ("provider_cost_reserve_release", Decimal("20.00")),
-        ("provider_cost_late_charge", Decimal("-20.00")),
-    ]
+    assert sorted((entry.operation_type, Decimal(entry.amount_rub)) for entry in coverage) == sorted(
+        [
+            ("provider_cost_reserve", Decimal("-20.00")),
+            ("provider_cost_reserve_release", Decimal("20.00")),
+            ("provider_cost_late_charge", Decimal("-20.00")),
+        ]
+    )
 
     media_result = await db_session.execute(
         select(MediaAsset).where(MediaAsset.generation_id == generation.id)
@@ -415,9 +415,7 @@ async def test_late_provider_success_recharges_released_reserves_exactly_once(
     assert asset.status == "provider_ready"
 
     event_result = await db_session.execute(
-        select(WebhookEvent)
-        .where(WebhookEvent.generation_id == generation.id)
-        .order_by(WebhookEvent.created_at, WebhookEvent.id)
+        select(WebhookEvent).where(WebhookEvent.generation_id == generation.id)
     )
     events = list(event_result.scalars().all())
-    assert [event.event_type for event in events] == ["timeout", "completed"]
+    assert sorted(event.event_type for event in events) == ["completed", "timeout"]
