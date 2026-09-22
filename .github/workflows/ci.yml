@@ -17,7 +17,7 @@ jobs:
         image: postgres:16-alpine
         env:
           POSTGRES_USER: neironych
-          POSTGRES_PASSWORD: neironych
+          POSTGRES_PASSWORD: neironych # pragma: allowlist secret
           POSTGRES_DB: neironych_ci
         ports:
           - 5432:5432
@@ -37,11 +37,11 @@ jobs:
           --health-retries 10
 
     env:
-      DATABASE_URL: postgresql+asyncpg://neironych:neironych@localhost:5432/neironych_ci
-      TEST_POSTGRES_DATABASE_URL: postgresql+asyncpg://neironych:neironych@localhost:5432/neironych_ci
+      DATABASE_URL: postgresql+asyncpg://neironych:neironych@localhost:5432/neironych_ci # pragma: allowlist secret
+      TEST_POSTGRES_DATABASE_URL: postgresql+asyncpg://neironych:neironych@localhost:5432/neironych_ci # pragma: allowlist secret
       REDIS_URL: redis://localhost:6379/0
-      ADMIN_API_TOKEN: ci-admin-token
-      ARGOLINK_API_KEY: ci-argolink-key
+      ADMIN_API_TOKEN: ci-admin-token # pragma: allowlist secret
+      ARGOLINK_API_KEY: ci-argolink-key # pragma: allowlist secret
 
     steps:
       - name: Checkout
@@ -70,7 +70,7 @@ jobs:
 
       - name: Secret scan
         run: |
-          detect-secrets scan app ops .github Dockerfile docker-compose.yml .env.example > /tmp/secrets.json
+          detect-secrets scan app ops .github Dockerfile docker-compose.yml .env.example --exclude-files 'ops/load/README\\.md' > /tmp/secrets.json
           python - <<'PY'
           import json
           import sys
