@@ -180,7 +180,8 @@ def _fair_due_active_candidate_ids_query(*, provider: str, limit: int):
             & (ProviderAttempt.provider == provider),
         )
         .where(
-            Generation.status.in_(("sent_to_provider", "processing")),
+            Generation.status.in_(("sent_to_provider", "processing", "timeout")),
+            ProviderAttempt.status.in_(("accepted", "processing", "retry_pending", "timeout")),
             (due_at.is_(None)) | (due_at <= now),
         )
         .subquery()
@@ -240,7 +241,7 @@ async def _poll_generation_candidate(
                 .with_for_update()
             )
             generation = result.scalar_one_or_none()
-            if generation is None or generation.status not in {"sent_to_provider", "processing"}:
+            if generation is None or generation.status not in {"sent_to_provider", "processing", "timeout"}:
                 await db.rollback()
                 return False
 
@@ -303,7 +304,15 @@ async def _poll_active_generations(
 ) -> int:
     result = await db.execute(
         select(Generation)
-        .where(Generation.status.in_(("sent_to_provider", "processing")))
+        .join(
+            ProviderAttempt,
+            (ProviderAttempt.generation_id == Generation.id)
+            & (ProviderAttempt.provider == provider),
+        )
+        .where(
+            Generation.status.in_(("sent_to_provider", "processing", "timeout")),
+            ProviderAttempt.status.in_(("accepted", "processing", "retry_pending", "timeout")),
+        )
         .order_by(Generation.created_at)
         .with_for_update(skip_locked=True)
         .limit(limit)

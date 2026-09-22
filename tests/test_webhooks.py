@@ -172,3 +172,54 @@ async def test_failed_webhook_event_has_stable_public_error_payload(db_session):
     assert event.payload["human_message"] == "Generation failed."
     assert "charged_amount_rub" not in event.payload
     assert "balance" not in event.payload
+
+
+async def test_webhook_event_identity_is_per_terminal_business_event(db_session):
+    from app.webhooks.models import WebhookEvent
+
+    partner = Partner(
+        telegram_id="webhook-transition-partner",
+        company_name="Transition Partner",
+        project_name="Transition Bot",
+    )
+    db_session.add(partner)
+    await db_session.flush()
+
+    generation = Generation(
+        partner_id=partner.id,
+        model_id="model-transition",
+        model_slug="seedance-2.5",
+        mode="text_to_video",
+        resolution="720p",
+        duration_seconds=5,
+        idempotency_key="webhook-transition-idem",
+        partner_price_rub=Decimal("100.00"),
+        prompt="transition webhook test",
+        request_payload={"duration_seconds": 5},
+        status="timeout",
+        public_error_code="generation_timeout",
+        webhook_url_snapshot="https://partner.example.test/hooks/neironych",
+    )
+    db_session.add(generation)
+    await db_session.flush()
+
+    timeout_event = await ensure_terminal_webhook_event(db_session, generation)
+    assert timeout_event is not None
+    assert timeout_event.event_type == "timeout"
+
+    generation.status = "completed"
+    generation.public_error_code = None
+    generation.result_url = "https://cdn.example.test/late-result.mp4"
+    completed_event = await ensure_terminal_webhook_event(db_session, generation)
+
+    assert completed_event is not None
+    assert completed_event.id != timeout_event.id
+    assert completed_event.event_type == "completed"
+
+    result = await db_session.execute(
+        select(WebhookEvent)
+        .where(WebhookEvent.generation_id == generation.id)
+        .order_by(WebhookEvent.created_at)
+    )
+    events = list(result.scalars().all())
+    assert [event.event_type for event in events] == ["timeout", "completed"]

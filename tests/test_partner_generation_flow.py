@@ -393,3 +393,135 @@ async def test_worker_marks_stale_provider_attempt_timeout(
         assert attempt.last_error == "provider_processing_timeout"
     finally:
         settings.worker_provider_processing_timeout_seconds = old_timeout
+
+
+async def test_worker_reconciles_late_provider_success_after_local_timeout(
+    db_session: AsyncSession,
+    monkeypatch,
+):
+    from app.billing.models import LedgerEntry
+    from app.billing.service import apply_partner_balance_change
+    from app.webhooks.models import WebhookEvent
+
+    class LateSuccessAdapter(FakeArgoLinkAdapter):
+        async def poll_generation(self, provider_task_id: str):
+            assert provider_task_id == "provider-late-success-task"
+            return ProviderPollResult(
+                status="completed",
+                result_url=f"https://argolink.io/v1/videos/{provider_task_id}/content",
+            )
+
+    adapter = LateSuccessAdapter(api_key="argolink-secret")
+
+    async def get_adapter(db, partner_id: str, provider: str = "argolink"):
+        assert provider == "argolink"
+        return adapter
+
+    monkeypatch.setattr("app.generations.service.get_partner_provider_adapter", get_adapter)
+
+    settings = get_settings()
+    old_timeout = settings.worker_provider_processing_timeout_seconds
+    old_poll_max = settings.worker_poll_backoff_max_seconds
+    settings.worker_provider_processing_timeout_seconds = 60
+    settings.worker_poll_backoff_max_seconds = 1
+
+    try:
+        partner = Partner(
+            telegram_id="late-success-test",
+            company_name="Late Success Partner",
+            project_name="Late Success Bot",
+            balance_rub=Decimal("1000.00"),
+        )
+        db_session.add(partner)
+        await db_session.flush()
+
+        generation = Generation(
+            partner_id=partner.id,
+            model_id="model-late-success",
+            model_slug="seedance-2.5",
+            mode="text_to_video",
+            resolution="720p",
+            duration_seconds=5,
+            idempotency_key="late-success-idem",
+            partner_price_rub=Decimal("100.00"),
+            prompt="late success",
+            status="sent_to_provider",
+            webhook_url_snapshot="https://partner.example.test/hooks/neironych",
+        )
+        db_session.add(generation)
+        await db_session.flush()
+
+        await apply_partner_balance_change(
+            db=db_session,
+            partner=partner,
+            amount_rub=Decimal("-100.00"),
+            operation_type="generation_reserve",
+            idempotency_key=f"generation-reserve:{generation.id}",
+            generation_id=generation.id,
+            allow_negative=False,
+        )
+
+        attempt = ProviderAttempt(
+            generation_id=generation.id,
+            provider="argolink",
+            provider_task_id="provider-late-success-task",
+            status="accepted",
+            created_at=utc_now() - timedelta(minutes=10),
+            next_poll_at=utc_now() - timedelta(seconds=1),
+        )
+        db_session.add(attempt)
+        await db_session.flush()
+
+        timed_out = await process_generation_work_once(db_session)
+        assert timed_out.polled == 1
+        await db_session.refresh(generation)
+        await db_session.refresh(partner)
+        await db_session.refresh(attempt)
+
+        assert generation.status == "timeout"
+        assert Decimal(partner.balance_rub) == Decimal("1000.00")
+        assert attempt.status == "timeout"
+        assert attempt.next_poll_at is not None
+
+        attempt.next_poll_at = utc_now() - timedelta(seconds=1)
+        await db_session.flush()
+
+        reconciled = await process_generation_work_once(db_session)
+        assert reconciled.polled == 1
+        await db_session.refresh(generation)
+        await db_session.refresh(partner)
+
+        assert generation.status == "completed"
+        assert Decimal(partner.balance_rub) == Decimal("900.00")
+        assert generation.result_url is not None
+
+        ledger_result = await db_session.execute(
+            select(LedgerEntry)
+            .where(LedgerEntry.generation_id == generation.id)
+            .order_by(LedgerEntry.created_at)
+        )
+        ledger = list(ledger_result.scalars().all())
+        assert [entry.operation_type for entry in ledger] == [
+            "generation_reserve",
+            "generation_reserve_release",
+            "generation_late_charge",
+        ]
+
+        events_result = await db_session.execute(
+            select(WebhookEvent)
+            .where(WebhookEvent.generation_id == generation.id)
+            .order_by(WebhookEvent.created_at)
+        )
+        events = list(events_result.scalars().all())
+        assert [event.event_type for event in events] == ["timeout", "completed"]
+
+        attempt.next_poll_at = utc_now() - timedelta(seconds=1)
+        await db_session.flush()
+        duplicate = await process_generation_work_once(db_session)
+        assert duplicate.polled == 0
+
+        await db_session.refresh(partner)
+        assert Decimal(partner.balance_rub) == Decimal("900.00")
+    finally:
+        settings.worker_provider_processing_timeout_seconds = old_timeout
+        settings.worker_poll_backoff_max_seconds = old_poll_max

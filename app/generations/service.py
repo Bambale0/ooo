@@ -132,12 +132,22 @@ async def poll_generation_provider(
         return generation
 
     settings = get_settings()
-    if is_older_than(attempt.created_at, settings.worker_provider_processing_timeout_seconds):
+    reconciling_late_success = generation.status == "timeout" or attempt.status == "timeout"
+    if not reconciling_late_success and is_older_than(
+        attempt.created_at,
+        settings.worker_provider_processing_timeout_seconds,
+    ):
         attempt.status = "timeout"
         attempt.public_error_code = "generation_timeout"
         attempt.last_error = "provider_processing_timeout"
         attempt.next_attempt_at = None
-        attempt.next_poll_at = None
+        attempt.poll_count += 1
+        attempt.next_poll_at = next_poll_at(
+            attempt.poll_count,
+            initial_seconds=settings.worker_poll_backoff_max_seconds,
+            base_seconds=settings.worker_poll_backoff_max_seconds,
+            max_seconds=settings.worker_poll_backoff_max_seconds,
+        )
         generation.status = "timeout"
         generation.public_error_code = "generation_timeout"
         await release_generation_reserve(
@@ -162,14 +172,29 @@ async def poll_generation_provider(
         result = await adapter.poll_generation(attempt.provider_task_id)
     except Exception as exc:
         normalized = adapter.normalize_error(exc)
-        _mark_attempt_error(attempt, generation, normalized)
-        if generation.status == "failed":
-            await release_generation_reserve(
-                db,
-                generation,
-                reason="Released partner reserve after terminal provider polling failure",
+        if reconciling_late_success:
+            attempt.public_error_code = normalized.public_code
+            attempt.raw_error = normalized.raw_error
+            attempt.last_error = normalized.raw_error or normalized.public_code
+            attempt.status = "timeout"
+            attempt.retry_count += 1
+            attempt.next_attempt_at = next_retry_at(
+                attempt.retry_count,
+                base_seconds=settings.worker_retry_base_seconds,
+                max_seconds=settings.worker_retry_max_seconds,
+                retry_after_seconds=normalized.retry_after_seconds,
             )
-            await ensure_terminal_webhook_event(db, generation)
+            generation.status = "timeout"
+            generation.public_error_code = "generation_timeout"
+        else:
+            _mark_attempt_error(attempt, generation, normalized)
+            if generation.status == "failed":
+                await release_generation_reserve(
+                    db,
+                    generation,
+                    reason="Released partner reserve after terminal provider polling failure",
+                )
+                await ensure_terminal_webhook_event(db, generation)
         await db.flush()
         await db.refresh(generation)
         return generation
@@ -195,19 +220,28 @@ async def poll_generation_provider(
             )
         await ensure_terminal_webhook_event(db, generation)
     elif result.status == "failed":
-        generation.status = "failed"
-        generation.public_error_code = "provider_generation_failed"
         attempt.public_error_code = "provider_generation_failed"
         attempt.raw_error = result.raw_error
         attempt.next_poll_at = None
-        await release_generation_reserve(
-            db,
-            generation,
-            reason="Released partner reserve after provider generation failure",
-        )
-        await ensure_terminal_webhook_event(db, generation)
+        if reconciling_late_success:
+            generation.status = "timeout"
+            generation.public_error_code = "generation_timeout"
+        else:
+            generation.status = "failed"
+            generation.public_error_code = "provider_generation_failed"
+            await release_generation_reserve(
+                db,
+                generation,
+                reason="Released partner reserve after provider generation failure",
+            )
+            await ensure_terminal_webhook_event(db, generation)
     elif result.status == "processing":
-        generation.status = "processing"
+        if reconciling_late_success:
+            generation.status = "timeout"
+            generation.public_error_code = "generation_timeout"
+            attempt.status = "timeout"
+        else:
+            generation.status = "processing"
         attempt.poll_count += 1
         attempt.next_poll_at = next_poll_at(
             attempt.poll_count,

@@ -7,10 +7,17 @@ from app.infrastructure.types import utc_created_at, uuid_pk
 
 class WebhookEvent(Base):
     __tablename__ = "webhook_events"
-    __table_args__ = (UniqueConstraint("generation_id", name="uq_webhook_events_generation"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "generation_id",
+            "event_type",
+            name="uq_webhook_events_generation_event_type",
+        ),
+    )
 
     id: Mapped[str] = uuid_pk()
     generation_id: Mapped[str] = mapped_column(ForeignKey("generations.id"), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     partner_id: Mapped[str] = mapped_column(ForeignKey("partners.id"), nullable=False, index=True)
     webhook_url: Mapped[str] = mapped_column(Text, nullable=False)
     webhook_secret_encrypted: Mapped[str | None] = mapped_column(Text)
