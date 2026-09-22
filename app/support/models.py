@@ -2,7 +2,6 @@
 Support ticket system for partner support within Telegram.
 """
 
-from datetime import datetime
 from sqlalchemy import ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
