@@ -109,7 +109,7 @@ def refresh_db_pool_metrics(pool: object) -> None:
     if callable(size):
         DB_POOL_SIZE.set(size())
     if callable(overflow):
-        DB_POOL_OVERFLOW.set(overflow())
+        DB_POOL_OVERFLOW.set(max(0, overflow()))
 
 
 def metrics_payload() -> tuple[bytes, str]:
