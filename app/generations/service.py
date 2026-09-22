@@ -1,7 +1,7 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.billing.service import release_generation_reserve, settle_generation_reserve
+from app.billing.service import release_generation_reserves, settle_generation_reserves
 from app.generations.models import Generation
 from app.infrastructure.config import get_settings
 from app.infrastructure.metrics import monotonic_seconds, observe_provider_request
@@ -122,7 +122,7 @@ async def dispatch_generation_to_provider(
             db.add(attempt)
         _mark_attempt_error(attempt, generation, normalized)
         if generation.status == "failed":
-            await release_generation_reserve(
+            await release_generation_reserves(
                 db,
                 generation,
                 reason="Released partner reserve after provider submit failure",
@@ -167,7 +167,7 @@ async def poll_generation_provider(
         )
         generation.status = "timeout"
         generation.public_error_code = "generation_timeout"
-        await release_generation_reserve(
+        await release_generation_reserves(
             db,
             generation,
             reason="Released partner reserve after provider processing timeout",
@@ -222,7 +222,7 @@ async def poll_generation_provider(
         else:
             _mark_attempt_error(attempt, generation, normalized)
             if generation.status == "failed":
-                await release_generation_reserve(
+                await release_generation_reserves(
                     db,
                     generation,
                     reason="Released partner reserve after terminal provider polling failure",
@@ -243,7 +243,7 @@ async def poll_generation_provider(
         generation.status = "completed"
         generation.public_error_code = None
         attempt.next_poll_at = None
-        await settle_generation_reserve(db, generation)
+        await settle_generation_reserves(db, generation)
         if result.result_url:
             await create_provider_ready_asset(
                 db=db,
@@ -262,7 +262,7 @@ async def poll_generation_provider(
         else:
             generation.status = "failed"
             generation.public_error_code = "provider_generation_failed"
-            await release_generation_reserve(
+            await release_generation_reserves(
                 db,
                 generation,
                 reason="Released partner reserve after provider generation failure",
