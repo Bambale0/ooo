@@ -110,8 +110,8 @@ async def create_profit_withdrawal(
     payload: dict,
     db: DbSession,
 ) -> dict:
-    from app.billing.safe_to_withdraw import record_profit_withdrawal
     from app.api.dependencies import get_current_partner
+    from app.billing.safe_to_withdraw import record_profit_withdrawal
     partner = await get_current_partner()
     return await record_profit_withdrawal(
         db,
