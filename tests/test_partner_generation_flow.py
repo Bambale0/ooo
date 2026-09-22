@@ -224,6 +224,19 @@ async def test_partner_can_create_idempotent_generation_after_manual_credit(
     assert credit_response.status_code == 200
     assert Decimal(credit_response.json()["balance_after_rub"]) == Decimal("1000.00")
 
+    coverage_response = await client.post(
+        "/api/v1/billing/coverage-adjustments",
+        headers=admin_headers,
+        json={
+            "partner_id": partner_id,
+            "amount_rub": "1000.00",
+            "idempotency_key": "coverage-demo-1",
+            "reason": "Initial real-money cost coverage for integration test",
+        },
+    )
+    assert coverage_response.status_code == 200
+    assert Decimal(coverage_response.json()["coverage_after_rub"]) == Decimal("1000.00")
+
     partner_headers = {"Authorization": f"Bearer {api_key}"}
     generation_payload = {
         "model_slug": "seedance-2.5",
@@ -324,6 +337,13 @@ async def test_partner_can_create_idempotent_generation_after_manual_credit(
     )
     assert balance_response.status_code == 200
     assert Decimal(balance_response.json()["balance_rub"]) == Decimal("900.00")
+
+    coverage_balance_response = await client.get(
+        f"/api/v1/billing/partners/{partner_id}/coverage",
+        headers=admin_headers,
+    )
+    assert coverage_balance_response.status_code == 200
+    assert Decimal(coverage_balance_response.json()["cost_coverage_rub"]) == Decimal("915.00")
 
     ledger_response = await client.get(
         f"/api/v1/billing/partners/{partner_id}/ledger",
