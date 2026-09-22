@@ -5,11 +5,11 @@ from fastapi import FastAPI, Request, Response, status
 from fastapi.responses import JSONResponse
 
 from app.api.router import api_router
+from app.infrastructure import state as infrastructure_state
 from app.infrastructure.config import get_settings
 from app.infrastructure.database import engine
 from app.infrastructure.logging import configure_logging
 from app.infrastructure.metrics import metrics_payload, monotonic_seconds, observe_http_request, refresh_db_pool_metrics
-from app.infrastructure import state as infrastructure_state
 from app.payments.crypto_pay import close_crypto_pay_client
 from app.providers.http_client import close_provider_http_clients
 
