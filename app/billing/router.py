@@ -99,3 +99,23 @@ async def list_partner_coverage_ledger(partner_id: str, db: DbSession) -> list[C
         .order_by(CoverageLedgerEntry.created_at.desc())
     )
     return list(result.scalars().all())
+@router.get("/safe-to-withdraw", dependencies=[Depends(require_admin)])
+async def get_safe_to_withdraw(db: DbSession) -> dict:
+    from app.billing.safe_to_withdraw import calculate_safe_to_withdraw
+    return await calculate_safe_to_withdraw(db)
+
+
+@router.post("/profit-withdrawals", dependencies=[Depends(require_admin)])
+async def create_profit_withdrawal(
+    payload: dict,
+    db: DbSession,
+) -> dict:
+    from app.billing.safe_to_withdraw import record_profit_withdrawal
+    from app.api.dependencies import get_current_partner
+    partner = await get_current_partner()
+    return await record_profit_withdrawal(
+        db,
+        amount_usdt=payload["amount_usdt"],
+        reason=payload["reason"],
+        partner_id=partner.id,
+    )
