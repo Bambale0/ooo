@@ -145,9 +145,9 @@ async def apply_paid_provider_invoice(
 
 async def credit_paid_invoice(db: AsyncSession, *, payment_id: str) -> PaymentInvoice:
     payment = await _lock_payment(db, payment_id)
-    if payment.status == "credited":
+    if payment.credited_at is not None:
         return payment
-    if payment.status not in {"paid_waiting_credit", "partially_refunded", "refunded"}:
+    if payment.status != "paid_waiting_credit":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="payment_not_ready_for_credit")
 
     partner = await db.get(Partner, payment.partner_id)
