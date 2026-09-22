@@ -75,7 +75,7 @@ async def test_partner_cannot_read_another_partners_generation(client, db_sessio
     )
     assert own.status_code == 200
     assert own.json()["id"] == generation_id
-    assert own.json()["partner_id"] == partner_b_id
+    assert "partner_id" not in own.json()
     assert partner_a_id != partner_b_id
 
 
