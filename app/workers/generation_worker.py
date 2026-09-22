@@ -17,6 +17,7 @@ from app.generations.service import (
 from app.infrastructure.config import get_settings
 from app.infrastructure.database import SessionLocal
 from app.infrastructure.logging import configure_logging
+from app.infrastructure.metrics import update_generation_queue_metrics
 from app.infrastructure.retry import utc_now
 from app.providers.http_client import close_provider_http_clients
 from app.providers.models import ProviderAttempt
@@ -43,6 +44,7 @@ async def process_generation_work_once(
     """Single-session worker path kept for focused tests and admin/debug use."""
     dispatched = await _dispatch_queued_generations(db, limit=limit, provider=provider)
     polled = await _poll_active_generations(db, limit=limit, provider=provider)
+    await _refresh_generation_queue_metrics_with_session(db)
     return WorkerCycleResult(dispatched=dispatched, polled=polled)
 
 
@@ -78,6 +80,7 @@ async def process_generation_work_concurrently_once(
             provider=provider,
         ),
     )
+    await _refresh_generation_queue_metrics(session_factory)
     return WorkerCycleResult(dispatched=dispatched, polled=polled)
 
 
@@ -326,3 +329,28 @@ async def _poll_active_generations(
 
 if __name__ == "__main__":
     asyncio.run(run_generation_worker_forever())
+
+
+async def _refresh_generation_queue_metrics(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as db:
+        await _refresh_generation_queue_metrics_with_session(db)
+
+
+async def _refresh_generation_queue_metrics_with_session(db: AsyncSession) -> None:
+    statuses = ("queued", "sent_to_provider", "processing", "timeout")
+    result = await db.execute(
+        select(
+            Generation.status,
+            func.count(Generation.id),
+            func.min(Generation.created_at),
+        )
+        .where(Generation.status.in_(statuses))
+        .group_by(Generation.status)
+    )
+    rows = {
+        status: (int(depth), oldest)
+        for status, depth, oldest in result.all()
+    }
+    update_generation_queue_metrics(rows, now=utc_now())
