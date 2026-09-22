@@ -41,7 +41,7 @@ def create_app() -> FastAPI:
             status_code = response.status_code
             return response
         finally:
-            route = _matched_route_template(app, request)
+            route = _bounded_route_label(app, request)
             if route != "/internal/metrics":
                 observe_http_request(
                     method=request.method,
@@ -66,15 +66,20 @@ def create_app() -> FastAPI:
     return app
 
 
-def _matched_route_template(app: FastAPI, request: Request) -> str:
+def _bounded_route_label(app: FastAPI, request: Request) -> str:
+    path = request.url.path
     for route in app.router.routes:
+        template = getattr(route, "path", None)
+        if not isinstance(template, str):
+            continue
+        if "{" not in template and template == path:
+            return template
+
         path_regex = getattr(route, "path_regex", None)
         methods = getattr(route, "methods", None)
-        if path_regex is None or path_regex.fullmatch(request.url.path) is None:
+        if path_regex is None or path_regex.match(path) is None:
             continue
         if methods is not None and request.method not in methods:
             continue
-        path = getattr(route, "path", None)
-        if isinstance(path, str):
-            return path
+        return template
     return "unmatched"
