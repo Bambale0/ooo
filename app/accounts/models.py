@@ -31,6 +31,7 @@ class Partner(Base):
     project_name: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
     balance_rub: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=Decimal("0.00"))
+    cost_coverage_rub: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=Decimal("0.00"))
     created_at: Mapped[object] = utc_created_at()
 
     api_keys: Mapped[list["ApiKey"]] = relationship(back_populates="partner")
