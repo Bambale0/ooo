@@ -23,7 +23,10 @@ async def ensure_terminal_webhook_event(db: AsyncSession, generation: Generation
         return None
 
     existing_result = await db.execute(
-        select(WebhookEvent).where(WebhookEvent.generation_id == generation.id)
+        select(WebhookEvent).where(
+            WebhookEvent.generation_id == generation.id,
+            WebhookEvent.event_type == generation.status,
+        )
     )
     existing = existing_result.scalar_one_or_none()
     if existing is not None:
@@ -31,6 +34,7 @@ async def ensure_terminal_webhook_event(db: AsyncSession, generation: Generation
 
     event = WebhookEvent(
         generation_id=generation.id,
+        event_type=generation.status,
         partner_id=generation.partner_id,
         webhook_url=generation.webhook_url_snapshot,
         webhook_secret_encrypted=generation.webhook_secret_encrypted_snapshot,
@@ -51,12 +55,14 @@ async def request_manual_resend(
     partner_id: str,
 ) -> WebhookEvent:
     result = await db.execute(
-        select(WebhookEvent).where(
+        select(WebhookEvent)
+        .where(
             WebhookEvent.generation_id == generation_id,
             WebhookEvent.partner_id == partner_id,
         )
+        .order_by(WebhookEvent.created_at.desc())
     )
-    event = result.scalar_one_or_none()
+    event = result.scalars().first()
     if event is None:
         raise LookupError("webhook_event_not_found")
 
