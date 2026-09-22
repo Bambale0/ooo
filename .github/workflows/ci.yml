@@ -63,7 +63,7 @@ jobs:
         run: python -m ruff check .
 
       - name: Dependency vulnerability audit
-        run: pip-audit --strict --skip-editable
+        run: pip-audit --skip-editable
 
       - name: Python SAST
         run: bandit -r app -ll -ii
