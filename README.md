@@ -4,7 +4,7 @@
 
 Первый upstream provider — ArgoLink, но ядро проектируется provider-agnostic: provider-specific ключи, task IDs, routing, закупочная стоимость и raw errors остаются внутренними.
 
-> **Статус:** release candidate с нативными контрактами 39 моделей ArgoLink, биллингом фактического usage, Telegram-кабинетом и проверенным encrypted backup/PITR. Live-результат получен у 30/39 моделей; неуспешные upstream-конфигурации не считаются готовыми к продаже.
+> **Статус:** release candidate с нативными контрактами 40 моделей ArgoLink, биллингом фактического usage, Telegram-кабинетом и проверенным encrypted backup/PITR. Live-результат получен у 30/40 моделей; неуспешные upstream-конфигурации не считаются готовыми к продаже.
 
 Актуальные доказательства и условия запуска: [production review](docs/PRODUCTION_REVIEW.md), [live-матрица и квота](docs/LIVE_VERIFICATION_2026-09-23.md), [контракты](docs/ARGOLINK_CONTRACT.md), [операции](docs/OPERATIONS.md). Ниже также описана целевая продуктовая спецификация — это не автоматический PASS всех launch gates.
 

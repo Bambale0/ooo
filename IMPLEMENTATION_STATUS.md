@@ -6,7 +6,7 @@ Production launch отдельно регулируется [чек-листом
 
 | Область | Проверенный результат |
 | --- | --- |
-| Контракты | 39 моделей в reviewed catalog; text JSON/SSE, images JSON/multipart, video/reference/edit, upload tickets |
+| Контракты | 40 моделей в reviewed catalog; text JSON/SSE, images JSON/multipart, video/reference/edit, upload tickets |
 | Биллинг | Decimal, immutable price/FX snapshots, реальные usage units, idempotent settlement и reconciliation |
 | Казначейство | Wallet freshness, working capital, current reserves, safe-to-withdraw, audit withdrawals/corrections |
 | FX / alerts | Automatic → manual fallback → last automatic; persistent deficit/economic/low-margin incidents, threshold hierarchy/history |
@@ -18,10 +18,9 @@ Production launch отдельно регулируется [чек-листом
 | Admin UI | Guided confirmations: цены/пороги, refund/withdrawal/corrections, сверки, модельные gates/capabilities и encrypted credential provisioning |
 | Recovery | Encrypted logical backup + support files, physical backup + WAL/PITR; оба restore пути проверены |
 | Runtime | App + два worker после restart; Redis outage даёт readiness 503 |
-| Проверки | 223 tests PASS, включая PostgreSQL concurrency, Ruff, dependency audit, SAST, secret scan; Alembic head 0020 без drift |
+| Проверки | 229 tests PASS, включая PostgreSQL concurrency, Ruff, dependency audit, SAST, secret scan; Alembic head 0020 без drift |
 
-Live: **30/39** моделей дали результат хотя бы через один протокол. Все 6 видео-моделей
-проверены с предоставленным референсом. Это не PASS всех комбинаций параметров.
+Live: **30/40** моделей дали результат хотя бы через один протокол. Все 7 видео-моделей проверены с предоставленным референсом; успешны 6. Это не PASS всех комбинаций параметров.
 Точные неуспехи, квота и расходы — в [live-отчёте](docs/LIVE_VERIFICATION_2026-09-23.md).
 
 Остаются внешние launch gates: исправление нерабочих upstream-конфигураций, проверка

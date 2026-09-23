@@ -2,8 +2,8 @@
 
 Checked against [official documentation](https://argolink.io/en/docs#/) and the
 [public catalog](https://argolink.io/api/catalog/v1/models?page_size=100), revision
-`6dbda1a9e5891d82`, on 2026-09-23. The reviewed snapshot contains **39 models:
-24 text, 9 image, 6 video**. Procurement data lives in `app/contracts/catalog.json`;
+`5ce662ba88c3d07f`, on 2026-09-23. The reviewed snapshot contains **40 models:
+24 text, 9 image, 7 video**. Procurement data lives in `app/contracts/catalog.json`;
 retail prices are always configured by the operator.
 
 ## Native routes
@@ -46,11 +46,12 @@ contract does not expose a safe cancellation endpoint.
 
 | Family | Output seconds | Resolutions | Images / videos / audios / combined |
 | --- | --- | --- | --- |
-| Seedance 2.0 | 4–15 | 720p, 1080p, 4k | 9 / 3 / 3 / 12 |
-| Seedance 2.0 Mini, Fast | 4–15 | 720p | 9 / 3 / 3 / 12 |
+| Seedance 2.0 | 4–15 | 480p, 720p, 1080p, 4k | 9 / 3 / 3 / 12 |
+| Seedance 2.0 Mini, Fast | 4–15 | 480p, 720p | 9 / 3 / 3 / 12 |
 | Seedance 2.5 | 4–30 | 480p, 720p, 1080p | 30 / 10 / 10 / 50 |
 | Wan 3 | 2–30 | 480p, 720p, 1080p | 10 / 5 / 5 / 20 |
 | Grok Video 1.5 | 1–15 | 480p, 720p, 1080p | up to 7 image references; no video/audio references |
+| MiniMax H3 | 4–15 | 768p (default), 2k | 9 / 3 / 3 / 15 |
 
 Seedance accepts first/last frames, reference combinations, documented aliases,
 and 2.5 video editing. HTTPS references and frame/reference exclusivity are
@@ -58,6 +59,19 @@ validated before reserving funds. The 2.0 family requires visual input alongside
 audio; 2.5 allows audio alone. Wan requires a prompt and supports its audio toggle.
 Grok image references are capped at 720p; its native `image` first-frame input is
 preserved, including data URLs/file IDs supported upstream.
+
+MiniMax H3 requires a prompt, accepts first frame alone or first+last frame, and
+supports `adaptive` aspect ratio with references. Audio references need an image
+or video; generated audio cannot be disabled. Native aliases and HTTPS upload
+tickets are supported. For MiniMax `size`, the documented 1366x768 mapping is
+recognized; other pixel dimensions require explicit `resolution` because the
+current docs do not specify the 2k short-side boundary consistently. This is a
+billing validation constraint, not a silent choice of a different output tier.
+
+The catalogue changed during verification: revision `5ce662ba88c3d07f` added H3
+and three Seedance 480p tiers. Procurement uses the current live catalog (H3
+0.044/0.072 USD per second), not older cached pages with different prices/limits.
+New tiers still need operator-set retail prices and successful configuration smoke.
 
 Reference video time is billable. The gateway reserves the documented upper bound
 for the request's reference inputs, then settles reported actual seconds. It never

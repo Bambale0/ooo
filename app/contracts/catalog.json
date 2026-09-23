@@ -1,6 +1,6 @@
 {
   "source": "https://argolink.io/api/catalog/v1/models?page_size=100",
-  "revision": "6dbda1a9e5891d82",
+  "revision": "5ce662ba88c3d07f",
   "checked_at": "2026-09-23",
   "models": {
     "gpt-6-astra": {
@@ -486,6 +486,26 @@
         "cache_write_per_million": 0
       }
     },
+    "minimax-h3": {
+      "category": "video",
+      "endpoint": "/v1/videos/generations",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "video",
+        "unit": "second",
+        "generation_per_unit": 0.044,
+        "tiers": [
+          {
+            "label": "768p",
+            "price": 0.044
+          },
+          {
+            "label": "2k",
+            "price": 0.072
+          }
+        ]
+      }
+    },
     "nano-banana-2": {
       "category": "image",
       "endpoint": "/v1/images/generations",
@@ -550,8 +570,12 @@
         "currency": "USD",
         "billing_mode": "video",
         "unit": "second",
-        "generation_per_unit": 0.11,
+        "generation_per_unit": 0.053,
         "tiers": [
+          {
+            "label": "480p",
+            "price": 0.053
+          },
           {
             "label": "720p",
             "price": 0.11
@@ -574,8 +598,12 @@
         "currency": "USD",
         "billing_mode": "video",
         "unit": "second",
-        "generation_per_unit": 0.091,
+        "generation_per_unit": 0.042,
         "tiers": [
+          {
+            "label": "480p",
+            "price": 0.042
+          },
           {
             "label": "720p",
             "price": 0.091
@@ -590,8 +618,12 @@
         "currency": "USD",
         "billing_mode": "video",
         "unit": "second",
-        "generation_per_unit": 0.057,
+        "generation_per_unit": 0.026,
         "tiers": [
+          {
+            "label": "480p",
+            "price": 0.026
+          },
           {
             "label": "720p",
             "price": 0.057

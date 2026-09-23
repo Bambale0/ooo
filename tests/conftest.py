@@ -18,6 +18,16 @@ from app.infrastructure.database import Base, get_db_session  # noqa: E402
 from app.main import app  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def isolated_http_only(monkeypatch):
+    import httpx
+
+    async def reject_network(self, request):
+        raise AssertionError("Tests must use MockTransport/ASGITransport, never real provider HTTP")
+
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", reject_network)
+
+
 @pytest.fixture
 async def db_session() -> AsyncIterator[AsyncSession]:
     engine = create_async_engine(
@@ -77,3 +87,4 @@ def fixed_test_fx(monkeypatch):
         return {"rate": get_settings().rub_per_usdt, "source": "manual_fallback", "automatic_at": None}
 
     monkeypatch.setattr("app.billing.fx.current_fx", rate)
+    monkeypatch.setattr("app.billing.incidents.current_fx", rate)

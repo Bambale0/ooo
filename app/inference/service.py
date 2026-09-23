@@ -234,6 +234,6 @@ def quote(protocol, body, prices, *, fx=None, trial=False):
         )
         return rates, {tier: body.get("n", 1)}, tier
     video = normalized_video(body)
-    resolution = video.get("resolution", "720p")
+    resolution = video.get("resolution", "768p" if body["model"] == "minimax-h3" else "720p")
     add("seconds", "default", resolution, "second")
     return rates, {"seconds": video_reserve_seconds(body)}, resolution

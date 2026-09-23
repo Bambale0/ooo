@@ -51,6 +51,8 @@ async def run(args):
         save()
         catalog = await client.get("/api/catalog/v1/models?page_size=100")
         catalog.raise_for_status()
+        report["live_catalog_revision"] = catalog.json().get("revision")
+        save()
         if catalog.json().get("revision") != CATALOG["revision"]:
             report["catalog_drift"] = True
             save()
@@ -112,7 +114,7 @@ async def run(args):
                 }
             else:
                 tier = min(p["tiers"], key=lambda t: Decimal(str(t["price"])))
-                duration = 4 if slug.startswith("seedance") else 2 if slug == "wan-3" else 1
+                duration = 4 if slug.startswith("seedance") or slug == "minimax-h3" else 2 if slug == "wan-3" else 1
                 estimate = Decimal(str(tier["price"])) * duration
                 body = {
                     "model": slug,

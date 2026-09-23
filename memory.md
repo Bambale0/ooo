@@ -11,9 +11,9 @@
 - Product brief §89: историческое покрытие не является самостоятельным запретом генерации.
   Admission использует retail balance, экономику и текущий working capital с реальным wallet cap.
 - FX: automatic, затем manual fallback, затем last automatic. Источник и timestamp сохраняются.
-- Полный актуальный priced catalog ArgoLink — 39 моделей. Native routes и пределы описаны
+- Полный актуальный priced catalog ArgoLink — 40 моделей. Native routes и пределы описаны
   в docs/ARGOLINK_CONTRACT.md; каталог нельзя считать свидетельством работоспособности.
-- Live 23.09: 30/39 дали результат, включая все 6 видео-моделей с референсом. GPT Responses
+- Live 23.09: 30/40 дали результат, включая 6 видео-моделей с референсом. GPT Responses
   и часть GPT Chat возвращали 502; Nano edits не подтверждены. Gemini Omni в docs есть,
   в priced catalog отсутствует. Автоматического fallback модели/протокола нет.
 - Partner credentials хранятся зашифрованными. Начатая задача привязана к исходному ключу.
@@ -30,7 +30,7 @@
   и входят в encrypted backup. Генерационные референсы не превращаются в support data.
 - Проверены logical restore и WAL/PITR. `.backup.env` и recovery identity не коммитятся;
   private recovery identity не должна находиться на primary/backup server.
-- Последний локальный полный прогон: 223 tests, включая PostgreSQL concurrency; schema head 0020, no drift;
+- Последний локальный полный прогон: 229 tests, включая PostgreSQL concurrency; schema head 0020, no drift;
   app/workers restart и Redis failure проверены. CI PR остаётся источником проверки commit SHA.
 - Внешние launch gates и границы live/isolated проверок перечислены в
   IMPLEMENTATION_STATUS.md. Не выдавайте полный resale PASS по одному unit-test прогону.

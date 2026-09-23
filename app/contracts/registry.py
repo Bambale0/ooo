@@ -150,6 +150,12 @@ def normalized_video(body: dict[str, Any]) -> dict[str, Any]:
         except (ValueError, AttributeError) as exc:
             raise ValueError("invalid_size") from exc
         tier = "480p" if min(w, h) < 720 else "720p" if min(w, h) < 1080 else "1080p" if min(w, h) < 2160 else "4k"
+        if body.get("model") == "minimax-h3":
+            # The provider documents 1366x768, but does not specify the 2k
+            # short-side mapping. An explicit tier removes billing ambiguity.
+            tier = body.get("resolution", "768p" if min(w, h) == 768 else None)
+            if tier is None:
+                raise ValueError("explicit_resolution_required_for_minimax_size")
         ratios = ("16:9", "9:16", "1:1", "4:3", "3:4", "21:9")
         ratio = min(ratios, key=lambda r: abs(w / h / (int(r.split(":")[0]) / int(r.split(":")[1])) - 1))
         if abs(w / h / (int(ratio.split(":")[0]) / int(ratio.split(":")[1])) - 1) > 0.03:
@@ -166,9 +172,11 @@ def validate_video(original: dict[str, Any]) -> None:
     body = normalized_video(original)
     model = body["model"]
     seedance = model in SEEDANCE
+    minimax = model == "minimax-h3"
+    url_video = seedance or minimax
     wan = model == "wan-3"
     maximum = 30 if model in {"seedance-2.5", "wan-3"} else 15
-    minimum = 4 if seedance else 2 if wan else 1
+    minimum = 4 if url_video else 2 if wan else 1
     edit = body.get("omni_reference_task_type") == "edit"
     if edit and (model != "seedance-2.5" or "duration" in body):
         raise ValueError("invalid_edit_request")
@@ -176,13 +184,15 @@ def validate_video(original: dict[str, Any]) -> None:
         integer(body.get("duration", 5), "duration", minimum, maximum)
     integer(body.get("n", 1), "n", 1, 1)
     resolutions = {t["label"] for t in MODELS[model]["procurement"]["tiers"]}
-    if body.get("resolution", "720p") not in resolutions:
+    if body.get("resolution", "768p" if minimax else "720p") not in resolutions:
         raise ValueError("unsupported_resolution")
     ref_fields = ("reference_images", "reference_videos", "reference_audios")
     counts = []
     limits = (
         (30, 10, 10, 50)
         if model == "seedance-2.5"
+        else (9, 3, 3, 15)
+        if minimax
         else (9, 3, 3, 12)
         if seedance
         else (10, 5, 5, 20)
@@ -198,26 +208,28 @@ def validate_video(original: dict[str, Any]) -> None:
         refs.extend(items)
     if sum(counts) > limits[3]:
         raise ValueError("reference_limit_exceeded")
-    if seedance and model != "seedance-2.5" and counts[2] and not (counts[0] or counts[1]):
+    if url_video and model != "seedance-2.5" and counts[2] and not (counts[0] or counts[1]):
         raise ValueError("audio_requires_visual_reference")
     start = body.get("start_image", body.get("image"))
     end = body.get("end_image")
     if (start and refs) or (end and not start) or (edit and (start or not counts[1])):
         raise ValueError("conflicting_media_inputs")
-    if seedance and start and "aspect_ratio" in body:
+    if url_video and start and "aspect_ratio" in body:
         raise ValueError("frame_aspect_ratio_is_derived_from_input")
-    if not seedance and not wan and counts[0] and body.get("resolution") == "1080p":
+    if not url_video and not wan and counts[0] and body.get("resolution") == "1080p":
         raise ValueError("reference_resolution_not_supported")
     ratios = {"1:1", "16:9", "9:16", "4:3", "3:4"}
-    ratios |= {"21:9"} if seedance else set() if wan else {"3:2", "2:3"}
+    ratios |= {"21:9"} if url_video else set() if wan else {"3:2", "2:3"}
+    if minimax and refs and not start:
+        ratios.add("adaptive")
     if "aspect_ratio" in body and body["aspect_ratio"] not in ratios:
         raise ValueError("unsupported_aspect_ratio")
     prompt = body.get("prompt", "")
-    if (not prompt.strip() and not (refs or start)) or ((edit or wan) and not prompt.strip()):
+    if (not prompt.strip() and not (refs or start)) or ((edit or wan or minimax) and not prompt.strip()):
         raise ValueError("prompt_required")
     if (seedance and len(prompt.encode()) > 40000) or (wan and len(prompt) > 4500):
         raise ValueError("prompt_too_long")
-    if seedance:
+    if url_video:
         if len(json.dumps(original, ensure_ascii=False, separators=(",", ":")).encode()) >= 1024 * 1024:
             raise ValueError("video_body_too_large")
         if "seed" in body or body.get("watermark") is True or body.get("generate_audio") is False:

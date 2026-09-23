@@ -19,6 +19,61 @@ from app.providers.argolink import ArgoLinkAdapter
 from app.providers.models import ProviderCredential, ProviderModelCapability
 
 
+async def test_minimax_native_references_default_tier_and_actual_video_seconds(client, db_session, monkeypatch):
+    from app.generations.service import dispatch_generation_to_provider, poll_generation_provider
+
+    submitted = []
+
+    def handler(request):
+        if request.method == "POST":
+            submitted.append(json.loads(request.content))
+            return httpx.Response(202, json={"request_id": "private-minimax-task"})
+        return httpx.Response(
+            200,
+            json={
+                "status": "done",
+                "model": "minimax-h3",
+                "video": {"url": "https://argolink.io/v1/videos/private-minimax-task/content"},
+                "usage": {"output_seconds": 4, "reference_video_seconds": 6, "billed_seconds": 10},
+            },
+        )
+
+    partner, headers, upstream = await setup(
+        db_session,
+        monkeypatch,
+        handler,
+        model="minimax-h3",
+        category="video",
+        rates=[("default", "768p", "second", Decimal(10), Decimal(".044"))],
+    )
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(
+        "app.generations.service.get_partner_provider_adapter",
+        AsyncMock(return_value=ArgoLinkAdapter(api_key="upstream", client=upstream)),
+    )
+    body = {
+        "model": "minimax-h3",
+        "prompt": "Use @Image 1 and @Video 1",
+        "duration": 4,
+        "reference_images": [{"url": "https://example.org/reference.jpg"}],
+        "reference_videos": [{"url": "https://example.org/reference.mp4"}],
+        "aspect_ratio": "adaptive",
+    }
+    response = await client.post("/v1/videos/generations", json=body, headers=headers)
+    assert response.status_code == 202
+    generation = await db_session.get(Generation, response.json()["request_id"])
+    assert generation.resolution == "768p" and generation.partner_price_rub == Decimal(190)
+    attempt = await dispatch_generation_to_provider(db_session, generation)
+    attempt.next_poll_at = None
+    await db_session.commit()
+    await poll_generation_provider(db_session, generation)
+    assert submitted == [body] and generation.status == "completed"
+    assert generation.actual_charge_rub == 100 and generation.actual_provider_cost_usdt == Decimal(".44")
+    assert partner.balance_rub == Decimal(999900)
+    await upstream.aclose()
+
+
 async def setup(db, monkeypatch, handler, *, model="gpt-5.4", category="llm", rates=None):
     partner = Partner(
         telegram_id="native-1",

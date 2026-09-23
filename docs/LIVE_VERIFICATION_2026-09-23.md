@@ -45,12 +45,15 @@ Reference SHA-256: `821309168b56eeddd72daedb8a32c9f67037605ad979ed0bd77c6a59ac1c
 | `seedance-2.0-fast` | video | PASS: reference video generation, protected MP4 / Range 206 |
 | `seedance-2.0-mini` | video | PASS: reference video generation, protected MP4 / Range 206 |
 | `wan-3` | video | PASS: reference video generation, protected MP4 / Range 206 |
+| `minimax-h3` | video | NOT VERIFIED: 4s / 768p first-frame job accepted (202), then failed; no additional charge |
 
-**30/39 models** produced a usable result through at least one tested protocol. This is not a claim that every option, tier or protocol passed live.
+**30/40 models** produced a usable result through at least one tested protocol. This is not a claim that every option, tier or protocol passed live.
 
 ## Quota and expenditure
 
 Before: used $1.70 of $5. After: actual cumulative usage **$4.144532328**, quota used **$4.14453233**, remaining **$0.8554676700000003**. New test expenditure **$2.444532328**, below the chosen $2.80 test budget.
+
+The catalog changed during the task from `6dbda1a9e5891d82` (39 models) to `5ce662ba88c3d07f` (40 models). The read-only drift guard detected H3 and new 480p tiers for Seedance 2.0, Mini and Fast; their contracts and tests were added before retesting. Four JPEG-reference jobs (H3 768p plus three Seedance 480p, 4 seconds each) were accepted, then returned `failed`. The follow-up reserved an estimated $0.660 under a $0.70 cap, but actual additional usage was $0; the before/after counters remained identical. Earlier Seedance successful modes remain separately recorded; the new 480p configurations are not PASS. The final live sample covers all 40 catalog models, with usable results from 30 and successful reference results from 6 of 7 video models.
 
 During async completion, quota temporarily lagged usage. The final values converged (apart from API numeric representation). The test did not deliberately exhaust the key. HTTP 429 was observed on a concurrent text probe; isolated tests verify releasing reserves on definitive quota/rate rejections and preserving Retry-After.
 
@@ -67,6 +70,7 @@ During async completion, quota temporarily lagged usage. The final values conver
 - Some OpenAI routes returned Cloudflare 502, including a representative non-streaming and streaming Responses probe. Several Chat Completions routes also returned 502. Do not mark these routes as successfully smoked.
 - Claude Opus 5 and Fable 5.1 produced empty usage on an initial Chat probe but succeeded through Messages. This does not justify an automatic protocol switch.
 - Nano Banana edit probes did not return usable JSON; the additional Lite HTTPS-reference probe returned 502.
+- Newly listed MiniMax H3 and new Seedance 480p probes ended in `failed` after acceptance. The smoke report does not establish the underlying failure cause. Do not enable these configurations as verified.
 - Grok image edit actual costs differed from the catalog; see `app/contracts/observations.json`. Verify procurement per account/tier and retain conservative enable gates.
 
 ## Test scope

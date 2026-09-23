@@ -24,9 +24,9 @@ def validate_video_request(payload: ProviderGenerationRequest) -> None:
         raise ValueError("unsupported_duration")
     resolutions = {"480p", "720p", "1080p"}
     if payload.model_slug == "seedance-2.0":
-        resolutions = {"720p", "1080p", "4k"}
+        resolutions = {"480p", "720p", "1080p", "4k"}
     elif payload.model_slug in {"seedance-2.0-mini", "seedance-2.0-fast"}:
-        resolutions = {"720p"}
+        resolutions = {"480p", "720p"}
     if payload.resolution not in resolutions:
         raise ValueError("unsupported_resolution")
     if payload.aspect_ratio and payload.aspect_ratio not in (SEEDANCE_RATIOS if seedance else GROK_RATIOS):

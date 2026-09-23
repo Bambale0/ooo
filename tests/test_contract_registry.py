@@ -8,6 +8,54 @@ from app.contracts.registry import MODELS, TEXT_PROTOCOLS, normalized_video, val
 from app.inference.streams import SSEDecoder, event_data
 
 
+def test_minimax_reference_modes_limits_defaults_and_financial_units():
+    body = {
+        "model": "minimax-h3",
+        "prompt": "Follow @Image 1",
+        "duration": 4,
+        "reference_images": [{"url": "https://example.org/photo.jpg"}],
+        "reference_videos": [{"url": "https://example.org/video.mp4"}],
+        "reference_audios": [{"url": "https://example.org/audio.mp3"}],
+        "aspect_ratio": "adaptive",
+        "generate_audio": True,
+    }
+    assert validate_request("videos/generations", body) == body
+    assert video_reserve_seconds(body) == 19  # never trust caller-declared input video seconds
+    frame = {
+        "model": "minimax-h3",
+        "prompt": "Animate",
+        "resolution": "2k",
+        "duration": 15,
+        "start_image": {"url": "https://example.org/first.jpg"},
+    }
+    assert validate_request("videos/generations", frame) == frame
+    frame["end_image"] = {"url": "https://example.org/last.jpg"}
+    assert validate_request("videos/generations", frame) == frame
+    for invalid in (
+        {**body, "duration": 3},
+        {**body, "generate_audio": False},
+        {**body, "reference_images": [], "reference_videos": []},
+        {**body, "reference_images": body["reference_images"] * 10},
+        {**frame, "aspect_ratio": "16:9"},
+        {**frame, "prompt": ""},
+        {**frame, "resolution": "720p"},
+    ):
+        with pytest.raises(ValueError):
+            validate_request("videos/generations", invalid)
+    text = {"model": "minimax-h3", "prompt": "Animate", "size": "1366x768"}
+    assert normalized_video(text)["resolution"] == "768p"
+    with pytest.raises(ValueError, match="explicit_resolution"):
+        normalized_video({**text, "size": "2048x1536"})
+    assert normalized_video({**text, "size": "2048x1536", "resolution": "2k"})["resolution"] == "2k"
+
+
+@pytest.mark.parametrize("model", ["seedance-2.0", "seedance-2.0-fast", "seedance-2.0-mini"])
+def test_new_reviewed_seedance_480p_tiers(model):
+    body = {"model": model, "prompt": "Animate", "duration": 4, "resolution": "480p"}
+    assert validate_request("videos/generations", body) == body
+    assert any(r == "480p" and c > 0 for _, r, _, c in variants(MODELS[model]))
+
+
 @pytest.mark.parametrize("model", list(MODELS))
 def test_every_catalog_model_has_valid_native_request_and_decimal_procurement(model):
     entry = MODELS[model]
@@ -32,7 +80,12 @@ def test_every_catalog_model_has_valid_native_request_and_decimal_procurement(mo
             }
             assert validate_request(protocol, body) == body
     else:
-        body = {"model": model, "prompt": "Animate", "duration": 5, "resolution": "720p"}
+        body = {
+            "model": model,
+            "prompt": "Animate",
+            "duration": 5,
+            "resolution": "768p" if model == "minimax-h3" else "720p",
+        }
         assert validate_request("videos/generations", body) == body
     assert all(isinstance(v[3], Decimal) for v in variants(entry))
 
