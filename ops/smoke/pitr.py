@@ -36,16 +36,32 @@ def drill():
         )
 
         def sql(container, statement):
+            # initdb's temporary server accepts Unix sockets and then shuts down.
+            # TCP becomes available only on the final postmaster.
             return run(
-                "docker", "exec", container, "psql", "-U", "postgres", "-At", "-v", "ON_ERROR_STOP=1", "-c", statement
+                "docker",
+                "exec",
+                container,
+                "psql",
+                "-h",
+                "127.0.0.1",
+                "-U",
+                "postgres",
+                "-At",
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-c",
+                statement,
             )
 
         def ready(container):
             for _ in range(60):
                 try:
-                    return sql(container, "SELECT 1")
+                    if sql(container, "SELECT NOT pg_is_in_recovery()") == "t":
+                        return
                 except subprocess.CalledProcessError:
-                    time.sleep(0.5)
+                    pass
+                time.sleep(0.5)
             raise RuntimeError("PostgreSQL did not become ready")
 
         try:
