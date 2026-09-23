@@ -1,0 +1,20 @@
+# Mandatory production backup overlay. Secrets/remote storage are supplied by the operator.
+services:
+  postgres:
+    build: ops/backup/postgres
+    image: ${NEIRONYCH_POSTGRES_IMAGE:-neironych-postgres:16-pitr}
+    env_file: .backup.env
+    command:
+      - postgres
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_timeout=60s
+      - -c
+      - archive_command=/usr/local/bin/archive-wal.sh %p %f
+      - -c
+      - wal_keep_size=512MB
+    volumes:
+      - wal_archive:/var/lib/postgresql/archive
+volumes:
+  wal_archive:

@@ -64,9 +64,15 @@ async def dispatch_generation_to_provider(
     else:
         attempt = None
 
+    from app.billing.service import lock_partner_for_update
+
+    owner = await lock_partner_for_update(db, generation.partner_id)
+    if owner.status != "active":
+        return await cancel_before_submit(db, generation, provider=provider)
     adapter = await get_partner_provider_adapter(db, generation.partner_id, provider)
     request = ProviderGenerationRequest(
         generation_id=generation.id,
+        native_body=(generation.request_payload or {}).get("native_body"),
         model_slug=generation.model_slug,
         mode=generation.mode,
         resolution=generation.resolution,
@@ -201,7 +207,9 @@ async def poll_generation_provider(
         return generation
 
     adapter = await get_partner_provider_adapter(
-        db, generation.partner_id, provider,
+        db,
+        generation.partner_id,
+        provider,
         **({"credential_id": attempt.credential_id} if attempt.credential_id else {}),
     )
     try:
@@ -263,7 +271,18 @@ async def poll_generation_provider(
         generation.status = "completed"
         generation.public_error_code = None
         attempt.next_poll_at = None
-        await settle_generation_reserves(db, generation)
+        if (generation.request_payload or {}).get("rates"):
+            from app.inference.accounting import settle_actual
+
+            seconds = (result.usage or {}).get("billed_seconds")
+            if isinstance(seconds, bool) or not isinstance(seconds, int) or seconds < 1:
+                generation.status = attempt.status = "reconciliation_required"
+                generation.public_error_code = "usage_reconciliation_required"
+                await db.flush()
+                return generation
+            await settle_actual(db, generation, {"seconds": seconds})
+        else:
+            await settle_generation_reserves(db, generation)
         if result.result_url:
             await create_provider_ready_asset(
                 db=db,
@@ -317,6 +336,11 @@ def _mark_attempt_error(
     attempt.public_error_code = error.public_code
     attempt.raw_error = error.raw_error
     attempt.last_error = error.raw_error or error.public_code
+    if not error.retryable and error.public_code == "provider_temporarily_unavailable" and not attempt.provider_task_id:
+        attempt.status = generation.status = "reconciliation_required"
+        attempt.next_attempt_at = attempt.next_poll_at = None
+        generation.public_error_code = "submission_outcome_unknown"
+        return
     if error.retryable and attempt.retry_count < settings.worker_max_retries:
         attempt.retry_count += 1
         attempt.status = "retry_pending"
@@ -337,3 +361,36 @@ def _mark_attempt_error(
     attempt.next_poll_at = None
     generation.status = "failed"
     generation.public_error_code = error.public_code
+
+
+async def cancel_before_submit(
+    db: AsyncSession, generation: Generation, provider: str = PRIMARY_PROVIDER
+) -> ProviderAttempt:
+    from fastapi import HTTPException
+
+    attempt = (
+        await db.execute(
+            select(ProviderAttempt).where(
+                ProviderAttempt.generation_id == generation.id, ProviderAttempt.provider == provider
+            )
+        )
+    ).scalar_one_or_none()
+    if generation.status == "cancelled" and attempt:
+        return attempt
+    if generation.status not in {"queued", "sent_to_provider"} or (
+        attempt and (attempt.provider_task_id or attempt.status != "retry_pending")
+    ):
+        raise HTTPException(409, "generation_not_cancellable")
+    if attempt is None:
+        attempt = ProviderAttempt(generation_id=generation.id, provider=provider, status="cancelled")
+        db.add(attempt)
+    from decimal import Decimal
+
+    generation.status = attempt.status = "cancelled"
+    generation.actual_charge_rub = Decimal("0")
+    generation.actual_provider_cost_usdt = Decimal("0")
+    attempt.next_attempt_at = attempt.next_poll_at = None
+    await release_generation_reserves(db, generation, reason="Cancelled before provider submission")
+    await ensure_terminal_webhook_event(db, generation)
+    await db.flush()
+    return attempt

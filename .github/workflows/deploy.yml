@@ -82,10 +82,12 @@ jobs:
           PREVIOUS_TAG="$(cat "${REVISION_FILE}" 2>/dev/null || true)"
 
           cd "${COMPOSE_DIR}"
+          test -f .backup.env
 
           compose() {
             docker compose \
               -f "${COMPOSE_DIR}/docker-compose.prod.yml" \
+              -f "${COMPOSE_DIR}/docker-compose.pitr.yml" \
               "$@"
           }
 

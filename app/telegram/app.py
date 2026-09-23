@@ -1,231 +1,96 @@
-"""
-Нейроныч SaaS — Telegram bot (partner cabinet + admin panel)
-"""
+"""Russian Telegram cabinet with PostgreSQL-backed conversations."""
 
-from aiogram import Bot, Dispatcher, F, Router, types
-from aiogram.filters import Command
-from aiogram.types import BotCommand, BotCommandScopeDefault, InlineKeyboardButton
-from aiogram.utils.keyboard import InlineKeyboardBuilder
-from sqlalchemy import select
+import logging
+from decimal import InvalidOperation
 
-from app.accounts.models import ApiKey, Partner, PartnerApplication
-from app.billing.models import LedgerEntry
-from app.billing.safe_to_withdraw import calculate_safe_to_withdraw
+from aiogram import BaseMiddleware, Bot, Dispatcher, Router
+from aiogram.types import BotCommand, BotCommandScopeDefault, CallbackQuery, Message
+from fastapi import HTTPException
+from pydantic import ValidationError
+
 from app.infrastructure.config import get_settings
 from app.infrastructure.database import SessionLocal
+from app.payments.crypto_pay import CryptoPayError
+from app.telegram.handlers import handle_callback, handle_message
 from app.telegram.security import CabinetAccessMiddleware
+from app.telegram.service import lock_dialog
+from app.telegram.ui import show
 
-_M = "Neyronych SaaS - Cabinet\n\nSelect:"
-_A = "Admin Panel\n\nSelect:"
-
-
-def _kb(partner: Partner):
-    builder = InlineKeyboardBuilder()
-    builder.row(
-        InlineKeyboardButton(text="Balance", callback_data="balance"),
-        InlineKeyboardButton(text="History", callback_data="history:0"),
-    )
-    builder.row(
-        InlineKeyboardButton(text="API Keys", callback_data="api_keys:0"),
-        InlineKeyboardButton(text="Search", callback_data="search_prompt"),
-    )
-    builder.row(
-        InlineKeyboardButton(text="Docs", callback_data="docs"),
-        InlineKeyboardButton(text="Support", callback_data="support"),
-    )
-    if partner.telegram_id == get_settings().admin_telegram_id:
-        builder.row(InlineKeyboardButton(text="Admin", callback_data="admin_menu"))
-    return builder.as_markup()
+logger = logging.getLogger(__name__)
+ERRORS = {
+    "required_provider_key_missing": (
+        "Для одобрения сначала привяжите ключ поставщика к заявке через защищённый API администратора."
+    ),
+    "negative_balance_delete_forbidden": "Удаление недоступно: сначала погасите задолженность.",
+    "confirmation_expired": "Подтверждение устарело. Откройте действие заново.",
+    "attachment_too_large": "Файл больше 20 МБ. Отправьте файл меньшего размера.",
+    "ticket_closed": "Обращение закрыто. Создайте новое обращение.",
+    "payment_not_ready_for_credit": "Провайдер ещё не подтвердил оплату этого счёта.",
+    "telegram_id_already_assigned": "Этот Telegram ID уже привязан к другому аккаунту.",
+    "payment_provider_temporarily_unavailable": "Платёжный сервис временно недоступен. Проверьте этот счёт позже.",
+    "invalid_webhook_url": "Нужен доступный публичный HTTPS-адрес webhook.",
+}
 
 
-def _akb():
-    builder = InlineKeyboardBuilder()
-    builder.row(
-        InlineKeyboardButton(text="Apps", callback_data="admin_apps:0"),
-        InlineKeyboardButton(text="STW", callback_data="admin_stw"),
-    )
-    builder.row(
-        InlineKeyboardButton(text="Health", callback_data="admin_health"),
-        InlineKeyboardButton(text="Back", callback_data="main_menu"),
-    )
-    return builder.as_markup()
+class CabinetSessionMiddleware(BaseMiddleware):
+    async def __call__(self, handler, event, data):
+        if not event.from_user:
+            return None
+        if isinstance(event, CallbackQuery):
+            await event.answer()
+        async with SessionLocal() as db:
+            try:
+                dialog = await lock_dialog(db, str(event.from_user.id))
+                data.update(db=db, dialog=dialog)
+                result = await handler(event, data)
+                await db.commit()
+                return result
+            except HTTPException as exc:
+                await db.rollback()
+                await show(
+                    event, ERRORS.get(str(exc.detail), "Действие недоступно. Проверьте данные или вернитесь в меню.")
+                )
+            except (ValueError, ValidationError, InvalidOperation):
+                await db.rollback()
+                await show(event, "Не удалось распознать данные. Проверьте формат и повторите ввод.")
+            except CryptoPayError:
+                await db.rollback()
+                await show(event, "Платёжный сервис временно недоступен. Повторите проверку позже.")
+            except Exception:
+                await db.rollback()
+                logger.exception("cabinet_update_failed")
+                await show(
+                    event, "Не удалось завершить действие. Откройте меню /start и проверьте результат перед повтором."
+                )
+        return None
 
 
-def _back():
-    return InlineKeyboardBuilder().button(text="Back", callback_data="main_menu").as_markup()
-
-
-def _pag(prefix: str, page: int, total: int):
-    builder = InlineKeyboardBuilder()
-    if page > 0:
-        builder.button(text="<", callback_data=f"{prefix}:{page - 1}")
-    if page < total - 1:
-        builder.button(text=">", callback_data=f"{prefix}:{page + 1}")
-    builder.button(text="Back", callback_data="main_menu")
-    return builder.adjust(2).as_markup()
-
-
-def create_bot():
+def create_bot() -> Bot | None:
     token = get_settings().telegram_bot_token
     return Bot(token=token) if token else None
 
 
-async def _db():
-    return SessionLocal()
-
-
 def create_dispatcher() -> Dispatcher:
     dispatcher = Dispatcher()
-    router = Router()
-    router.message.outer_middleware(CabinetAccessMiddleware())
-    router.callback_query.outer_middleware(CabinetAccessMiddleware())
+    router = Router(name="cabinet")
+    for observer in (router.message, router.callback_query):
+        observer.outer_middleware(CabinetAccessMiddleware())
+        observer.outer_middleware(CabinetSessionMiddleware())
+
+    @router.callback_query()
+    async def callback(event: CallbackQuery, db, dialog) -> None:
+        await handle_callback(event, db, dialog)
+
+    @router.message()
+    async def message(event: Message, db, dialog) -> None:
+        await handle_message(event, db, dialog)
+
     dispatcher.include_router(router)
-
-    @router.message(Command("start"))
-    async def start(message: types.Message) -> None:
-        keyboard = InlineKeyboardBuilder().button(text="Enter", callback_data="main_menu").as_markup()
-        await message.answer("Welcome!", reply_markup=keyboard)
-
-    @router.callback_query(F.data == "main_menu")
-    async def main_menu(callback: types.CallbackQuery) -> None:
-        partner = Partner(telegram_id=str(callback.from_user.id))
-        await callback.message.edit_text(_M, reply_markup=_kb(partner))
-        await callback.answer()
-
-    @router.callback_query(F.data == "admin_menu")
-    async def admin_menu(callback: types.CallbackQuery) -> None:
-        await callback.message.edit_text(_A, reply_markup=_akb())
-        await callback.answer()
-
-    @router.callback_query(F.data == "balance")
-    async def balance(callback: types.CallbackQuery) -> None:
-        session = await _db()
-        try:
-            result = await session.execute(
-                select(Partner).where(Partner.telegram_id == str(callback.from_user.id), Partner.status == "active")
-            )
-            partner = result.scalar_one_or_none()
-            text = f"Balance: {partner.balance_rub} RUB" if partner else "Not found"
-            await callback.message.edit_text(text, reply_markup=_back())
-        finally:
-            await session.close()
-        await callback.answer()
-
-    @router.callback_query(F.data.startswith("history:"))
-    async def history(callback: types.CallbackQuery) -> None:
-        page = int(callback.data.split(":")[1]) if ":" in callback.data else 0
-        session = await _db()
-        try:
-            result = await session.execute(
-                select(Partner).where(Partner.telegram_id == str(callback.from_user.id), Partner.status == "active")
-            )
-            partner = result.scalar_one_or_none()
-            if not partner:
-                await callback.answer()
-                return
-            rows_result = await session.execute(
-                select(LedgerEntry)
-                .where(LedgerEntry.partner_id == partner.id)
-                .order_by(LedgerEntry.created_at.desc())
-                .offset(page * 10)
-                .limit(10)
-            )
-            rows = rows_result.scalars().all()
-            lines = [f"History (p.{page + 1})"]
-            lines.extend(f"{entry.operation_type}: {entry.amount_rub}RUB" for entry in rows)
-            if not rows:
-                lines.append("No records")
-            await callback.message.edit_text(
-                "\n".join(lines),
-                reply_markup=_pag("history", page, 100),
-            )
-        finally:
-            await session.close()
-        await callback.answer()
-
-    @router.callback_query(F.data.startswith("api_keys:"))
-    async def api_keys(callback: types.CallbackQuery) -> None:
-        session = await _db()
-        try:
-            result = await session.execute(
-                select(Partner).where(Partner.telegram_id == str(callback.from_user.id), Partner.status == "active")
-            )
-            partner = result.scalar_one_or_none()
-            if not partner:
-                await callback.answer()
-                return
-            keys_result = await session.execute(select(ApiKey).where(ApiKey.partner_id == partner.id))
-            keys = keys_result.scalars().all()
-            lines = ["API Keys"]
-            lines.extend(f"{'A' if key.is_active else 'I'} {key.key_prefix}..." for key in keys)
-            if not keys:
-                lines.append("No keys")
-            await callback.message.edit_text("\n".join(lines), reply_markup=_back())
-        finally:
-            await session.close()
-        await callback.answer()
-
-    @router.callback_query(F.data == "search_prompt")
-    async def search_prompt(callback: types.CallbackQuery) -> None:
-        await callback.message.edit_text("Enter UUID:", reply_markup=_back())
-        await callback.answer()
-
-    @router.callback_query(F.data == "docs")
-    async def docs(callback: types.CallbackQuery) -> None:
-        await callback.message.edit_text(f"{get_settings().public_api_base_url.rstrip('/')}/docs", reply_markup=_back())
-        await callback.answer()
-
-    @router.callback_query(F.data == "support")
-    async def support(callback: types.CallbackQuery) -> None:
-        await callback.message.edit_text("@support", reply_markup=_back())
-        await callback.answer()
-
-    @router.callback_query(F.data == "admin_stw")
-    async def safe_to_withdraw(callback: types.CallbackQuery) -> None:
-        session = await _db()
-        try:
-            data = await calculate_safe_to_withdraw(session)
-            await callback.message.edit_text(
-                (
-                    "STW unavailable: wallet and reserve reconciliation required"
-                    if data["safe_to_withdraw_usdt"] is None
-                    else f"STW: {data['safe_to_withdraw_usdt']:.2f} USDT"
-                ),
-                reply_markup=_back(),
-            )
-        finally:
-            await session.close()
-        await callback.answer()
-
-    @router.callback_query(F.data == "admin_health")
-    async def health(callback: types.CallbackQuery) -> None:
-        await callback.message.edit_text(
-            "Use the authenticated operations dashboard for health checks", reply_markup=_back()
-        )
-        await callback.answer()
-
-    @router.callback_query(F.data.startswith("admin_apps:"))
-    async def applications(callback: types.CallbackQuery) -> None:
-        session = await _db()
-        try:
-            result = await session.execute(
-                select(PartnerApplication).where(PartnerApplication.status == "pending").limit(10)
-            )
-            rows = result.scalars().all()
-            lines = ["Applications"]
-            lines.extend(application.company_name for application in rows)
-            if not rows:
-                lines.append("None")
-            await callback.message.edit_text("\n".join(lines), reply_markup=_back())
-        finally:
-            await session.close()
-        await callback.answer()
-
     return dispatcher
 
 
 async def set_bot_commands(bot: Bot) -> None:
     await bot.set_my_commands(
-        [BotCommand(command="start", description="Main menu")],
+        [BotCommand(command="start", description="Кабинет"), BotCommand(command="cancel", description="Отменить ввод")],
         scope=BotCommandScopeDefault(),
     )

@@ -57,3 +57,23 @@ async def client(db_session: AsyncSession) -> AsyncIterator[AsyncClient]:
 @pytest.fixture
 def admin_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {get_settings().admin_api_token}"}
+
+
+@pytest.fixture(autouse=True)
+def funded_test_treasury(monkeypatch):
+    """Tests use an explicit fake wallet; they never contact Crypto Pay for cash."""
+    from decimal import Decimal
+
+    async def available_wallet(db):
+        return Decimal("1000000"), 0, "fresh"
+
+    monkeypatch.setattr("app.billing.capital.wallet_balance", available_wallet)
+    monkeypatch.setattr(get_settings(), "opening_working_capital_usdt", Decimal("1000000"))
+
+
+@pytest.fixture(autouse=True)
+def fixed_test_fx(monkeypatch):
+    async def rate(db):
+        return {"rate": get_settings().rub_per_usdt, "source": "manual_fallback", "automatic_at": None}
+
+    monkeypatch.setattr("app.billing.fx.current_fx", rate)

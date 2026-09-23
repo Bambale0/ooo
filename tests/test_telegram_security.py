@@ -24,7 +24,7 @@ async def test_non_admin_cannot_invoke_admin_callbacks(action, monkeypatch):
     await create_dispatcher().feed_raw_update(bot, {"update_id": 1, "callback_query": callback.model_dump(mode="json")})
     methods = [call.args[1] for call in bot.session.call_args_list]
     assert len(methods) == 1
-    assert methods[0].text == "Access denied"
+    assert methods[0].text == "Доступ запрещён"
     await bot.session.close()
 
 

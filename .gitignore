@@ -47,3 +47,6 @@ ops/backup/wal/
 htmlcov/
 DEPLOYED_IMAGE
 REVISION
+
+# Off-site backup credentials
+.backup.env

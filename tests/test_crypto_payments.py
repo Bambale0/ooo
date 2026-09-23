@@ -4,7 +4,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.accounts.models import ApiKey, Partner
 from app.billing.models import CoverageLedgerEntry, LedgerEntry
@@ -185,12 +185,8 @@ async def test_crypto_pay_paid_invoice_requires_manual_credit_and_credits_both_l
     assert Decimal(partner.balance_rub) == Decimal("1500.00")
     assert Decimal(partner.cost_coverage_rub) == Decimal("1500.00")
 
-    retail = await db_session.execute(
-        select(LedgerEntry).where(LedgerEntry.partner_id == partner_id)
-    )
-    coverage = await db_session.execute(
-        select(CoverageLedgerEntry).where(CoverageLedgerEntry.partner_id == partner_id)
-    )
+    retail = await db_session.execute(select(LedgerEntry).where(LedgerEntry.partner_id == partner_id))
+    coverage = await db_session.execute(select(CoverageLedgerEntry).where(CoverageLedgerEntry.partner_id == partner_id))
     assert [entry.operation_type for entry in retail.scalars().all()] == ["payment_credit"]
     assert [entry.operation_type for entry in coverage.scalars().all()] == ["payment_coverage_credit"]
 
@@ -266,3 +262,94 @@ async def test_crypto_pay_webhook_rejects_invalid_signature(client, monkeypatch)
     )
     assert response.status_code == 401
     assert response.json()["detail"] == "invalid_crypto_pay_signature"
+
+
+async def test_repeated_provider_confirmation_preserves_credited_status(db_session):
+    from app.payments.service import apply_paid_provider_invoice
+
+    partner, _ = await _partner_with_api_key(db_session, telegram_id="payment-replay")
+    payment = PaymentInvoice(
+        partner_id=partner.id,
+        provider_invoice_id=9999,
+        idempotency_key="already-credited",
+        requested_rub=Decimal("1500"),
+        status="credited",
+        credited_at=datetime.now(UTC),
+    )
+    db_session.add(payment)
+    await db_session.commit()
+    provider = CryptoPayInvoice(
+        invoice_id=9999,
+        status="paid",
+        amount="1500",
+        payload=payment.id,
+        bot_invoice_url=None,
+        expiration_date=None,
+        paid_at=datetime.now(UTC).isoformat(),
+        paid_asset="USDT",
+        paid_amount="15",
+        paid_fiat_rate="100",
+        paid_usd_rate="1",
+    )
+    result = await apply_paid_provider_invoice(db_session, provider_invoice=provider)
+    assert result.status == "credited"
+    assert (await db_session.execute(select(func.count()).select_from(LedgerEntry))).scalar() == 0
+
+
+async def test_invoice_creation_timeout_is_never_blindly_replayed(db_session):
+    import pytest
+    from fastapi import HTTPException
+
+    from app.payments.crypto_pay import CryptoPayError
+    from app.payments.service import create_or_resume_invoice
+
+    owner, _ = await _partner_with_api_key(db_session, telegram_id="unknown-create")
+
+    class UnknownClient(FakeCryptoPayClient):
+        async def create_rub_invoice(self, **kwargs):
+            self.created.append((kwargs["amount_rub"], kwargs["payload"]))
+            raise CryptoPayError("connection_lost_after_submission")
+
+    fake = UnknownClient()
+    with pytest.raises(HTTPException):
+        await create_or_resume_invoice(
+            db_session, partner=owner, requested_rub=1500, idempotency_key="uncertain-invoice", client=fake
+        )
+    repeated = await create_or_resume_invoice(
+        db_session, partner=owner, requested_rub=1500, idempotency_key="uncertain-invoice", client=fake
+    )
+    assert repeated.status == "creation_unknown"
+    assert len(fake.created) == 1
+    with pytest.raises(HTTPException) as changed:
+        await create_or_resume_invoice(
+            db_session, partner=owner, requested_rub=1600, idempotency_key="uncertain-invoice", client=fake
+        )
+    assert changed.value.status_code == 409
+
+
+async def test_admin_can_reconcile_unknown_invoice_only_with_matching_payload(
+    client, db_session, admin_headers, monkeypatch
+):
+    fake = FakeCryptoPayClient()
+    monkeypatch.setattr("app.payments.router.get_crypto_pay_client", lambda: fake)
+    owner, _ = await _partner_with_api_key(db_session, telegram_id="reconcile-invoice")
+    payment = PaymentInvoice(
+        partner_id=owner.id,
+        idempotency_key="reconcile-unknown",
+        requested_rub=Decimal("1500"),
+        status="creation_unknown",
+    )
+    db_session.add(payment)
+    await db_session.commit()
+    unrelated = await fake.create_rub_invoice(amount_rub="1500", payload="unrelated")
+    body = {"provider_invoice_id": unrelated.invoice_id, "reason": "Confirmed in the provider console"}
+    wrong = await client.post(f"/api/v1/payments/invoices/{payment.id}/reconcile", json=body, headers=admin_headers)
+    assert wrong.status_code == 409
+    await db_session.refresh(payment)
+    correct = await fake.create_rub_invoice(amount_rub="1500", payload=payment.id)
+    body["provider_invoice_id"] = correct.invoice_id
+    repaired = await client.post(f"/api/v1/payments/invoices/{payment.id}/reconcile", json=body, headers=admin_headers)
+    assert repaired.status_code == 200 and repaired.json()["status"] == "active"
+    again = await client.post(f"/api/v1/payments/invoices/{payment.id}/reconcile", json=body, headers=admin_headers)
+    assert again.status_code == 200
+    assert payment.reconciliation_snapshot["reason"] == body["reason"]

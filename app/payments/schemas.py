@@ -40,3 +40,8 @@ class PaymentRefundRead(BaseModel):
     amount_rub: Decimal
     refunded_rub_total: Decimal
     payment_status: str
+
+
+class PaymentReconcileCreate(BaseModel):
+    provider_invoice_id: int = Field(gt=0)
+    reason: str = Field(min_length=10, max_length=2000)

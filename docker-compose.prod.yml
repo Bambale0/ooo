@@ -35,6 +35,11 @@ services:
     <<: *runtime
     profiles: [telegram]
     command: [python, -m, app.telegram.main]
+    environment:
+      APP_ENV: production
+      APP_REVISION: ${APP_REVISION}
+      SUPPORT_STORAGE_DIR: /data/support
+    volumes: ["support_data:/data/support"]
     healthcheck:
       disable: true
   postgres:
@@ -73,3 +78,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  support_data:

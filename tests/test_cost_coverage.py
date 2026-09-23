@@ -82,11 +82,16 @@ async def _seed_generation_preflight(db_session):
     return partner.id, token
 
 
-async def test_generation_rejects_before_creation_when_cost_coverage_is_insufficient(
+async def test_generation_checks_real_capital_not_historical_coverage(
     client,
     db_session,
     admin_headers,
+    monkeypatch,
 ):
+    async def empty_wallet(db):
+        return Decimal("0"), 0, "fresh"
+
+    monkeypatch.setattr("app.billing.capital.wallet_balance", empty_wallet)
     partner_id, token = await _seed_generation_preflight(db_session)
     headers = {"Authorization": f"Bearer {token}"}
     payload = {
@@ -117,18 +122,12 @@ async def test_generation_rejects_before_creation_when_cost_coverage_is_insuffic
     )
     assert coverage_entries.scalars().first() is None
 
-    funded = await client.post(
-        "/api/v1/billing/coverage-adjustments",
-        headers=admin_headers,
-        json={
-            "partner_id": partner_id,
-            "amount_rub": "100.00",
-            "idempotency_key": "coverage-fund-1",
-            "reason": "Real client funds received outside payment integration",
-        },
-    )
-    assert funded.status_code == 200
+    async def funded_wallet(db):
+        return Decimal("100"), 0, "fresh"
 
+    monkeypatch.setattr("app.billing.capital.wallet_balance", funded_wallet)
+    # No coverage adjustment: exhausted historical coverage must not block a
+    # partner when real working capital exists (brief section 89).
     accepted = await client.post("/api/v1/generations", headers=headers, json=payload)
     assert accepted.status_code == 202
     assert Decimal(accepted.json()["partner_price_rub"]) == Decimal("100.00")
@@ -137,7 +136,7 @@ async def test_generation_rejects_before_creation_when_cost_coverage_is_insuffic
     assert partner is not None
     await db_session.refresh(partner)
     assert Decimal(partner.balance_rub) == Decimal("900.00")
-    assert Decimal(partner.cost_coverage_rub) == Decimal("15.00")
+    assert Decimal(partner.cost_coverage_rub) == Decimal("-85.00")
 
     generation = await db_session.get(Generation, accepted.json()["id"])
     assert generation is not None

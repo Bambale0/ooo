@@ -20,11 +20,19 @@ class Settings(BaseSettings):
     admin_api_token: str = Field(default="change-me", min_length=1)
     admin_telegram_id: str | None = None
     telegram_bot_token: str | None = None
+    terms_url: str | None = None
+    privacy_policy_url: str | None = None
+    legal_document_version: str = "2026-09-19"
+    support_storage_dir: str = "./var/support"
     log_level: str = "INFO"
     rub_per_usdt: Decimal = Field(default=Decimal("100.00"), gt=0)
     argolink_base_url: str = "https://argolink.io"
     argolink_api_key: str | None = None
     provider_credentials_master_key: str | None = Field(default=None, min_length=32)
+    opening_working_capital_usdt: Decimal = Field(default=Decimal("0"), ge=0)
+    required_provider_float_usdt: Decimal = Field(default=Decimal("0"), ge=0)
+    wallet_refresh_seconds: int = Field(default=60, ge=1)
+    native_request_timeout_seconds: float = Field(default=600, gt=0)
     argolink_timeout_seconds: float = 30.0
     argolink_http_connect_timeout_seconds: float = Field(default=5.0, gt=0)
     argolink_http_read_timeout_seconds: float = Field(default=30.0, gt=0)

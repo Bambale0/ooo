@@ -123,11 +123,7 @@ async def prepare_claimed_delivery(
     db: AsyncSession,
     event_id: str,
 ) -> PreparedWebhookDelivery | None:
-    result = await db.execute(
-        select(WebhookEvent)
-        .where(WebhookEvent.id == event_id)
-        .with_for_update()
-    )
+    result = await db.execute(select(WebhookEvent).where(WebhookEvent.id == event_id).with_for_update())
     event = result.scalar_one_or_none()
     if event is None or event.status != "pending":
         return None
@@ -221,16 +217,10 @@ async def finalize_prepared_delivery(
     prepared: PreparedWebhookDelivery,
     outcome: WebhookDeliveryOutcome,
 ) -> bool:
-    event_result = await db.execute(
-        select(WebhookEvent)
-        .where(WebhookEvent.id == prepared.event_id)
-        .with_for_update()
-    )
+    event_result = await db.execute(select(WebhookEvent).where(WebhookEvent.id == prepared.event_id).with_for_update())
     event = event_result.scalar_one_or_none()
     delivery_result = await db.execute(
-        select(WebhookDelivery)
-        .where(WebhookDelivery.id == prepared.delivery_id)
-        .with_for_update()
+        select(WebhookDelivery).where(WebhookDelivery.id == prepared.delivery_id).with_for_update()
     )
     delivery = delivery_result.scalar_one_or_none()
     if event is None or delivery is None:
@@ -292,7 +282,10 @@ def _http_client() -> httpx.AsyncClient:
     global _client
     if _client is None:
         settings = get_settings()
+        from app.infrastructure.public_http import PublicHTTPTransport
+
         _client = httpx.AsyncClient(
+            transport=PublicHTTPTransport(),
             timeout=httpx.Timeout(settings.webhook_timeout_seconds),
             limits=httpx.Limits(max_connections=100, max_keepalive_connections=50),
             follow_redirects=False,
@@ -317,11 +310,19 @@ def _build_terminal_payload(generation: Generation) -> dict[str, object]:
         "generation_id": generation.id,
         "status": generation.status,
         "model": generation.model_slug,
-        "params": generation.request_payload or {},
+        "params": (generation.request_payload or {}).get("native_body")
+        or {
+            key: value
+            for key, value in (generation.request_payload or {}).items()
+            if key
+            in {"duration_seconds", "aspect_ratio", "reference_images", "start_image", "end_image", "billing_unit"}
+        },
     }
     if generation.status == "completed":
         payload["result_url"] = generation.result_url
-        payload["charged_amount_rub"] = str(generation.partner_price_rub)
+        payload["charged_amount_rub"] = str(
+            generation.actual_charge_rub if generation.actual_charge_rub is not None else generation.partner_price_rub
+        )
     else:
         payload["error_code"] = generation.public_error_code or f"generation_{generation.status}"
         payload["human_message"] = _human_message(generation.status)

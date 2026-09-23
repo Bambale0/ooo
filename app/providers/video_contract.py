@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 from app.providers.base import ProviderGenerationRequest
 
 SEEDANCE_MODELS = {"seedance-2.0", "seedance-2.0-mini", "seedance-2.0-fast", "seedance-2.5"}
-VIDEO_MODELS = SEEDANCE_MODELS | {"grok-imagine-video-1.5"}
+VIDEO_MODELS = SEEDANCE_MODELS | {"grok-imagine-video-1.5", "wan-3"}
 SEEDANCE_RATIOS = {"16:9", "9:16", "1:1", "4:3", "3:4", "21:9"}
 GROK_RATIOS = {"16:9", "9:16", "1:1", "4:3", "3:4", "3:2", "2:3"}
 
@@ -63,6 +63,10 @@ def validate_video_request(payload: ProviderGenerationRequest) -> None:
 
 
 def video_request_body(payload: ProviderGenerationRequest) -> dict[str, object]:
+    if payload.native_body is not None:
+        from app.contracts.registry import validate_request
+
+        return validate_request("videos/generations", payload.native_body)
     validate_video_request(payload)
     body: dict[str, object] = {
         "model": payload.model_slug,

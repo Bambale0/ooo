@@ -6,8 +6,7 @@ from sqlalchemy import select
 from app.api.dependencies import DbSession, require_admin
 from app.catalog.models import Model, PartnerPrice, PartnerPriceHistory
 from app.catalog.schemas import ModelCreate, ModelEnableGateUpdate, ModelRead, PartnerPriceUpsert, PricingRead
-from app.infrastructure.config import get_settings
-from app.providers.video_contract import VIDEO_MODELS
+from app.contracts.registry import MODELS
 
 router = APIRouter()
 
@@ -66,7 +65,10 @@ async def enable_model(model_slug: str, db: DbSession) -> Model:
     model = model_result.scalar_one_or_none()
     if model is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="model_not_found")
-    if model.modality != "video" or model.slug not in VIDEO_MODELS:
+    if (
+        model.slug not in MODELS
+        or model.modality != {"chat": "llm", "image": "image", "video": "video"}[MODELS[model.slug]["category"]]
+    ):
         raise HTTPException(status_code=409, detail="model_contract_not_supported")
     await ensure_model_can_be_enabled(db, model)
     model.status = "production"
@@ -81,7 +83,11 @@ async def upsert_price(payload: PartnerPriceUpsert, db: DbSession) -> None:
     model = model_result.scalar_one_or_none()
     if model is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="model_not_found")
-    rub_per_usdt = get_settings().rub_per_usdt
+    from app.billing.fx import current_fx
+    from app.billing.fx import snapshot as fx_snapshot
+
+    fx_data = await current_fx(db)
+    rub_per_usdt = fx_data["rate"]
     provider_cost_rub = Decimal(payload.provider_cost_usdt) * rub_per_usdt
     if Decimal(payload.price_rub) < provider_cost_rub:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="partner_price_below_provider_cost")
@@ -115,6 +121,7 @@ async def upsert_price(payload: PartnerPriceUpsert, db: DbSession) -> None:
                 new_provider_cost_usdt=payload.provider_cost_usdt,
                 billing_unit=payload.billing_unit,
                 rub_per_usdt_snapshot=rub_per_usdt,
+                fx_snapshot=fx_snapshot(fx_data),
             )
         )
     else:
@@ -134,6 +141,7 @@ async def upsert_price(payload: PartnerPriceUpsert, db: DbSession) -> None:
                 new_provider_cost_usdt=payload.provider_cost_usdt,
                 billing_unit=payload.billing_unit,
                 rub_per_usdt_snapshot=rub_per_usdt,
+                fx_snapshot=fx_snapshot(fx_data),
             )
         )
 
@@ -169,5 +177,55 @@ async def ensure_model_can_be_enabled(db: DbSession, model: Model | ModelCreate)
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="smoke_gate_missing")
     if isinstance(model, Model):
         price_result = await db.execute(select(PartnerPrice).where(PartnerPrice.model_id == model.id))
-        if price_result.scalar_one_or_none() is None:
+        prices = list(price_result.scalars())
+        if not prices:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="price_gate_missing")
+        from app.billing.fx import current_fx
+
+        fx = (await current_fx(db))["rate"]
+        if any(p.provider_cost_usdt <= 0 or p.price_rub < p.provider_cost_usdt * fx for p in prices):
+            raise HTTPException(409, "economic_gate_missing")
+        if model.modality in {"llm", "image"}:
+            from app.catalog.sync import variants
+
+            required = {(m, r, u) for m, r, u, _ in variants(MODELS[model.slug])}
+            actual = {(p.mode, p.resolution, p.billing_unit) for p in prices}
+            if not required <= actual:
+                raise HTTPException(409, "complete_price_schedule_required")
+
+
+@router.get("/contracts", dependencies=[Depends(require_admin)])
+async def reviewed_contracts():
+    from app.catalog.sync import variants
+    from app.contracts.registry import CATALOG, MODELS, OBSERVATIONS
+
+    return {
+        "revision": CATALOG["revision"],
+        "manual_procurement_review": OBSERVATIONS["manual_procurement_review"],
+        "models": [
+            {
+                "model": slug,
+                "category": entry["category"],
+                "endpoint": entry["endpoint"],
+                "required_prices": [
+                    {"mode": m, "resolution": r, "billing_unit": u, "provider_cost_usdt": str(c)}
+                    for m, r, u, c in variants(entry)
+                ],
+            }
+            for slug, entry in MODELS.items()
+        ],
+    }
+
+
+@router.get("/contracts/drift", dependencies=[Depends(require_admin)])
+async def contract_drift():
+    from app.catalog.sync import check_catalog_drift
+
+    return await check_catalog_drift()
+
+
+@router.post("/contracts/import", dependencies=[Depends(require_admin)])
+async def import_contracts(db: DbSession):
+    from app.catalog.sync import import_reviewed_catalog
+
+    return await import_reviewed_catalog(db)

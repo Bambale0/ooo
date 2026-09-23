@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import JSON, BigInteger, Boolean, DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.database import Base
@@ -32,6 +32,8 @@ class PaymentInvoice(Base):
     paid_usd_rate: Mapped[Decimal | None] = mapped_column(Numeric(36, 18))
     was_expired_when_paid: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     credited_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
+    coverage_snapshot: Mapped[dict | None] = mapped_column(JSON)
+    reconciliation_snapshot: Mapped[dict | None] = mapped_column(JSON)
     refunded_rub: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=Decimal("0.00"))
     created_at: Mapped[object] = utc_created_at()
 

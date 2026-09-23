@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from sqlalchemy import Numeric, String, UniqueConstraint
+from sqlalchemy import JSON, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.database import Base
@@ -37,6 +37,7 @@ class PartnerPrice(Base):
 
 
 class PartnerPriceHistory(Base):
+    fx_snapshot: Mapped[dict | None] = mapped_column(JSON)
     __tablename__ = "partner_price_history"
 
     id: Mapped[str] = uuid_pk()

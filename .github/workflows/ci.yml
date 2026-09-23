@@ -100,6 +100,32 @@ jobs:
       - name: Test
         run: python -m pytest -q
 
+      - name: Encrypted backup and isolated restore
+        env:
+          PGPASSWORD: neironych # pragma: allowlist secret
+        run: |
+          docker build -t neironych-backup-ci ops/backup
+          backup_test_dir=$(mktemp -d)
+          chmod 700 "$backup_test_dir"
+          python ops/smoke/seed_restore_fixture.py --confirm-isolated --support-dir "$backup_test_dir/support"
+          docker run --rm --entrypoint age-keygen neironych-backup-ci > "$backup_test_dir/recovery.key"
+          chmod 600 "$backup_test_dir/recovery.key"
+          recipient=$(docker run --rm --user "$(id -u):$(id -g)" -v "$backup_test_dir:/backup" --entrypoint age-keygen neironych-backup-ci -y /backup/recovery.key)
+          docker run --rm --network host --user "$(id -u):$(id -g)" -v "$backup_test_dir:/backup" \
+            -e PGHOST=127.0.0.1 -e PGUSER=neironych -e PGPASSWORD -e PGDATABASE=neironych_ci \
+            -e BACKUP_DIR=/backup -e SUPPORT_STORAGE_DIR=/backup/support -e BACKUP_LOCAL_ONLY=1 -e AGE_RECIPIENT="$recipient" neironych-backup-ci
+          docker run --rm --network host --user "$(id -u):$(id -g)" -v "$backup_test_dir:/backup:ro" \
+            -e PGHOST=127.0.0.1 -e PGUSER=neironych -e PGPASSWORD -e PGDATABASE=restore_test_ci \
+            -e BACKUP_FILE=/backup/latest.dump.age -e AGE_IDENTITY_FILE=/backup/recovery.key \
+            -e SUPPORT_BACKUP_FILE=/backup/latest.support.tar.age -e RESTORE_SUPPORT_DIR=/tmp/restore_test_support \
+            --entrypoint /usr/local/bin/restore-test.sh neironych-backup-ci
+          rm -rf "$backup_test_dir"
+
+      - name: Encrypted WAL point-in-time recovery
+        run: |
+          docker build -t ooo-pitr-check ops/backup/postgres
+          python ops/smoke/pitr.py
+
       - name: Build production image
         env:
           IMAGE_TAG: neironych-ci:${{ github.sha }}

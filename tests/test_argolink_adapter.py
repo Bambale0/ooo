@@ -265,3 +265,25 @@ async def test_content_redirect_does_not_reach_private_network():
 async def test_content_url_must_match_exact_protected_path(url):
     with pytest.raises(ProviderAdapterError):
         await ArgoLinkAdapter(api_key="test-key").open_result_stream(url)
+
+
+async def test_grok_video_uses_actual_video_duration_when_usage_has_only_ticks():
+    import httpx
+
+    from app.providers.argolink import ArgoLinkAdapter
+
+    def handler(request):
+        return httpx.Response(
+            200,
+            json={
+                "request_id": "private-job",
+                "model": "grok-imagine-video-1.5",
+                "status": "done",
+                "video": {"duration": 3},
+                "usage": {"cost_in_usd_ticks": 900000000},
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://argolink.io") as client:
+        result = await ArgoLinkAdapter(api_key="test", client=client).poll_generation("private-job")
+    assert result.usage == {"billed_seconds": 3, "output_seconds": 3, "reference_video_seconds": 0}

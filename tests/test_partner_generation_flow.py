@@ -74,6 +74,7 @@ async def test_partner_can_create_idempotent_generation_after_manual_credit(
 
     application_response = await client.post(
         "/api/v1/accounts/applications",
+        headers=admin_headers,
         json={
             "telegram_id": "100500",
             "company_name": "Demo Partner",
@@ -87,6 +88,7 @@ async def test_partner_can_create_idempotent_generation_after_manual_credit(
 
     duplicate_application = await client.post(
         "/api/v1/accounts/applications",
+        headers=admin_headers,
         json={
             "telegram_id": "100500",
             "company_name": "Demo Partner",
@@ -516,9 +518,7 @@ async def test_worker_reconciles_late_provider_success_after_local_timeout(
         assert generation.result_url is not None
 
         ledger_result = await db_session.execute(
-            select(LedgerEntry)
-            .where(LedgerEntry.generation_id == generation.id)
-            .order_by(LedgerEntry.created_at)
+            select(LedgerEntry).where(LedgerEntry.generation_id == generation.id).order_by(LedgerEntry.created_at)
         )
         ledger = list(ledger_result.scalars().all())
         assert [entry.operation_type for entry in ledger] == [
@@ -528,9 +528,7 @@ async def test_worker_reconciles_late_provider_success_after_local_timeout(
         ]
 
         events_result = await db_session.execute(
-            select(WebhookEvent)
-            .where(WebhookEvent.generation_id == generation.id)
-            .order_by(WebhookEvent.created_at)
+            select(WebhookEvent).where(WebhookEvent.generation_id == generation.id).order_by(WebhookEvent.created_at)
         )
         events = list(events_result.scalars().all())
         assert [event.event_type for event in events] == ["timeout", "completed"]

@@ -15,3 +15,5 @@ htmlcov
 var
 nginx/ssl
 ops/backup
+
+.backup.env

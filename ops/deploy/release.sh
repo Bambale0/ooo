@@ -5,7 +5,8 @@ set -euo pipefail
 : "${APP_REVISION:?required}"
 PREVIOUS_IMAGE="${PREVIOUS_IMAGE:-}"
 PREVIOUS_REVISION="${PREVIOUS_REVISION:-}"
-compose=(docker compose -f docker-compose.prod.yml)
+[[ -f .backup.env ]] || { echo "Configure encrypted off-site backups in .backup.env before release" >&2; exit 1; }
+compose=(docker compose -f docker-compose.prod.yml -f docker-compose.pitr.yml)
 "${compose[@]}" config -q
 "${compose[@]}" pull app worker webhook_worker
 "${compose[@]}" up -d postgres redis

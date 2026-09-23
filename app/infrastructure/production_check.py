@@ -22,6 +22,13 @@ def validate_production_config() -> list[str]:
             errors.append(f"{name.upper()} must be an HTTPS URL without credentials")
     if not settings.redis_url.startswith(("redis://", "rediss://")):
         errors.append("REDIS_URL must use redis or rediss")
+    if settings.telegram_bot_token:
+        if not settings.admin_telegram_id or not settings.admin_telegram_id.isdigit():
+            errors.append("ADMIN_TELEGRAM_ID must be the verified administrator's numeric ID")
+        for name in ("terms_url", "privacy_policy_url"):
+            url = urlsplit(getattr(settings, name) or "")
+            if url.scheme != "https" or not url.hostname or url.username or url.password:
+                errors.append(f"{name.upper()} must point to the published HTTPS legal document")
     return errors
 
 

@@ -10,7 +10,6 @@ from app.billing.service import (
     apply_partner_balance_change,
     lock_partner_for_update,
     require_sufficient_balance,
-    require_sufficient_cost_coverage,
 )
 from app.catalog.models import Model, PartnerPrice
 from app.generations.models import Generation
@@ -27,7 +26,6 @@ from app.generations.service import (
     has_provider_capability,
     poll_generation_provider,
 )
-from app.infrastructure.config import get_settings
 from app.providers.base import ProviderGenerationRequest
 from app.providers.video_contract import validate_video_request
 
@@ -41,7 +39,7 @@ async def create_generation(
     db: DbSession,
     auth: PartnerAuth = Depends(get_partner_auth),
 ) -> Generation:
-    partner = auth.partner
+    partner = await lock_partner_for_update(db, auth.partner.id)
     existing = await _find_generation_by_idempotency_key(db, partner.id, payload.idempotency_key)
     if existing is not None:
         return existing
@@ -80,9 +78,12 @@ async def create_generation(
     billable_units = payload.duration_seconds if price.billing_unit == "second" else 1
     price_rub = Decimal(price.price_rub) * Decimal(billable_units)
 
-    settings = get_settings()
+    from app.billing.fx import current_fx
+    from app.billing.fx import snapshot as fx_snapshot
+
+    fx_data = await current_fx(db)
     provider_cost_usdt = Decimal(price.provider_cost_usdt) * Decimal(billable_units)
-    rub_per_usdt = Decimal(settings.rub_per_usdt)
+    rub_per_usdt = fx_data["rate"]
     provider_cost_reserve_rub = (provider_cost_usdt * rub_per_usdt).quantize(
         _RUB_QUANTUM,
         rounding=ROUND_HALF_UP,
@@ -97,13 +98,17 @@ async def create_generation(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="capability_mismatch")
 
     locked_partner = await lock_partner_for_update(db, partner.id)
+    if locked_partner.status != "active":
+        raise HTTPException(403, "partner_not_active")
     existing = await _find_generation_by_idempotency_key(db, locked_partner.id, payload.idempotency_key)
     if existing is not None:
         return existing
 
     # Both funding gates happen before a generation UUID/row or either reserve is created.
     await require_sufficient_balance(locked_partner, price_rub)
-    await require_sufficient_cost_coverage(locked_partner, provider_cost_reserve_rub)
+    from app.billing.capital import require_current_capital
+
+    await require_current_capital(db, provider_cost_usdt)
 
     generation = Generation(
         partner_id=locked_partner.id,
@@ -122,6 +127,7 @@ async def create_generation(
         webhook_url_snapshot=auth.api_key.webhook_url,
         webhook_secret_encrypted_snapshot=auth.api_key.webhook_secret_encrypted,
         request_payload={
+            "fx": fx_snapshot(fx_data),
             "duration_seconds": payload.duration_seconds,
             "aspect_ratio": payload.aspect_ratio,
             "reference_images": [reference.model_dump() for reference in payload.reference_images],
@@ -152,7 +158,7 @@ async def create_generation(
         idempotency_key=f"provider-cost-reserve:{generation.id}",
         generation_id=generation.id,
         description="Reserved configured upstream procurement cost snapshot",
-        allow_negative=False,
+        allow_negative=True,
     )
     await db.refresh(generation)
     return generation
@@ -248,3 +254,21 @@ async def _find_generation_by_idempotency_key(
         )
     )
     return result.scalar_one_or_none()
+
+
+@router.post("/{generation_id}/cancel", response_model=GenerationRead)
+async def cancel_generation(generation_id: str, db: DbSession, partner: Partner = Depends(get_current_partner)):
+    from app.generations.service import cancel_before_submit
+
+    generation = (
+        await db.execute(
+            select(Generation)
+            .where(Generation.id == generation_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if generation is None or generation.partner_id != partner.id:
+        raise HTTPException(404, "generation_not_found")
+    await cancel_before_submit(db, generation)
+    return generation

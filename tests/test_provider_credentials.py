@@ -28,6 +28,7 @@ async def test_provider_credential_is_scoped_to_application_and_encrypted(
 
     first = await client.post(
         "/api/v1/accounts/applications",
+        headers=admin_headers,
         json={
             "telegram_id": "cred-app-1",
             "company_name": "First Partner",
@@ -38,6 +39,7 @@ async def test_provider_credential_is_scoped_to_application_and_encrypted(
     )
     second = await client.post(
         "/api/v1/accounts/applications",
+        headers=admin_headers,
         json={
             "telegram_id": "cred-app-2",
             "company_name": "Second Partner",

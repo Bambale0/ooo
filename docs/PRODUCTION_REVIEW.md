@@ -1,78 +1,96 @@
-# Проверка готовности — 2026-09-23
+# Проверка готовности репозитория — 23 сентября 2026
 
-**Результат: исправления для release candidate; полный production/resale PASS не выдан.**
-Область согласована: репозиторий и изолированные проверки, без production-деплоя и
-платных операций. Исходный commit 3253fa0; дополнительно интегрированы изменения main до 20e098e.
+Подготовлен release candidate для изолированного запуска и выборочного включения
+проверенных моделей. **Продажи всех моделей ArgoLink пока не подтверждены:** 9 из
+39 моделей не дали рабочего результата в live-проверке. Production не разворачивался;
+в этой задаче согласованы изменения репозитория и изолированные проверки.
 
-## Исправлено
+## Реализовано
 
-- Контрактная валидация видео по модели до резервирования денег; точное отображение кадров;
-  отказ от молчаливого игнорирования unsupported request fields.
-- Fail-closed key validation, нормализация повреждённых ответов, запрет автоматического
-  повтора неоднозначного submit и безопасные content paths без произвольных redirects.
-- Submit intent durable до обращения к провайдеру; regression test падения после acceptance.
-- Исходный provider credential закреплён за задачей (additive migration 0014).
-- Терминальная задача не опрашивается повторно; запросы admin dispatch/poll блокируют строку.
-- Отложенные retries не занимают очередь перед готовыми задачами.
-- Отклонение убыточного запроса при изменившемся FX до создания generation/reserve.
-- Telegram admin callbacks защищены ADMIN_TELEGRAM_ID; кабинету разрешены только private chats;
-  некорректная пагинация отклоняется, DB session живёт до завершения обработчика.
-- Недостоверный safe-to-withdraw не публикуется как сумма в USDT.
-- Production startup проверяет конфигурацию; readiness видит Redis outage и актуальную revision.
-- Docker CMD запускает нужный процесс; hashes/versions зависимостей закреплены;
-  production compose самостоятельный, без опубликованных PostgreSQL/Redis/MinIO портов,
-  с read-only приложением, non-root, cap_drop и graceful shutdown.
-- Изменения main по pool settings, late-success и CI-gated rollback сохранены.
-- ORM согласован с PostgreSQL migrations, `alembic check` добавлен в CI.
+- Проверенный каталог 39 моделей: 24 текстовые, 9 графических, 6 видео. Нативные
+  Responses, Chat Completions, Messages, Images и асинхронный Videos API; JSON/SSE,
+  multipart image edits, upload tickets, референсы image/video/audio и video edit.
+  GPT Image принимает 16 файлов-референсов плюс отдельную маску.
+- Импорт каталогов в draft, сравнение изменений контракта/закупочных цен, ручные
+  retail prices и gates перед включением. Ложный smoke PASS автоматически не ставится.
+  Параметры и модель не заменяются для обхода ошибок поставщика.
+- Резерв до отправки, durable submit intent, запрет слепого повторного платного
+  запроса, фактический расчёт tokens/images/seconds, immutable snapshots и
+  компенсирующие ledger entries. Неопределённые исходы доступны для admin reconciliation.
+  Отмена до provider submit возвращает оба резерва; queued задачи отключённого/удалённого
+  аккаунта также отменяются до отправки. Уже принятые upstream задачи продолжают учитываться.
+- Персональные зашифрованные upstream credentials, привязка задач к исходному ключу,
+  tenant isolation, DNS-pinned HTTPS для webhook и проверки image URLs, редактирование
+  секретов в логах, ограниченные метки Prometheus.
+- Казначейство с реальным USDT wallet snapshot, отдельными текущими резервами и
+  историческим покрытием; safe-to-withdraw, audit вывода/коррекций, FX fallback chain.
+  Уведомления о дефиците сохраняются в БД, повторяются через 15 минут, заглушаются
+  для текущего инцидента и возобновляются при новом дефиците после восстановления.
+- Русский Telegram-кабинет: согласия/заявка, admin approval/rejection, ключи и webhook,
+  счета/проверка оплаты/зачисление, история и поиск UUID, перенос/отключение/удаление
+  аккаунта, поддержка с файлами до 20 МБ, ответы/закрытие обращений и notification outbox.
+  Состояния и подтверждения переживают перезапуск; роль и владелец проверяются повторно.
+- Подделка Telegram-согласия через открытый HTTP endpoint закрыта. HTTP-подача заявки
+  требует admin auth; обычная регистрация идёт через Telegram. Старый Telegram ID
+  освобождается при удалении для новой заявки, финансовая история сохраняется.
+- Неопределённое создание платёжного счёта не повторяется автоматически. Возможны
+  read-only lookup и явная проверяемая привязка найденного invoice администратором.
+  Повторное подтверждение paid не сбрасывает уже зачисленный платёж.
+- Публичные `/guide?lang=ru|en`, `/prices` и OpenAPI; публичные цены содержат только RUB.
+- Непривилегированный app image, отдельные API/workers/bot, production config checks,
+  миграции, locked dependencies, CI/security checks и проверка точной версии при release.
+- Зашифрованные logical backups с вложениями поддержки и отдельный WAL/PITR overlay.
+  Реальный restore drill и тест восстановления на заданный момент включены в CI.
 
 ## Доказательства
 
-- До изменений: 47 tests passed, 3 PostgreSQL tests skipped.
-- После интеграции: 111 tests passed, без skips, включая PostgreSQL; Ruff clean.
-  CI проверяет конкретный SHA PR.
-- Собран реальный Docker image, API и два worker запущены в отдельной Docker network.
-- Readiness вернул ready/database=ok/redis=ok и нужную revision.
-- После restart API/workers readiness восстановился.
-- При остановке Redis API вернул 503.
-- Миграции 0001–0014 применены к отдельной PostgreSQL 16; ORM schema check clean; migration 0014 downgrade/upgrade round-trip PASS.
-- pip-audit: no known vulnerabilities на проверенном окружении; Bandit high/medium gate clean;
-  detect-secrets не обнаружил секретов в runtime/ops/CI/Compose.
-- SQLite используется для unit tests через metadata.create_all. Исторические миграции
-  до 0014 не полностью совместимы с SQLite (0007 меняет constraints); migration gate — PostgreSQL.
+[Live-матрица и квота](LIVE_VERIFICATION_2026-09-23.md),
+[контракты](ARGOLINK_CONTRACT.md), [финансовая модель](TREASURY.md),
+[эксплуатация](OPERATIONS.md), [backup/DR](../ops/backup/README.md).
 
-```sh
-python -m pip install --require-hashes -r requirements-dev.lock
-python -m pip install --no-deps -e .
-DATABASE_URL="$ISOLATED_POSTGRES_URL" alembic upgrade head
-DATABASE_URL="$ISOLATED_POSTGRES_URL" alembic check
-TEST_POSTGRES_DATABASE_URL="$ISOLATED_POSTGRES_URL" python -m pytest -q
-python -m ruff check .
-docker build -t neironych:candidate .
-```
+- PostgreSQL 16: миграции с чистой БД до `20260923_0019`, `alembic check` без drift.
+- Unit/integration suite включает финансовые повторы, конкуренцию PostgreSQL,
+  crash/restart generation flow, клиентский SSE disconnect, tenant isolation,
+  FX/кошелёк, перенос аккаунта и подтверждения бота. Итоговый результат запуска
+  фиксируется в PR и CI; SQLite не подменяет concurrency-проверки PostgreSQL.
+- Populated logical restore: партнёр, платёж, генерация, API-ключ, оба ledger и
+  файл поддержки восстановлены; несовпадений балансов 0; локально 2 секунды.
+- PITR: базовая транзакция восстановлена, транзакция после backup проиграна из
+  зашифрованного WAL, транзакция после выбранного времени исключена; локально 5.97 с.
+  Это небольшие тестовые данные, а не RTO production-нагрузки.
+- Live ArgoLink: 30/39 моделей дали результат хотя бы через один протокол;
+  все 6 видео-моделей приняли предоставленный референс. Через наш gateway также
+  проверены text/SSE, multipart image edit и video edit с image+video+audio.
+- Реальный Telegram: проверены getMe и getWebhookInfo. Updates не потреблялись,
+  сообщения реальным пользователям не отправлялись; кабинет проверен fake updates.
 
-## Оставшиеся блокеры resale
+## Что остаётся условием реального запуска
 
-Это конкретные незакрытые требования, а не разрешение запускать частичный продукт:
+1. Ошибки upstream: 6 текстовых и 3 Nano-модели не подтверждены; некоторые GPT
+   работают через Chat, но возвращают 502 через Responses. Эти конфигурации нельзя
+   продавать как прошедшие проверку. Нужен повторный smoke после исправления ArgoLink.
+2. Проверка каждой продаваемой конфигурации (протокол, режим, размер, число выходов)
+   и её закупочной цены под конкретным partner credential. Особенно Grok image edits:
+   live списания расходились с опубликованной ценой. Все комбинации не объявлены PASS.
+3. Deployment inputs: РФ-сервер/домен/TLS, production Crypto Pay, опубликованные
+   оферта/политика, ADMIN_TELEGRAM_ID, согласованные retail prices и opening capital.
+   Эти данные не подменены тестовыми значениями и не являются частью изолированного deploy.
+4. Независимое РФ backup storage, расписание backups/weekly recovery, доставка
+   мониторинга и off-site restore на объёме production. Репозиторий содержит
+   работающие encryption/WAL/restore paths; география storage и RTO по сети требуют
+   проверки в целевом окружении.
+5. Опубликованная документация Gemini Omni не сопровождается моделью/ценой в текущем
+   live-каталоге. Модель не включена в resale и не получила выдуманный тариф.
 
-1. Полный заявленный Seedance contract: video/audio references, uploads, edit и точный
-   учёт input-video seconds. См. ARGOLINK_CONTRACT.md. Image/LLM остаются не включаемыми.
-2. Реальный success smoke на оплаченных моделях и успешная загрузка результата отсутствуют
-   в этой проверке. Нужны защищённые credentials и согласованный бюджет в staging.
-3. Actual upstream cost, automatic FX/fallback, реальный wallet/provider balance,
-   safe-to-withdraw и полноценные incident/funding/circuit-breaker сценарии не закончены.
-4. Кабинет Telegram неполный: onboarding/consent, top-up, управление ключами, UUID search,
-   support tickets/attachments, transfer/delete и admin confirmations требуют завершения.
-5. `submitting` без task ID после crash требует сверки у провайдера. Не переводить его
-   обратно в queued вслепую. Автоматическое обнаружение/уведомление и UI reconciliation ещё нужны.
-6. Для webhook DNS rebinding нужна проверка egress на уровне соединения либо сетевой
-   egress proxy. Текущая проверка DNS до HTTP-запроса сама по себе не закрывает TOCTOU.
-7. Требуются восстановление encrypted backup в чистую БД, WAL/PITR, RTO drill,
-   полноценный load test 20–50 запросов и проверка rollback на staging.
-8. Внешние launch gates (домен/TLS, инфраструктура, branch protection, production secrets,
-   согласованные тексты и правила обработки данных) в этой области работы не проверялись.
+Полный объём продуктовой спецификации не объявлен реализованным: оставшиеся
+расширенные требования перечислены в [implementation status](../IMPLEMENTATION_STATUS.md).
 
-Пункты PRODUCTION_LAUNCH_CHECKLIST.md не отмечались PASS без соответствующих доказательств.
-Изолированный success не доказывает operational readiness или полный product brief.
+Мерж в main запускает существующий production workflow. В рамках этой задачи
+изменения публикуются в PR, без мержа и без запуска production.
 
-Применённые skills: team-lead, security-audit, devops, aiogram-codegen, bot-tester;
-проектные api-security-best-practices и verification-before-completion.
+## Использованные skills
+
+Решения и проверки опирались на `team-lead`, `security-audit`, `devops`,
+`aiogram-codegen`, `bot-ux-designer`, `bot-tester`, а также project-local
+`.agents/skills/api-security-best-practices/SKILL.md` и
+`.agents/skills/verification-before-completion/SKILL.md`.

@@ -34,7 +34,9 @@ class GenerationRead(BaseModel):
     status: str
     idempotency_key: str
     partner_price_rub: Decimal
+    actual_charge_rub: Decimal | None = None
     result_url: str | None
+    result_urls: list[str] = Field(default_factory=list)
     public_error_code: str | None
 
     model_config = {"from_attributes": True}
@@ -52,4 +54,3 @@ class ProviderPollRead(BaseModel):
     status: str
     result_url: str | None
     public_error_code: str | None
-

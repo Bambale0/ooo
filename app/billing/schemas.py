@@ -65,3 +65,12 @@ class CoverageLedgerEntryRead(BaseModel):
     description: str | None
 
     model_config = {"from_attributes": True}
+
+
+class ProfitWithdrawalCreate(BaseModel):
+    partner_id: str
+    amount_usdt: Decimal = Field(max_digits=36, decimal_places=18)
+    reason: str = Field(min_length=10, max_length=2000)
+    idempotency_key: str = Field(min_length=8, max_length=160)
+    override_reason: str | None = Field(default=None, min_length=10, max_length=2000)
+    correction_for_id: str | None = None

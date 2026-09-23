@@ -30,7 +30,10 @@ async def require_admin(
 async def get_partner_auth(
     db: DbSession,
     authorization: Annotated[str | None, Header()] = None,
+    x_api_key: Annotated[str | None, Header()] = None,
 ) -> PartnerAuth:
+    if authorization is None and x_api_key:
+        authorization = "Bearer " + x_api_key
     if authorization is None or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="api_key_required")
     token_hash = hash_secret(authorization.removeprefix("Bearer ").strip())

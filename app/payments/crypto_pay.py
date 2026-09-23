@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import httpx
@@ -62,7 +63,7 @@ class CryptoPayClient:
         data = await self._request("getInvoices", {"invoice_ids": str(invoice_id), "count": 1})
         items = data.get("items") if isinstance(data, dict) else None
         if not isinstance(items, list):
-            return None
+            raise CryptoPayError("invalid_invoice_list")
         for item in items:
             if isinstance(item, dict) and int(item.get("invoice_id", 0)) == invoice_id:
                 return _parse_invoice(item)
@@ -72,13 +73,45 @@ class CryptoPayClient:
         data = await self._request("getInvoices", {"count": 1000})
         items = data.get("items") if isinstance(data, dict) else None
         if not isinstance(items, list):
-            return None
-        matches = [
-            _parse_invoice(item)
-            for item in items
-            if isinstance(item, dict) and item.get("payload") == payload
-        ]
+            raise CryptoPayError("invalid_invoice_list")
+        matches = [_parse_invoice(item) for item in items if isinstance(item, dict) and item.get("payload") == payload]
         return max(matches, key=lambda invoice: invoice.invoice_id, default=None)
+
+    async def get_available_usdt(self) -> Decimal:
+        rows = await self._request("getBalance", {})
+        if not isinstance(rows, list):
+            raise CryptoPayError("invalid_wallet_balance")
+        for row in rows:
+            if not isinstance(row, dict):
+                raise CryptoPayError("invalid_wallet_balance")
+            if row.get("currency_code") == "USDT":
+                try:
+                    amount = Decimal(str(row["available"]))
+                except (KeyError, InvalidOperation) as exc:
+                    raise CryptoPayError("invalid_wallet_balance") from exc
+                if not amount.is_finite() or amount < 0:
+                    raise CryptoPayError("invalid_wallet_balance")
+                return amount
+        raise CryptoPayError("usdt_balance_missing")
+
+    async def get_rub_per_usdt(self) -> Decimal:
+        rows = await self._request("getExchangeRates", {})
+        if isinstance(rows, list):
+            for row in rows:
+                if (
+                    isinstance(row, dict)
+                    and row.get("source") == "USDT"
+                    and row.get("target") == "RUB"
+                    and row.get("is_valid") is True
+                    and isinstance(row.get("rate"), str)
+                ):
+                    try:
+                        rate = Decimal(row["rate"])
+                    except InvalidOperation as exc:
+                        raise CryptoPayError("invalid_exchange_rate") from exc
+                    if rate.is_finite() and 0 < rate < Decimal("1000000000000"):
+                        return rate
+        raise CryptoPayError("exchange_rate_unavailable")
 
     async def delete_invoice(self, invoice_id: int) -> None:
         await self._request("deleteInvoice", {"invoice_id": invoice_id})
@@ -98,7 +131,10 @@ class CryptoPayClient:
             response.raise_for_status()
         except httpx.HTTPError as exc:
             raise CryptoPayError(type(exc).__name__) from exc
-        data = response.json()
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise CryptoPayError("invalid_provider_response") from exc
         if not isinstance(data, dict) or data.get("ok") is not True:
             error = data.get("error") if isinstance(data, dict) else None
             raise CryptoPayError(str(error or "crypto_pay_request_failed"))

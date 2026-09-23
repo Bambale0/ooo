@@ -12,6 +12,7 @@ from app.payments.schemas import (
     PaymentCreditRead,
     PaymentInvoiceCreate,
     PaymentInvoiceRead,
+    PaymentReconcileCreate,
     PaymentRefundCreate,
     PaymentRefundRead,
 )
@@ -163,3 +164,38 @@ async def crypto_pay_webhook(
     )
     await db.flush()
     return {"ok": True}
+
+
+@router.post(
+    "/invoices/{payment_id}/reconcile", response_model=PaymentInvoiceRead, dependencies=[Depends(require_admin)]
+)
+async def reconcile_invoice(payment_id: str, payload: PaymentReconcileCreate, db: DbSession):
+    from decimal import Decimal
+
+    from app.payments.service import _apply_provider_invoice, _lock_payment
+
+    payment = await _lock_payment(db, payment_id)
+    provider = await get_crypto_pay_client().get_invoice(payload.provider_invoice_id)
+    if provider is None or provider.payload != payment.id or Decimal(provider.amount) != payment.requested_rub:
+        raise HTTPException(409, "invoice_reconciliation_mismatch")
+    if payment.provider_invoice_id not in {None, provider.invoice_id}:
+        raise HTTPException(409, "payment_provider_id_conflict")
+    if payment.credited_at is not None:
+        return payment
+    if (
+        payment.reconciliation_snapshot
+        and payment.reconciliation_snapshot["provider_invoice_id"] != provider.invoice_id
+    ):
+        raise HTTPException(409, "already_reconciled")
+    if not payment.reconciliation_snapshot:
+        payment.reconciliation_snapshot = {
+            "provider_invoice_id": provider.invoice_id,
+            "reason": payload.reason,
+            "actor": "admin_api",
+        }
+    if provider.status == "paid":
+        return await apply_paid_provider_invoice(db, provider_invoice=provider)
+    _apply_provider_invoice(payment, provider)
+    payment.creation_claimed_until = None
+    await db.flush()
+    return payment

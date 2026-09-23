@@ -1,67 +1,105 @@
-# Эксплуатация release candidate
+# Эксплуатация
 
-Сначала прочтите [review и блокеры](PRODUCTION_REVIEW.md). Эти команды не разрешают
-запуск реальных продаж до закрытия обязательных launch gates.
+Сначала прочтите [проверку готовности](PRODUCTION_REVIEW.md) и
+[live-матрицу ArgoLink](LIVE_VERIFICATION_2026-09-23.md). Не включайте модель по одному
+факту её присутствия в каталоге.
 
-## Конфигурация
+## Подготовка окружения
 
-Создайте `.env` по `.env.example`. Production читает его целиком в каждом процессе.
-Укажите PostgreSQL URL с теми же POSTGRES_USER/PASSWORD/DB, Redis URL, PUBLIC_API_BASE_URL
-с HTTPS, ADMIN_API_TOKEN и PROVIDER_CREDENTIALS_MASTER_KEY с независимыми случайными
-значениями >=32 символов. Сохраните master key отдельно: без него старые credentials
-и webhook secrets нельзя расшифровать. Глобальный ARGOLINK_API_KEY для per-partner
-генераций не обязателен. Не включайте TELEGRAM профиль без токена и ADMIN_TELEGRAM_ID.
+Создайте защищённый `.env` по `.env.example`: PostgreSQL URL с согласованными
+POSTGRES_USER/PASSWORD/DB, Redis, HTTPS PUBLIC_API_BASE_URL, независимые случайные
+ADMIN_API_TOKEN и PROVIDER_CREDENTIALS_MASTER_KEY >=32 символов. Сохраните master key
+отдельно: он нужен для credentials и webhook secrets после восстановления.
 
-Production compose теперь **самостоятельный**. Не объединяйте его с development compose:
-так снова унаследуются development credentials и опубликованные DB ports.
-Прежде чем включить GitHub environment `production`, установите актуальный compose
-в `/opt/neironych`, `.env`, TLS certificates и registry auth для deploy account.
-Workflow требует DEPLOY_HOST, DEPLOY_SSH_KEY, DEPLOY_KNOWN_HOSTS и успешный CI точного SHA.
-Registry repository path приводится к нижнему регистру. Не используйте `latest` для app.
+Задайте Crypto Pay credentials, проверенный RUB/USDT fallback, сверенный opening
+capital и provider float. Без доступного подтверждённого wallet новые платные
+запросы закрываются нейтральной 503. Для кабинета задайте TELEGRAM_BOT_TOKEN,
+ADMIN_TELEGRAM_ID и HTTPS TERMS_URL/PRIVACY_POLICY_URL с реальными опубликованными
+документами. Эти значения нельзя брать из тестов.
+
+Создайте `.backup.env` по [backup runbook](../ops/backup/README.md). Release требует
+этот файл и использует production + PITR compose. Соберите/зафиксируйте собственный
+PostgreSQL image и заранее проверьте S3 storage/permissions. Новые deployment-файлы
+должны быть доставлены в `/opt/neironych` до запуска существующего workflow;
+workflow не синхронизирует конфигурацию сервера автоматически.
 
 ```sh
 export NEIRONYCH_IMAGE=ghcr.io/bambale0/ooo:COMMIT_SHA
 export APP_REVISION=COMMIT_SHA
-docker compose -f docker-compose.prod.yml config -q
-docker compose -f docker-compose.prod.yml up -d postgres redis
-docker compose -f docker-compose.prod.yml run --rm app alembic upgrade head
-docker compose -f docker-compose.prod.yml up -d app worker webhook_worker nginx
+docker compose -f docker-compose.prod.yml -f docker-compose.pitr.yml config -q
+docker compose -f docker-compose.prod.yml -f docker-compose.pitr.yml build postgres
+docker compose -f docker-compose.prod.yml -f docker-compose.pitr.yml up -d postgres redis
+docker compose -f docker-compose.prod.yml -f docker-compose.pitr.yml run --rm app alembic upgrade head
+docker compose -f docker-compose.prod.yml -f docker-compose.pitr.yml up -d app worker webhook_worker nginx
+docker compose -f docker-compose.prod.yml -f docker-compose.pitr.yml --profile telegram up -d telegram
 ```
 
-Health endpoints: `/api/v1/health` (liveness), `/api/v1/readiness` (DB + Redis).
-API bind host: 127.0.0.1:8000; внешний вход — TLS nginx. Сгенерированные файлы
-проксируются потоком, не сохраняются в MinIO. `media/storage.py` — не активный result path.
-Один API worker сохраняет корректность текущих in-process Prometheus counters;
-дальнейшее масштабирование требует multiprocess/central aggregation.
+Не объединяйте production compose с development compose: иначе вернутся development
+credentials и открытые DB ports. Bot polling должен иметь **один** экземпляр.
+При каждом release обновляйте также Telegram service, если профиль используется.
+GitHub environment `production` требует DEPLOY_HOST, DEPLOY_SSH_KEY,
+DEPLOY_KNOWN_HOSTS, registry auth и CI для точного SHA; `latest` не используется.
 
-Для ручного release можно использовать `ops/deploy/release.sh` с PREVIOUS_IMAGE и
-PREVIOUS_REVISION. При failed readiness возвращается предыдущий image, но DB schema
-не откатывается автоматически. Применяйте expand/deploy/contract migrations.
+## Включение моделей
+
+1. Admin `GET /api/v1/catalog/contracts/drift`: проверьте изменения поставщика.
+2. `POST /api/v1/catalog/contracts/import`: создаст draft-модели и capabilities,
+   не придумает retail prices и не поставит smoke PASS. При drift импорт закрыт.
+3. Задайте полный прайс нужных тарифов через `PUT /api/v1/catalog/pricing`.
+   Grok image edits требуют ручной сверки procurement с реальными списаниями.
+4. Привяжите зашифрованный ArgoLink credential к заявке, одобрите партнёра.
+5. Выполните smoke каждого продаваемого протокола/режима под его credential,
+   установите enable gates и включите прошедшие модели. Непроверенные остаются draft.
+
+Native requests: partner Bearer + Idempotency-Key. Guide: `/guide?lang=ru|en`,
+retail prices: `/prices`, schema: `/docs`.
 
 ## Неопределённая отправка
 
-Внутренний запрос для поиска зависших submit intents:
+`GET /api/v1/providers/reconciliation` показывает неопределённые submit intents.
+Проверьте задачу у поставщика под исходным credential, **не делайте новый submit**.
+`POST /api/v1/providers/reconciliation/{generation_id}` требует reason и outcome:
+`attach_video` с подтверждённым upstream task ID, `not_accepted` при доказанном
+непринятии либо `completed` с проверенными units по сохранённым тарифам.
+Это admin-only; нельзя напрямую править balance или удалять ledger entries.
 
-```sql
-SELECT generation_id, provider, created_at
-FROM provider_attempts
-WHERE status = 'submitting' AND provider_task_id IS NULL
-ORDER BY created_at;
+Неопределённый платёжный invoice имеет отдельную процедуру
+`POST /api/v1/payments/invoices/{payment_id}/reconcile`; подробности в
+[финансовой документации](TREASURY.md).
+
+## Мониторинг и rollback
+
+Liveness `/api/v1/health`; readiness `/api/v1/readiness` проверяет DB + Redis и
+показывает APP_REVISION. API доступен только на 127.0.0.1:8000; внешний вход — TLS nginx.
+`/internal/metrics` закрыт на внешнем nginx; Prometheus должен иметь внутренний доступ.
+Queue/business gauges читаются из общей БД. HTTP counters относятся к одному API
+process; при масштабировании потребуется общая агрегация. Alert rules лежат в
+`ops/prometheus/alerts.yml`; настройте реальную доставку мониторинга.
+
+`ops/deploy/release.sh` сверяет revision/readiness и возвращает предыдущий app image
+при сбое. Схема БД автоматически не откатывается: применяйте expand/deploy/contract.
+TLS, резервирование диска, рестарт VPS, пределы RAM/CPU и RTO на реальном объёме —
+отдельные проверки целевой инфраструктуры.
+
+Сгенерированные результаты проксируются потоком и не сохраняются в application
+storage. Вложения поддержки сохраняются в `support_data` и включаются в backup.
+Разместите этот volume и независимый backup storage в согласованном РФ-контуре.
+
+## Повторяемые проверки
+
+```sh
+python -m pytest -q
+alembic upgrade head
+alembic check
+python ops/smoke/argolink.py --secret-file /secure/test.json --report /secure/read-only-report.json
 ```
 
-Сверьте эти запросы с провайдером под исходным аккаунтом, не делайте повторный submit.
-Если task найден, восстановите ID и продолжите polling под исходным credential_id
-через проверенную административную процедуру. Если доказано отсутствие задачи,
-освободите оба резерва через ledger services отдельными компенсирующими операциями.
-Нельзя напрямую редактировать balances или удалять ledger entries.
+ArgoLink CLI по умолчанию read-only. Платный запуск требует `--execute`, `--reference`,
+`--budget-usd`; секреты читаются из private JSON, а не из argv. Известные upstream
+ошибки не запускают бесконечные платные retries. Полный boundary-test исчерпания квоты
+в этой проверке не проводился.
 
-## Проверки изоляции
-
-Unit tests используют SQLite fixture. TEST_POSTGRES_DATABASE_URL должен указывать
-на отдельную мигрированную БД: fault tests создают/удаляют синтетические записи.
-Не направляйте тесты в production. API/workers smoke должны иметь отдельную DB от
-конкурентно выполняющегося pytest, чтобы воркеры не забирали test fixtures.
-
-Нельзя считать mock-generated media доказательством live ArgoLink render. Для
-каждой включаемой конфигурации отдельно подтверждаются input contract, charge,
-terminal webhook и полный MP4 download.
+TEST_POSTGRES_DATABASE_URL направляйте только в отдельную мигрированную БД.
+Не запускайте pytest и queue workers на одной тестовой БД. WAL drill:
+`docker build -t ooo-pitr-check ops/backup/postgres` и `python ops/smoke/pitr.py`.
+Он создаёт только собственные временные контейнеры/volumes без сетевого доступа.

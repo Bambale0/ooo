@@ -22,6 +22,11 @@ async def create_or_resume_invoice(
     idempotency_key: str,
     client: CryptoPayClient,
 ) -> PaymentInvoice:
+    from app.billing.service import lock_partner_for_update
+
+    partner = await lock_partner_for_update(db, partner.id)
+    if partner.status != "active":
+        raise HTTPException(403, "partner_not_active")
     existing_result = await db.execute(
         select(PaymentInvoice).where(
             PaymentInvoice.partner_id == partner.id,
@@ -29,6 +34,9 @@ async def create_or_resume_invoice(
         )
     )
     payment = existing_result.scalar_one_or_none()
+    may_submit = payment is None
+    if payment is not None and payment.requested_rub != Decimal(requested_rub):
+        raise HTTPException(409, "idempotency_conflict")
     if payment is None:
         payment = PaymentInvoice(
             partner_id=partner.id,
@@ -40,10 +48,18 @@ async def create_or_resume_invoice(
         db.add(payment)
         await db.flush()
         await db.commit()
-    elif payment.provider_invoice_id is not None or payment.status != "creating":
+    elif payment.provider_invoice_id is not None or payment.status not in {"creating", "creation_unknown"}:
         _mark_expired_if_needed(payment)
         return payment
-    elif payment.creation_claimed_until is not None and payment.creation_claimed_until > utc_now():
+    elif (
+        payment.creation_claimed_until is not None
+        and (
+            payment.creation_claimed_until.replace(tzinfo=UTC)
+            if payment.creation_claimed_until.tzinfo is None
+            else payment.creation_claimed_until
+        )
+        > utc_now()
+    ):
         return payment
     else:
         payment.creation_claimed_until = utc_now() + timedelta(seconds=60)
@@ -51,18 +67,30 @@ async def create_or_resume_invoice(
 
     try:
         provider_invoice = await client.find_invoice_by_payload(payment.id)
-        if provider_invoice is None:
+        if provider_invoice is None and may_submit:
             provider_invoice = await client.create_rub_invoice(
                 amount_rub=str(int(payment.requested_rub)),
                 payload=payment.id,
             )
     except CryptoPayError as exc:
+        payment = await _lock_payment(db, payment.id)
+        if payment.status == "creating":
+            payment.status, payment.creation_claimed_until = "creation_unknown", None
+        await db.commit()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="payment_provider_temporarily_unavailable",
         ) from exc
 
     payment = await _lock_payment(db, payment.id)
+    if payment.credited_at is not None or payment.status == "paid_waiting_credit":
+        return payment
+    if provider_invoice is None:
+        payment.status, payment.creation_claimed_until = "creation_unknown", None
+        await db.flush()
+        return payment
+    if provider_invoice.status == "paid":
+        return await apply_paid_provider_invoice(db, provider_invoice=provider_invoice)
     _apply_provider_invoice(payment, provider_invoice)
     payment.creation_claimed_until = None
     await db.flush()
@@ -89,6 +117,16 @@ async def cancel_active_invoice(
     try:
         await client.delete_invoice(payment.provider_invoice_id)
     except CryptoPayError as exc:
+        try:
+            provider = await client.get_invoice(payment.provider_invoice_id)
+        except CryptoPayError:
+            provider = False
+        if provider is None:
+            payment.status = "cancelled"
+            await db.flush()
+            return payment
+        if provider and provider.status == "paid":
+            return await apply_paid_provider_invoice(db, provider_invoice=provider)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="payment_provider_temporarily_unavailable",
@@ -112,13 +150,13 @@ async def apply_paid_provider_invoice(
     payment = payment_result.scalar_one_or_none()
     if payment is None and provider_invoice.payload:
         payment_result = await db.execute(
-            select(PaymentInvoice)
-            .where(PaymentInvoice.id == provider_invoice.payload)
-            .with_for_update()
+            select(PaymentInvoice).where(PaymentInvoice.id == provider_invoice.payload).with_for_update()
         )
         payment = payment_result.scalar_one_or_none()
     if payment is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="payment_not_found")
+    if Decimal(provider_invoice.amount) != payment.requested_rub or provider_invoice.payload not in {None, payment.id}:
+        raise HTTPException(409, "payment_amount_or_payload_mismatch")
     if provider_invoice.status != "paid":
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -130,6 +168,9 @@ async def apply_paid_provider_invoice(
     elif payment.provider_invoice_id != provider_invoice.invoice_id:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="payment_provider_id_conflict")
 
+    if payment.credited_at is not None:
+        return payment
+
     was_expired = payment.status == "expired"
     expires_at_2 = payment.expires_at
     if expires_at_2 is not None and expires_at_2.tzinfo is None:
@@ -139,6 +180,15 @@ async def apply_paid_provider_invoice(
 
     _apply_provider_invoice(payment, provider_invoice)
     payment.status = "paid_waiting_credit"
+    from app.infrastructure.config import get_settings
+    from app.telegram.service import notify
+
+    await notify(
+        db,
+        get_settings().admin_telegram_id,
+        f"Оплачен счёт {payment.id}. Проверьте раздел «Платежи».",
+        f"payment-paid:{payment.id}",
+    )
     payment.was_expired_when_paid = was_expired
     payment.creation_claimed_until = None
     await db.flush()
@@ -167,10 +217,36 @@ async def credit_paid_invoice(db: AsyncSession, *, payment_id: str) -> PaymentIn
         description="Crypto Pay payment manually credited",
         allow_negative=True,
     )
+    from app.catalog.models import Model, PartnerPrice
+
+    prices = (
+        (
+            await db.execute(
+                select(PartnerPrice)
+                .join(Model, Model.id == PartnerPrice.model_id)
+                .where(Model.status == "production", PartnerPrice.price_rub > 0)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    from app.billing.fx import current_fx
+    from app.billing.fx import snapshot as fx_snapshot
+
+    fx_data = await current_fx(db)
+    fx = fx_data["rate"]
+    ratio = max((p.provider_cost_usdt * fx / p.price_rub for p in prices), default=Decimal(1))
+    coverage = (amount * ratio).quantize(Decimal(".01"), rounding="ROUND_HALF_UP")
+    payment.coverage_snapshot = {
+        "fx": fx_snapshot(fx_data),
+        "ratio": str(ratio),
+        "rub_per_usdt": str(fx),
+        "coverage_rub": str(coverage),
+    }
     await apply_cost_coverage_change(
         db=db,
         partner=partner,
-        amount_rub=amount,
+        amount_rub=coverage,
         operation_type="payment_coverage_credit",
         idempotency_key=f"payment-credit-coverage:{payment.id}",
         description="Crypto Pay payment funded real cost coverage",
@@ -192,9 +268,7 @@ async def record_confirmed_refund(
     reason: str,
 ) -> tuple[PaymentRefund, PaymentInvoice]:
     payment = await _lock_payment(db, payment_id)
-    existing_result = await db.execute(
-        select(PaymentRefund).where(PaymentRefund.idempotency_key == idempotency_key)
-    )
+    existing_result = await db.execute(select(PaymentRefund).where(PaymentRefund.idempotency_key == idempotency_key))
     existing = existing_result.scalar_one_or_none()
     if existing is not None:
         if existing.payment_invoice_id != payment.id:
@@ -229,10 +303,16 @@ async def record_confirmed_refund(
         description="Confirmed Crypto Pay refund",
         allow_negative=True,
     )
+    ratio = Decimal((payment.coverage_snapshot or {}).get("ratio", "1"))
+    # Difference of rounded cumulative reversals makes a sequence of partial
+    # refunds add up exactly to the original immutable coverage snapshot.
+    old_reversed = (Decimal(payment.refunded_rub) * ratio).quantize(Decimal(".01"), rounding="ROUND_HALF_UP")
+    new_reversed = ((Decimal(payment.refunded_rub) + amount) * ratio).quantize(Decimal(".01"), rounding="ROUND_HALF_UP")
+    coverage_reversal = new_reversed - old_reversed
     await apply_cost_coverage_change(
         db=db,
         partner=partner,
-        amount_rub=-amount,
+        amount_rub=-coverage_reversal,
         operation_type="payment_refund_coverage_adjustment",
         idempotency_key=f"payment-refund-coverage:{refund.id}",
         description="Confirmed Crypto Pay refund coverage reversal",
@@ -240,9 +320,7 @@ async def record_confirmed_refund(
     )
     payment.refunded_rub = Decimal(payment.refunded_rub) + amount
     payment.status = (
-        "refunded"
-        if Decimal(payment.refunded_rub) == Decimal(payment.requested_rub)
-        else "partially_refunded"
+        "refunded" if Decimal(payment.refunded_rub) == Decimal(payment.requested_rub) else "partially_refunded"
     )
     await db.flush()
     await db.refresh(refund)
@@ -265,7 +343,10 @@ async def get_partner_payment(
 
 async def _lock_payment(db: AsyncSession, payment_id: str) -> PaymentInvoice:
     result = await db.execute(
-        select(PaymentInvoice).where(PaymentInvoice.id == payment_id).with_for_update()
+        select(PaymentInvoice)
+        .where(PaymentInvoice.id == payment_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
     payment = result.scalar_one_or_none()
     if payment is None:

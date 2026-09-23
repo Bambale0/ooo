@@ -33,6 +33,33 @@ class ArgoLinkAdapter:
         self.timeout_seconds = timeout_seconds or settings.argolink_timeout_seconds
         self._client = client or get_provider_http_client(self.provider_name)
 
+    async def native_request(self, protocol, body, *, files=None, headers=None):
+        from app.contracts.registry import PROTOCOLS
+        from app.providers.rate_limit import get_provider_rate_limiter
+
+        if protocol not in PROTOCOLS | {"media/uploads"}:
+            raise ValueError("unknown_native_protocol")
+        await get_provider_rate_limiter(self.provider_name, "submit").acquire()
+        request_headers = {**(headers or {}), **self._auth_headers()}
+        kwargs = {"json": body} if files is None else {"data": body, "files": files}
+        request = self._client.build_request(
+            "POST",
+            "/v1/" + protocol,
+            headers=request_headers,
+            timeout=httpx.Timeout(get_settings().native_request_timeout_seconds, connect=5, pool=5),
+            **kwargs,
+        )
+        if files is not None:
+            # Shared client has JSON defaults; multipart needs the generated boundary.
+            request.headers["Content-Type"] = request.stream.get_headers()["Content-Type"]
+        return await self._client.send(request, stream=True, follow_redirects=False)
+
+    async def key_usage(self):
+        response = await self._client.get("/v1/usage", headers=self._auth_headers())
+        response.raise_for_status()
+        data = response.json()
+        return {key: data[key] for key in ("isValid", "mode", "status", "quota", "remaining", "unit") if key in data}
+
     async def health_check(self) -> bool:
         async with self._http_client() as client:
             response = await client.get("/v1/models")
@@ -166,7 +193,13 @@ class ArgoLinkAdapter:
         status = self._normalize_video_status(data)
         result_url = f"{self.base_url}/v1/videos/{provider_task_id}/content" if status == "completed" else None
         raw_error = self._extract_error(data) if status == "failed" else None
-        return ProviderPollResult(status=status, result_url=result_url, raw_error=raw_error)
+        usage = data.get("usage")
+        # Grok's live response reports duration in video, unlike Seedance/Wan.
+        if status == "completed" and data.get("model") == "grok-imagine-video-1.5":
+            duration = (data.get("video") or {}).get("duration")
+            if isinstance(duration, int) and not isinstance(duration, bool) and duration > 0:
+                usage = {"billed_seconds": duration, "output_seconds": duration, "reference_video_seconds": 0}
+        return ProviderPollResult(status=status, result_url=result_url, raw_error=raw_error, usage=usage)
 
     async def open_result_stream(
         self,

@@ -18,17 +18,17 @@ class CabinetAccessMiddleware(BaseMiddleware):
     ) -> Any:
         if isinstance(event, CallbackQuery):
             if not isinstance(event.message, Message) or event.message.chat.type != "private":
-                await event.answer("Open the cabinet in a private chat", show_alert=True)
+                await event.answer("Откройте кабинет в личном чате", show_alert=True)
                 return None
             if (event.data or "").startswith("admin_"):
                 if str(event.from_user.id) != get_settings().admin_telegram_id:
-                    await event.answer("Access denied", show_alert=True)
+                    await event.answer("Доступ запрещён", show_alert=True)
                     return None
             for prefix in ("history:", "api_keys:", "admin_apps:"):
                 if (event.data or "").startswith(prefix):
                     page = event.data[len(prefix) :]
                     if not page.isascii() or not page.isdigit() or len(page) > 6:
-                        await event.answer("Invalid page", show_alert=True)
+                        await event.answer("Неверная страница", show_alert=True)
                         return None
         elif isinstance(event, Message) and event.chat.type != "private":
             return None
