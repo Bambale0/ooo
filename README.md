@@ -4,7 +4,9 @@
 
 Первый upstream provider — ArgoLink, но ядро проектируется provider-agnostic: provider-specific ключи, task IDs, routing, закупочная стоимость и raw errors остаются внутренними.
 
-> **Статус репозитория:** здесь зафиксирована продуктовая спецификация, implementation epics, launch checklist и начальный runtime-код EPIC 01. Реализованы базовый FastAPI-каркас, настройки, async SQLAlchemy/Alembic, Redis abstraction, health/readiness, Docker Compose, Nginx и первый партнёрский API-срез. Остальные функции из документации не считать готовыми, пока они не покрыты кодом и тестами.
+> **Статус:** release candidate с нативными контрактами 40 моделей ArgoLink, биллингом фактического usage, Telegram-кабинетом и проверенным encrypted backup/PITR. Live-результат получен у 30/40 моделей; неуспешные upstream-конфигурации не считаются готовыми к продаже.
+
+Актуальные доказательства и условия запуска: [production review](docs/PRODUCTION_REVIEW.md), [live-матрица и квота](docs/LIVE_VERIFICATION_2026-09-23.md), [контракты](docs/ARGOLINK_CONTRACT.md), [операции](docs/OPERATIONS.md). Ниже также описана целевая продуктовая спецификация — это не автоматический PASS всех launch gates.
 
 ## Содержание
 
@@ -598,7 +600,7 @@ docker compose up --build
 alembic upgrade head
 ```
 
-Минимально реализованный продуктовый срез:
+Базовый продуктовый срез (полный актуальный перечень — в [implementation status](IMPLEMENTATION_STATUS.md)):
 
 - partner application;
 - admin approval;
@@ -621,7 +623,7 @@ alembic upgrade head
 
 Direct code push в `main` должен быть запрещён.
 
-Планируемый CI:
+CI включает:
 
 - unit tests;
 - integration tests;
@@ -631,7 +633,7 @@ Direct code push в `main` должен быть запрещён.
 - static analysis;
 - security checks.
 
-Планируемый deploy:
+Подготовленный deploy workflow:
 
 - GitHub-hosted Actions;
 - private GHCR;

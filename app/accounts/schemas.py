@@ -68,3 +68,13 @@ class DeletePartnerCreate(BaseModel):
 class ApiKeyWebhookUpdate(BaseModel):
     webhook_url: str | None = Field(default=None, max_length=2048)
     webhook_secret: str | None = Field(default=None, max_length=4096)
+
+
+class TransferTelegramCreate(BaseModel):
+    telegram_id: str = Field(pattern=r"^[1-9][0-9]{2,19}$")
+    reason: str = Field(min_length=3, max_length=2000)
+
+
+class PartnerStatusUpdate(BaseModel):
+    enabled: bool
+    reason: str = Field(min_length=3, max_length=2000)

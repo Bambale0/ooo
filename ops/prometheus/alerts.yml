@@ -1,0 +1,31 @@
+groups:
+  - name: neironych
+    rules:
+      - alert: GenerationNeedsReconciliation
+        expr: neironych_generation_queue_depth{status="reconciliation_required"} > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Paid inference needs operator reconciliation
+      - alert: SubmissionStalled
+        expr: neironych_generation_queue_oldest_age_seconds{status="submitting"} > 660
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Submission did not reach a known outcome
+      - alert: GenerationQueueStalled
+        expr: neironych_generation_queue_oldest_age_seconds{status="queued"} > 120
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Check generation workers
+      - alert: ApiUnavailable
+        expr: up{job="neironych-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: API scrape failed

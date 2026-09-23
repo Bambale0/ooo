@@ -144,9 +144,7 @@ async def test_restart_after_reserve_before_submit_resumes_without_duplicate_cha
             assert Decimal(partner.balance_rub) == Decimal("20.00")
             assert generation.status == "sent_to_provider"
 
-            ledger_result = await verify.execute(
-                select(LedgerEntry).where(LedgerEntry.generation_id == generation_id)
-            )
+            ledger_result = await verify.execute(select(LedgerEntry).where(LedgerEntry.generation_id == generation_id))
             ledger = list(ledger_result.scalars().all())
             assert len(ledger) == 1
             assert ledger[0].operation_type == "generation_reserve"
@@ -242,6 +240,72 @@ async def test_two_workers_racing_same_generation_submit_upstream_at_most_once(m
                 partner_id=partner_id,
                 generation_id=generation_id,
             )
+        await engine.dispose()
+
+
+@pytest.mark.integration
+async def test_crash_after_provider_acceptance_does_not_resubmit(monkeypatch):
+    """The process dies after upstream accepts but before its ID reaches our database."""
+    engine, session_factory = _postgres_session_factory()
+    adapter = _CountingProviderAdapter()
+
+    class ProcessDied(BaseException):
+        pass
+
+    async def accepted_then_crashed(payload):
+        adapter.submit_calls += 1
+        raise ProcessDied()
+
+    adapter.submit_generation = accepted_then_crashed
+
+    async def get_adapter(db, partner_id, provider="argolink"):
+        return adapter
+
+    monkeypatch.setattr("app.generations.service.get_partner_provider_adapter", get_adapter)
+    monkeypatch.setattr("app.generations.service.get_provider_rate_limiter", lambda *args: _NoopRateLimiter())
+    async with session_factory() as session:
+        partner = Partner(telegram_id=str(uuid4()), company_name="Crash test", project_name="Test")
+        session.add(partner)
+        await session.flush()
+        generation = Generation(
+            partner_id=partner.id,
+            model_id="fault-model",
+            model_slug="seedance-2.5",
+            mode="text_to_video",
+            resolution="720p",
+            duration_seconds=5,
+            idempotency_key=str(uuid4()),
+            partner_price_rub=Decimal("20"),
+            prompt="crash",
+            status="queued",
+        )
+        session.add(generation)
+        await session.commit()
+        partner_id, generation_id = partner.id, generation.id
+    try:
+        with pytest.raises(ProcessDied):
+            await _dispatch_generation_candidate(
+                session_factory=session_factory,
+                generation_id=generation_id,
+                provider="argolink",
+            )
+        assert (
+            await _dispatch_generation_candidate(
+                session_factory=session_factory,
+                generation_id=generation_id,
+                provider="argolink",
+            )
+            is False
+        )
+        assert adapter.submit_calls == 1
+        async with session_factory() as session:
+            attempt = (
+                await session.execute(select(ProviderAttempt).where(ProviderAttempt.generation_id == generation_id))
+            ).scalar_one()
+            assert attempt.status == "submitting"
+            assert attempt.provider_task_id is None
+    finally:
+        await _cleanup_fault_fixture(session_factory, partner_id=partner_id, generation_id=generation_id)
         await engine.dispose()
 
 

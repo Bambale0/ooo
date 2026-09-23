@@ -17,6 +17,10 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     if: github.event.workflow_run.conclusion == 'success'
+    environment: production
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
     env:
       RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
 
@@ -36,12 +40,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Normalize registry path
+        run: echo "IMAGE_REPOSITORY=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
       - name: Build and push immutable production image
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: .
           push: true
-          tags: ghcr.io/${{ github.repository }}:${{ env.RELEASE_SHA }}
+          tags: ${{ env.IMAGE_REPOSITORY }}:${{ env.RELEASE_SHA }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -68,18 +75,19 @@ jobs:
             "RELEASE_SHA='${RELEASE_SHA}' REPOSITORY='${{ github.repository }}' bash -s" <<'SSH'
           set -euo pipefail
 
-          REPO="ghcr.io/${REPOSITORY}"
+          REPO="ghcr.io/${REPOSITORY,,}"
           TAG="${RELEASE_SHA}"
           COMPOSE_DIR="/opt/neironych"
           REVISION_FILE="${COMPOSE_DIR}/REVISION"
           PREVIOUS_TAG="$(cat "${REVISION_FILE}" 2>/dev/null || true)"
 
           cd "${COMPOSE_DIR}"
+          test -f .backup.env
 
           compose() {
             docker compose \
-              -f "${COMPOSE_DIR}/docker-compose.yml" \
               -f "${COMPOSE_DIR}/docker-compose.prod.yml" \
+              -f "${COMPOSE_DIR}/docker-compose.pitr.yml" \
               "$@"
           }
 
@@ -87,7 +95,7 @@ jobs:
             expected="$1"
             for attempt in $(seq 1 12); do
               sleep 5
-              status="$(curl -fsS http://localhost:8000/api/v1/health/readiness 2>/dev/null || true)"
+              status="$(curl -fsS http://localhost:8000/api/v1/readiness 2>/dev/null || true)"
               if printf '%s' "$status" | grep -Fq "\"revision\":\"${expected}\""; then
                 return 0
               fi

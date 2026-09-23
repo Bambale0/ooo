@@ -19,7 +19,9 @@ from app.accounts.schemas import (
     PartnerApplicationCreate,
     PartnerApplicationRead,
     PartnerRead,
+    PartnerStatusUpdate,
     RejectApplicationCreate,
+    TransferTelegramCreate,
 )
 from app.api.dependencies import DbSession, require_admin
 from app.infrastructure.config import get_settings
@@ -30,8 +32,16 @@ from app.webhooks.security import validate_public_webhook_url
 router = APIRouter()
 
 
-@router.post("/applications", response_model=PartnerApplicationRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/applications",
+    response_model=PartnerApplicationRead,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin)],
+)
 async def submit_application(payload: PartnerApplicationCreate, db: DbSession) -> PartnerApplication:
+    from app.telegram.service import lock_dialog
+
+    await lock_dialog(db, payload.telegram_id)
     if not payload.accepted_terms or not payload.accepted_privacy_policy:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="consent_required")
 
@@ -45,9 +55,7 @@ async def submit_application(payload: PartnerApplicationCreate, db: DbSession) -
     if pending is not None:
         return pending
 
-    application_data = payload.model_dump(
-        exclude={"accepted_terms", "accepted_privacy_policy"}
-    )
+    application_data = payload.model_dump(exclude={"accepted_terms", "accepted_privacy_policy"})
     application = PartnerApplication(**application_data)
     db.add(application)
     await db.flush()
@@ -87,7 +95,7 @@ async def list_applications(db: DbSession) -> list[PartnerApplication]:
     dependencies=[Depends(require_admin)],
 )
 async def approve_application(application_id: str, db: DbSession) -> Partner:
-    application = await db.get(PartnerApplication, application_id)
+    application = await db.get(PartnerApplication, application_id, with_for_update=True)
     if application is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="application_not_found")
     if application.status != "pending":
@@ -154,7 +162,7 @@ async def reject_application(
     payload: RejectApplicationCreate,
     db: DbSession,
 ) -> PartnerApplication:
-    application = await db.get(PartnerApplication, application_id)
+    application = await db.get(PartnerApplication, application_id, with_for_update=True)
     if application is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="application_not_found")
     if application.status != "pending":
@@ -173,9 +181,11 @@ async def reject_application(
     dependencies=[Depends(require_admin)],
 )
 async def create_partner_api_key(partner_id: str, payload: ApiKeyCreate, db: DbSession) -> ApiKeyCreated:
-    partner = await db.get(Partner, partner_id)
+    partner = await db.get(Partner, partner_id, with_for_update=True)
     if partner is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="partner_not_found")
+    if partner.status != "active":
+        raise HTTPException(409, "partner_not_active")
     token, token_hash = create_api_key()
     api_key = ApiKey(
         partner_id=partner.id,
@@ -261,7 +271,7 @@ async def delete_partner(
     payload: DeletePartnerCreate,
     db: DbSession,
 ) -> Partner:
-    partner = await db.get(Partner, partner_id)
+    partner = await db.get(Partner, partner_id, with_for_update=True)
     if partner is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="partner_not_found")
     if partner.status == "deleted":
@@ -270,6 +280,9 @@ async def delete_partner(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="negative_balance_delete_forbidden")
     previous_status = partner.status
     partner.status = "deleted"
+    partner.telegram_id = "deleted:" + partner.id
+    partner.company_name = "Удалённый аккаунт"
+    partner.project_name = "Удалённый аккаунт"
     db.add(
         PartnerAccountStateHistory(
             partner_id=partner.id,
@@ -281,4 +294,50 @@ async def delete_partner(
     await db.execute(update(ApiKey).where(ApiKey.partner_id == partner.id).values(is_active=False))
     await db.flush()
     await db.refresh(partner)
+    return partner
+
+
+@router.post("/partners/{partner_id}/telegram", response_model=PartnerRead, dependencies=[Depends(require_admin)])
+async def transfer_telegram(partner_id: str, payload: TransferTelegramCreate, db: DbSession) -> Partner:
+    from app.telegram.service import lock_dialog
+
+    await lock_dialog(db, payload.telegram_id)
+    partner = await db.get(Partner, partner_id, with_for_update=True)
+    if partner is None or partner.status == "deleted":
+        raise HTTPException(404, "partner_not_found")
+    if partner.telegram_id == payload.telegram_id:
+        return partner
+    occupied = (
+        await db.execute(select(Partner.id).where(Partner.telegram_id == payload.telegram_id))
+    ).scalar_one_or_none()
+    if occupied:
+        raise HTTPException(409, "telegram_id_already_assigned")
+    old = partner.telegram_id
+    partner.telegram_id = payload.telegram_id
+    db.add(
+        PartnerAccountStateHistory(
+            partner_id=partner.id,
+            from_status=partner.status,
+            to_status=partner.status,
+            reason=f"telegram_transfer:{old}->{payload.telegram_id}: {payload.reason}",
+        )
+    )
+    await db.flush()
+    return partner
+
+
+@router.post("/partners/{partner_id}/status", response_model=PartnerRead, dependencies=[Depends(require_admin)])
+async def change_partner_status(partner_id: str, payload: PartnerStatusUpdate, db: DbSession) -> Partner:
+    partner = await db.get(Partner, partner_id, with_for_update=True)
+    if partner is None or partner.status == "deleted":
+        raise HTTPException(404, "partner_not_found")
+    new_status = "active" if payload.enabled else "disabled"
+    if partner.status != new_status:
+        db.add(
+            PartnerAccountStateHistory(
+                partner_id=partner.id, from_status=partner.status, to_status=new_status, reason=payload.reason
+            )
+        )
+        partner.status = new_status
+        await db.flush()
     return partner

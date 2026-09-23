@@ -35,7 +35,7 @@ def build_engine_kwargs(settings: Settings) -> dict[str, Any]:
 
 
 settings = get_settings()
-engine = create_async_engine(settings.database_url, **build_engine_kwargs(settings))
+engine = create_async_engine(settings.database_url, hide_parameters=True, **build_engine_kwargs(settings))
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 

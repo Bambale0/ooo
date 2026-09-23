@@ -54,7 +54,9 @@ jobs:
           cache: pip
 
       - name: Install application and test dependencies
-        run: python -m pip install -e ".[dev]"
+        run: |
+          python -m pip install --require-hashes -r requirements-dev.lock
+          python -m pip install --no-deps -e .
 
       - name: Install security scanners
         run: python -m pip install "bandit>=1.8,<2" "pip-audit>=2.9,<3" "detect-secrets>=1.5,<2"
@@ -70,7 +72,8 @@ jobs:
 
       - name: Secret scan
         run: |
-          detect-secrets scan app ops .github Dockerfile docker-compose.yml .env.example --exclude-files 'ops/load/README\\.md' > /tmp/secrets.json
+          # Exact public catalog revision, not a credential; other revisions still require review.
+          detect-secrets scan app ops .github Dockerfile docker-compose.yml .env.example --exclude-secrets '^5ce662ba88c3d07f$' --exclude-files 'ops/load/README\\.md' > /tmp/secrets.json
           python - <<'PY'
           import json
           import sys
@@ -92,8 +95,37 @@ jobs:
       - name: Apply migrations
         run: alembic upgrade head
 
+      - name: Check ORM matches migrated schema
+        run: alembic check
+
       - name: Test
         run: python -m pytest -q
+
+      - name: Encrypted backup and isolated restore
+        env:
+          PGPASSWORD: neironych # pragma: allowlist secret
+        run: |
+          docker build -t neironych-backup-ci ops/backup
+          backup_test_dir=$(mktemp -d)
+          chmod 700 "$backup_test_dir"
+          python ops/smoke/seed_restore_fixture.py --confirm-isolated --support-dir "$backup_test_dir/support"
+          docker run --rm --entrypoint age-keygen neironych-backup-ci > "$backup_test_dir/recovery.key"
+          chmod 600 "$backup_test_dir/recovery.key"
+          recipient=$(docker run --rm --user "$(id -u):$(id -g)" -v "$backup_test_dir:/backup" --entrypoint age-keygen neironych-backup-ci -y /backup/recovery.key)
+          docker run --rm --network host --user "$(id -u):$(id -g)" -v "$backup_test_dir:/backup" \
+            -e PGHOST=127.0.0.1 -e PGUSER=neironych -e PGPASSWORD -e PGDATABASE=neironych_ci \
+            -e BACKUP_DIR=/backup -e SUPPORT_STORAGE_DIR=/backup/support -e BACKUP_LOCAL_ONLY=1 -e AGE_RECIPIENT="$recipient" neironych-backup-ci
+          docker run --rm --network host --user "$(id -u):$(id -g)" -v "$backup_test_dir:/backup:ro" \
+            -e PGHOST=127.0.0.1 -e PGUSER=neironych -e PGPASSWORD -e PGDATABASE=restore_test_ci \
+            -e BACKUP_FILE=/backup/latest.dump.age -e AGE_IDENTITY_FILE=/backup/recovery.key \
+            -e SUPPORT_BACKUP_FILE=/backup/latest.support.tar.age -e RESTORE_SUPPORT_DIR=/tmp/restore_test_support \
+            --entrypoint /usr/local/bin/restore-test.sh neironych-backup-ci
+          rm -rf "$backup_test_dir"
+
+      - name: Encrypted WAL point-in-time recovery
+        run: |
+          docker build -t ooo-pitr-check ops/backup/postgres
+          python ops/smoke/pitr.py
 
       - name: Build production image
         env:

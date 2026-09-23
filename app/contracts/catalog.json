@@ -1,0 +1,659 @@
+{
+  "source": "https://argolink.io/api/catalog/v1/models?page_size=100",
+  "revision": "5ce662ba88c3d07f",
+  "checked_at": "2026-09-23",
+  "models": {
+    "gpt-6-astra": {
+      "category": "chat",
+      "endpoint": "/v1/responses",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "token",
+        "unit": "million_tokens",
+        "input_per_million": 8,
+        "output_per_million": 40,
+        "cached_input_per_million": 0.8,
+        "cache_write_per_million": 10
+      }
+    },
+    "gpt-5.6-luna": {
+      "category": "chat",
+      "endpoint": "/v1/responses",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "token",
+        "unit": "million_tokens",
+        "input_per_million": 0.16,
+        "output_per_million": 0.96,
+        "cached_input_per_million": 0.016,
+        "cache_write_per_million": 0.2
+      }
+    },
+    "gpt-5.6-terra": {
+      "category": "chat",
+      "endpoint": "/v1/responses",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "token",
+        "unit": "million_tokens",
+        "input_per_million": 1.6,
+        "output_per_million": 9.6,
+        "cached_input_per_million": 0.16,
+        "cache_write_per_million": 2
+      }
+    },
+    "gpt-5.6-sol": {
+      "category": "chat",
+      "endpoint": "/v1/responses",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "token",
+        "unit": "million_tokens",
+        "input_per_million": 4,
+        "output_per_million": 24,
+        "cached_input_per_million": 0.4,
+        "cache_write_per_million": 5
+      }
+    },
+    "claude-opus-5": {
+      "category": "chat",
+      "endpoint": "/v1/chat/completions",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "token",
+        "unit": "million_tokens",
+        "input_per_million": 4,
+        "output_per_million": 20,
+        "cached_input_per_million": 0.4,
+        "cache_write_per_million": 5
+      }
+    },
+    "claude-fable-5-1": {
+      "category": "chat",
+      "endpoint": "/v1/chat/completions",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "token",
+        "unit": "million_tokens",
+        "input_per_million": 8,
+        "output_per_million": 40,
+        "cached_input_per_million": 0.2,
+        "cache_write_per_million": 10
+      }
+    },
+    "claude-fable-5": {
+      "category": "chat",
+      "endpoint": "/v1/chat/completions",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "token",
+        "unit": "million_tokens",
+        "input_per_million": 8,
+        "output_per_million": 40,
+        "cached_input_per_million": 0.8,
+        "cache_write_per_million": 10
+      }
+    },
+    "grok-4.6": {
+      "category": "chat",
+      "endpoint": "/v1/responses",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "token",
+        "unit": "million_tokens",
+        "input_per_million": 1.6,
+        "output_per_million": 4.8,
+        "cached_input_per_million": 0.4
+      }
+    },
+    "gpt-image-2": {
+      "category": "image",
+      "endpoint": "/v1/images/generations",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "image",
+        "unit": "generation",
+        "tiers": [
+          {
+            "label": "1K",
+            "price": 0.015
+          },
+          {
+            "label": "2K",
+            "price": 0.015
+          },
+          {
+            "label": "4K",
+            "price": 0.02
+          }
+        ]
+      }
+    },
+    "gpt-image-2.5-flare": {
+      "category": "image",
+      "endpoint": "/v1/images/generations",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "image",
+        "unit": "generation",
+        "tiers": [
+          {
+            "label": "1K",
+            "price": 0.015
+          },
+          {
+            "label": "2K",
+            "price": 0.015
+          },
+          {
+            "label": "4K",
+            "price": 0.02
+          }
+        ]
+      }
+    },
+    "gpt-image-2.5-sunburst": {
+      "category": "image",
+      "endpoint": "/v1/images/generations",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "image",
+        "unit": "generation",
+        "tiers": [
+          {
+            "label": "1K",
+            "price": 0.015
+          },
+          {
+            "label": "2K",
+            "price": 0.015
+          },
+          {
+            "label": "4K",
+            "price": 0.02
+          }
+        ]
+      }
+    },
+    "grok-imagine-image-quality": {
+      "category": "image",
+      "endpoint": "/v1/images/generations",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "image",
+        "unit": "generation",
+        "generation_per_unit": 0.015,
+        "tiers": [
+          {
+            "label": "1K",
+            "price": 0.015
+          },
+          {
+            "label": "2K",
+            "price": 0.015
+          }
+        ]
+      }
+    },
+    "seedance-2.5": {
+      "category": "video",
+      "endpoint": "/v1/videos/generations",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "video",
+        "unit": "second",
+        "generation_per_unit": 0.078,
+        "tiers": [
+          {
+            "label": "480p",
+            "price": 0.078
+          },
+          {
+            "label": "720p",
+            "price": 0.17
+          },
+          {
+            "label": "1080p",
+            "price": 0.43
+          }
+        ]
+      }
+    },
+    "grok-imagine-video-1.5": {
+      "category": "video",
+      "endpoint": "/v1/videos/generations",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "video",
+        "unit": "second",
+        "generation_per_unit": 0.064,
+        "tiers": [
+          {
+            "label": "480p",
+            "price": 0.064
+          },
+          {
+            "label": "720p",
+            "price": 0.112
+          },
+          {
+            "label": "1080p",
+            "price": 0.2
+          }
+        ]
+      }
+    },
+    "claude-opus-4-8": {
+      "category": "chat",
+      "endpoint": "/v1/chat/completions",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "token",
+        "unit": "million_tokens",
+        "input_per_million": 4,
+        "output_per_million": 20,
+        "cached_input_per_million": 0.4,
+        "cache_write_per_million": 5
+      }
+    },
+    "claude-sonnet-5": {
+      "category": "chat",
+      "endpoint": "/v1/chat/completions",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "token",
+        "unit": "million_tokens",
+        "input_per_million": 1.6,
+        "output_per_million": 8,
+        "cached_input_per_million": 0.16,
+        "cache_write_per_million": 2
+      }
+    },
+    "deepseek-v4-flash-vision-exp": {
+      "category": "chat",
+      "endpoint": "/v1/responses",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "token",
+        "unit": "million_tokens",
+        "input_per_million": 0.112,
+        "output_per_million": 0.224,
+        "cached_input_per_million": 0.00224,
+        "cache_write_per_million": 0
+      }
+    },
+    "deepseek-v4-pro-0813": {
+      "category": "chat",
+      "endpoint": "/v1/responses",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "token",
+        "unit": "million_tokens",
+        "input_per_million": 0.348,
+        "output_per_million": 0.696,
+        "cached_input_per_million": 0.0029,
+        "cache_write_per_million": 0
+      }
+    },
+    "glm-5.1": {
+      "category": "chat",
+      "endpoint": "/v1/responses",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "token",
+        "unit": "million_tokens",
+        "input_per_million": 1.12,
+        "output_per_million": 3.52,
+        "cached_input_per_million": 0.208,
+        "cache_write_per_million": 0
+      }
+    },
+    "glm-5.2": {
+      "category": "chat",
+      "endpoint": "/v1/responses",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "token",
+        "unit": "million_tokens",
+        "input_per_million": 1.12,
+        "output_per_million": 3.52,
+        "cached_input_per_million": 0.208,
+        "cache_write_per_million": 0
+      }
+    },
+    "glm-5.3": {
+      "category": "chat",
+      "endpoint": "/v1/responses",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "token",
+        "unit": "million_tokens",
+        "input_per_million": 1.12,
+        "output_per_million": 3.52,
+        "cached_input_per_million": 0.208,
+        "cache_write_per_million": 0
+      }
+    },
+    "glm-5.3-flash": {
+      "category": "chat",
+      "endpoint": "/v1/responses",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "token",
+        "unit": "million_tokens",
+        "input_per_million": 0.06,
+        "output_per_million": 0.2,
+        "cached_input_per_million": 0.012,
+        "cache_write_per_million": 0
+      }
+    },
+    "gpt-5.3-codex-spark": {
+      "category": "chat",
+      "endpoint": "/v1/responses",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "token",
+        "unit": "million_tokens",
+        "input_per_million": 1.4,
+        "output_per_million": 11.2,
+        "cached_input_per_million": 0.14
+      }
+    },
+    "gpt-5.4": {
+      "category": "chat",
+      "endpoint": "/v1/responses",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "token",
+        "unit": "million_tokens",
+        "input_per_million": 2,
+        "output_per_million": 12,
+        "cached_input_per_million": 0.2
+      }
+    },
+    "gpt-5.4-mini": {
+      "category": "chat",
+      "endpoint": "/v1/responses",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "token",
+        "unit": "million_tokens",
+        "input_per_million": 0.6,
+        "output_per_million": 3.6,
+        "cached_input_per_million": 0.06
+      }
+    },
+    "gpt-5.5": {
+      "category": "chat",
+      "endpoint": "/v1/responses",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "token",
+        "unit": "million_tokens",
+        "input_per_million": 4,
+        "output_per_million": 24,
+        "cached_input_per_million": 0.4
+      }
+    },
+    "grok-4.5": {
+      "category": "chat",
+      "endpoint": "/v1/responses",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "token",
+        "unit": "million_tokens",
+        "input_per_million": 1.6,
+        "output_per_million": 4.8,
+        "cached_input_per_million": 0.24
+      }
+    },
+    "grok-imagine-image": {
+      "category": "image",
+      "endpoint": "/v1/images/generations",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "image",
+        "unit": "generation",
+        "generation_per_unit": 0.015,
+        "tiers": [
+          {
+            "label": "1K",
+            "price": 0.015
+          },
+          {
+            "label": "2K",
+            "price": 0.015
+          }
+        ]
+      }
+    },
+    "grok-imagine-image-2.0": {
+      "category": "image",
+      "endpoint": "/v1/images/generations",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "image",
+        "unit": "generation",
+        "generation_per_unit": 0.015,
+        "tiers": [
+          {
+            "label": "1K",
+            "price": 0.015
+          },
+          {
+            "label": "2K",
+            "price": 0.015
+          }
+        ]
+      }
+    },
+    "kimi-k2.6": {
+      "category": "chat",
+      "endpoint": "/v1/responses",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "token",
+        "unit": "million_tokens",
+        "input_per_million": 0.76,
+        "output_per_million": 3.2,
+        "cached_input_per_million": 0.128,
+        "cache_write_per_million": 0
+      }
+    },
+    "kimi-k2.7-code": {
+      "category": "chat",
+      "endpoint": "/v1/responses",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "token",
+        "unit": "million_tokens",
+        "input_per_million": 0.76,
+        "output_per_million": 3.2,
+        "cached_input_per_million": 0.152,
+        "cache_write_per_million": 0
+      }
+    },
+    "kimi-k3": {
+      "category": "chat",
+      "endpoint": "/v1/responses",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "token",
+        "unit": "million_tokens",
+        "input_per_million": 2.4,
+        "output_per_million": 12,
+        "cached_input_per_million": 0.24,
+        "cache_write_per_million": 0
+      }
+    },
+    "minimax-h3": {
+      "category": "video",
+      "endpoint": "/v1/videos/generations",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "video",
+        "unit": "second",
+        "generation_per_unit": 0.044,
+        "tiers": [
+          {
+            "label": "768p",
+            "price": 0.044
+          },
+          {
+            "label": "2k",
+            "price": 0.072
+          }
+        ]
+      }
+    },
+    "nano-banana-2": {
+      "category": "image",
+      "endpoint": "/v1/images/generations",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "image",
+        "unit": "generation",
+        "tiers": [
+          {
+            "label": "1K",
+            "price": 0.015
+          },
+          {
+            "label": "2K",
+            "price": 0.015
+          }
+        ]
+      }
+    },
+    "nano-banana-2-lite": {
+      "category": "image",
+      "endpoint": "/v1/images/generations",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "image",
+        "unit": "generation",
+        "tiers": [
+          {
+            "label": "1K",
+            "price": 0.01
+          },
+          {
+            "label": "2K",
+            "price": 0.01
+          }
+        ]
+      }
+    },
+    "nano-banana-pro": {
+      "category": "image",
+      "endpoint": "/v1/images/generations",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "image",
+        "unit": "generation",
+        "tiers": [
+          {
+            "label": "1K",
+            "price": 0.03
+          },
+          {
+            "label": "2K",
+            "price": 0.03
+          }
+        ]
+      }
+    },
+    "seedance-2.0": {
+      "category": "video",
+      "endpoint": "/v1/videos/generations",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "video",
+        "unit": "second",
+        "generation_per_unit": 0.053,
+        "tiers": [
+          {
+            "label": "480p",
+            "price": 0.053
+          },
+          {
+            "label": "720p",
+            "price": 0.11
+          },
+          {
+            "label": "1080p",
+            "price": 0.28
+          },
+          {
+            "label": "4k",
+            "price": 0.58
+          }
+        ]
+      }
+    },
+    "seedance-2.0-fast": {
+      "category": "video",
+      "endpoint": "/v1/videos/generations",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "video",
+        "unit": "second",
+        "generation_per_unit": 0.042,
+        "tiers": [
+          {
+            "label": "480p",
+            "price": 0.042
+          },
+          {
+            "label": "720p",
+            "price": 0.091
+          }
+        ]
+      }
+    },
+    "seedance-2.0-mini": {
+      "category": "video",
+      "endpoint": "/v1/videos/generations",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "video",
+        "unit": "second",
+        "generation_per_unit": 0.026,
+        "tiers": [
+          {
+            "label": "480p",
+            "price": 0.026
+          },
+          {
+            "label": "720p",
+            "price": 0.057
+          }
+        ]
+      }
+    },
+    "wan-3": {
+      "category": "video",
+      "endpoint": "/v1/videos/generations",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "video",
+        "unit": "second",
+        "generation_per_unit": 0.025,
+        "tiers": [
+          {
+            "label": "480p",
+            "price": 0.025
+          },
+          {
+            "label": "720p",
+            "price": 0.05
+          },
+          {
+            "label": "1080p",
+            "price": 0.1
+          }
+        ]
+      }
+    }
+  }
+}

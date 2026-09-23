@@ -4,12 +4,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response, status
 from fastapi.responses import JSONResponse
 
+from app.api.dependencies import DbSession
 from app.api.router import api_router
 from app.infrastructure import state as infrastructure_state
 from app.infrastructure.config import get_settings
 from app.infrastructure.database import engine
 from app.infrastructure.logging import configure_logging
 from app.infrastructure.metrics import metrics_payload, monotonic_seconds, observe_http_request, refresh_db_pool_metrics
+from app.infrastructure.production_check import require_production_config
 from app.payments.crypto_pay import close_crypto_pay_client
 from app.providers.http_client import close_provider_http_clients
 
@@ -17,6 +19,7 @@ from app.providers.http_client import close_provider_http_clients
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     infrastructure_state.APP_REVISION = infrastructure_state._load_revision()
+    require_production_config()
     configure_logging()
     try:
         yield
@@ -35,6 +38,15 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     app.include_router(api_router, prefix=settings.api_prefix)
+    from app.api.guide import router as guide_router
+
+    app.include_router(guide_router)
+    from app.inference.router import router as inference_router
+
+    app.include_router(inference_router, prefix="/v1", tags=["Native inference"])
+    from app.inference.admin import router as reconciliation_router
+
+    app.include_router(reconciliation_router, prefix=settings.api_prefix + "/providers", tags=["Reconciliation"])
 
     @app.middleware("http")
     async def prometheus_http_metrics(request: Request, call_next):
@@ -55,7 +67,47 @@ def create_app() -> FastAPI:
                 )
 
     @app.get("/internal/metrics", include_in_schema=False)
-    async def internal_metrics() -> Response:
+    async def internal_metrics(db: DbSession) -> Response:
+        from sqlalchemy import func, select
+
+        from app.generations.models import Generation
+        from app.infrastructure.metrics import update_generation_queue_metrics
+        from app.infrastructure.retry import utc_now
+
+        rows = (
+            await db.execute(
+                select(Generation.status, func.count(), func.min(Generation.created_at)).group_by(Generation.status)
+            )
+        ).all()
+        update_generation_queue_metrics({state: (count, oldest) for state, count, oldest in rows}, now=utc_now())
+        from app.accounts.models import Partner
+        from app.billing.capital import capital_state
+        from app.infrastructure.metrics import (
+            PARTNER_BALANCE_TOTAL,
+            PARTNER_COST_COVERAGE_TOTAL,
+            PAYMENTS_PENDING_CREDIT,
+            SAFE_TO_WITHDRAW_USDT,
+        )
+        from app.payments.models import PaymentInvoice
+
+        balance, coverage = (
+            await db.execute(
+                select(
+                    func.coalesce(func.sum(Partner.balance_rub), 0),
+                    func.coalesce(func.sum(Partner.cost_coverage_rub), 0),
+                )
+            )
+        ).one()
+        PARTNER_BALANCE_TOTAL.set(balance)
+        PARTNER_COST_COVERAGE_TOTAL.set(coverage)
+        pending = (
+            await db.execute(
+                select(func.count()).select_from(PaymentInvoice).where(PaymentInvoice.status == "paid_waiting_credit")
+            )
+        ).scalar()
+        PAYMENTS_PENDING_CREDIT.set(pending)
+        capital = await capital_state(db)
+        SAFE_TO_WITHDRAW_USDT.set(capital["safe"] if capital["safe"] is not None else "NaN")
         refresh_db_pool_metrics(engine.sync_engine.pool)
         payload, content_type = metrics_payload()
         return Response(content=payload, media_type=content_type)
@@ -70,29 +122,13 @@ def create_app() -> FastAPI:
     return app
 
 
-_ROUTE_SEGMENT_ALLOWLIST = {
-    "api", "v0", "v1", "health", "readiness",
-    "accounts", "applications", "approve", "reject",
-    "partners", "api-keys", "revoke", "delete",
-    "catalog", "models", "pricing", "enable", "enable-gates",
-    "billing", "manual-adjustments", "balance", "ledger",
-    "generations", "dispatch", "poll-provider",
-    "webhook", "resend",
-    "media",
-    "payments", "invoices", "cancel", "credit", "refunds", "crypto-pay",
-    "content",
-    "providers", "credentials", "capabilities",
-    "internal", "metrics",
-}
-
-
 def _bounded_route_label(app: FastAPI, request: Request) -> str:
-    del app
-    segments = [segment for segment in request.url.path.split("/") if segment]
-    if not segments:
-        return "/"
-    normalized = [
-        segment if segment in _ROUTE_SEGMENT_ALLOWLIST else "{param}"
-        for segment in segments
-    ]
-    return "/" + "/".join(normalized)
+    from starlette.routing import NoMatchFound
+
+    route = request.scope.get("route")
+    if route is None:
+        return "/{unmatched}"
+    try:
+        return str(app.url_path_for(route.name, **{key: "{" + key + "}" for key in request.path_params}))
+    except (NoMatchFound, ValueError, TypeError):
+        return "/{unmatched}"

@@ -51,3 +51,21 @@ async def test_crypto_pay_client_creates_exact_rub_invoice_with_supported_assets
     assert invoice.status == "active"
     assert invoice.payload == "local-payment-id"
     assert requests[0].url.path == "/api/createInvoice"
+
+
+async def test_wallet_balance_excludes_onhold_without_double_subtracting():
+    from decimal import Decimal
+
+    import httpx
+
+    from app.payments.crypto_pay import CryptoPayClient
+
+    def handler(request):
+        assert request.url.path == "/api/getBalance"
+        return httpx.Response(
+            200, json={"ok": True, "result": [{"currency_code": "USDT", "available": "10.123456789", "onhold": "3"}]}
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://pay.crypt.bot") as http:
+        wallet = CryptoPayClient(api_token="test", base_url="https://pay.crypt.bot", timeout_seconds=2, client=http)
+        assert await wallet.get_available_usdt() == Decimal("10.123456789")

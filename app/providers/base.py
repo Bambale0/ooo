@@ -13,6 +13,9 @@ class ProviderGenerationRequest:
     duration_seconds: int = 1
     aspect_ratio: str | None = None
     reference_images: tuple[str, ...] = ()
+    start_image: str | None = None
+    end_image: str | None = None
+    native_body: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -27,6 +30,7 @@ class ProviderPollResult:
     status: str
     result_url: str | None = None
     raw_error: str | None = None
+    usage: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -51,11 +55,7 @@ class ProviderAdapterError(Exception):
         super().__init__(public_code)
         self.public_code = public_code
         self.raw_error = raw_error
-        self.retryable = (
-            public_code == "provider_temporarily_unavailable"
-            if retryable is None
-            else retryable
-        )
+        self.retryable = public_code == "provider_temporarily_unavailable" if retryable is None else retryable
         self.retry_after_seconds = retry_after_seconds
 
 

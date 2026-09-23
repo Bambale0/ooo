@@ -10,7 +10,6 @@ from app.billing.service import (
     apply_partner_balance_change,
     lock_partner_for_update,
     require_sufficient_balance,
-    require_sufficient_cost_coverage,
 )
 from app.catalog.models import Model, PartnerPrice
 from app.generations.models import Generation
@@ -27,7 +26,8 @@ from app.generations.service import (
     has_provider_capability,
     poll_generation_provider,
 )
-from app.infrastructure.config import get_settings
+from app.providers.base import ProviderGenerationRequest
+from app.providers.video_contract import validate_video_request
 
 router = APIRouter()
 _RUB_QUANTUM = Decimal("0.01")
@@ -39,7 +39,7 @@ async def create_generation(
     db: DbSession,
     auth: PartnerAuth = Depends(get_partner_auth),
 ) -> Generation:
-    partner = auth.partner
+    partner = await lock_partner_for_update(db, auth.partner.id)
     existing = await _find_generation_by_idempotency_key(db, partner.id, payload.idempotency_key)
     if existing is not None:
         return existing
@@ -58,16 +58,39 @@ async def create_generation(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="model_or_price_not_available")
     model, price = row
+    try:
+        validate_video_request(
+            ProviderGenerationRequest(
+                generation_id="validation",
+                model_slug=payload.model_slug,
+                mode=payload.mode,
+                resolution=payload.resolution,
+                prompt=payload.prompt,
+                duration_seconds=payload.duration_seconds,
+                aspect_ratio=payload.aspect_ratio,
+                reference_images=tuple(item.url for item in payload.reference_images),
+                start_image=payload.start_image.url if payload.start_image else None,
+                end_image=payload.end_image.url if payload.end_image else None,
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     billable_units = payload.duration_seconds if price.billing_unit == "second" else 1
     price_rub = Decimal(price.price_rub) * Decimal(billable_units)
 
-    settings = get_settings()
+    from app.billing.fx import current_fx
+    from app.billing.fx import snapshot as fx_snapshot
+
+    fx_data = await current_fx(db)
     provider_cost_usdt = Decimal(price.provider_cost_usdt) * Decimal(billable_units)
-    rub_per_usdt = Decimal(settings.rub_per_usdt)
+    rub_per_usdt = fx_data["rate"]
     provider_cost_reserve_rub = (provider_cost_usdt * rub_per_usdt).quantize(
         _RUB_QUANTUM,
         rounding=ROUND_HALF_UP,
     )
+
+    if price_rub < provider_cost_reserve_rub:
+        raise HTTPException(status_code=503, detail="provider_temporarily_unavailable")
 
     if not await has_active_provider_credential(db, partner.id):
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="provider_temporarily_unavailable")
@@ -75,13 +98,17 @@ async def create_generation(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="capability_mismatch")
 
     locked_partner = await lock_partner_for_update(db, partner.id)
+    if locked_partner.status != "active":
+        raise HTTPException(403, "partner_not_active")
     existing = await _find_generation_by_idempotency_key(db, locked_partner.id, payload.idempotency_key)
     if existing is not None:
         return existing
 
     # Both funding gates happen before a generation UUID/row or either reserve is created.
     await require_sufficient_balance(locked_partner, price_rub)
-    await require_sufficient_cost_coverage(locked_partner, provider_cost_reserve_rub)
+    from app.billing.capital import require_current_capital
+
+    await require_current_capital(db, provider_cost_usdt)
 
     generation = Generation(
         partner_id=locked_partner.id,
@@ -100,9 +127,12 @@ async def create_generation(
         webhook_url_snapshot=auth.api_key.webhook_url,
         webhook_secret_encrypted_snapshot=auth.api_key.webhook_secret_encrypted,
         request_payload={
+            "fx": fx_snapshot(fx_data),
             "duration_seconds": payload.duration_seconds,
             "aspect_ratio": payload.aspect_ratio,
             "reference_images": [reference.model_dump() for reference in payload.reference_images],
+            "start_image": payload.start_image.model_dump() if payload.start_image else None,
+            "end_image": payload.end_image.model_dump() if payload.end_image else None,
             "billing_unit": price.billing_unit,
             "unit_price_rub": str(price.price_rub),
             "billable_units": billable_units,
@@ -110,6 +140,9 @@ async def create_generation(
     )
     db.add(generation)
     await db.flush()
+    from app.providers.circuit import require_admission
+
+    await require_admission(db, generation.id, claim=False)
     await apply_partner_balance_change(
         db=db,
         partner=locked_partner,
@@ -128,7 +161,7 @@ async def create_generation(
         idempotency_key=f"provider-cost-reserve:{generation.id}",
         generation_id=generation.id,
         description="Reserved configured upstream procurement cost snapshot",
-        allow_negative=False,
+        allow_negative=True,
     )
     await db.refresh(generation)
     return generation
@@ -140,12 +173,16 @@ async def create_generation(
     dependencies=[Depends(require_admin)],
 )
 async def dispatch_generation(generation_id: str, db: DbSession) -> ProviderDispatchRead:
-    generation = await db.get(Generation, generation_id)
+    generation = (
+        await db.execute(select(Generation).where(Generation.id == generation_id).with_for_update())
+    ).scalar_one_or_none()
     if generation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="generation_not_found")
     if generation.status not in {"queued", "sent_to_provider"}:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="generation_not_dispatchable")
     attempt = await dispatch_generation_to_provider(db, generation, PRIMARY_PROVIDER)
+    if attempt is None:
+        raise HTTPException(503, "provider_temporarily_unavailable", headers={"Retry-After": "60"})
     await db.refresh(generation)
     return ProviderDispatchRead(
         generation_id=generation.id,
@@ -161,7 +198,9 @@ async def dispatch_generation(generation_id: str, db: DbSession) -> ProviderDisp
     dependencies=[Depends(require_admin)],
 )
 async def poll_generation(generation_id: str, db: DbSession) -> ProviderPollRead:
-    generation = await db.get(Generation, generation_id)
+    generation = (
+        await db.execute(select(Generation).where(Generation.id == generation_id).with_for_update())
+    ).scalar_one_or_none()
     if generation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="generation_not_found")
     generation = await poll_generation_provider(db, generation, PRIMARY_PROVIDER)
@@ -220,3 +259,21 @@ async def _find_generation_by_idempotency_key(
         )
     )
     return result.scalar_one_or_none()
+
+
+@router.post("/{generation_id}/cancel", response_model=GenerationRead)
+async def cancel_generation(generation_id: str, db: DbSession, partner: Partner = Depends(get_current_partner)):
+    from app.generations.service import cancel_before_submit
+
+    generation = (
+        await db.execute(
+            select(Generation)
+            .where(Generation.id == generation_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if generation is None or generation.partner_id != partner.id:
+        raise HTTPException(404, "generation_not_found")
+    await cancel_before_submit(db, generation)
+    return generation

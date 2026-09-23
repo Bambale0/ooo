@@ -18,6 +18,7 @@ from app.infrastructure.config import get_settings
 from app.infrastructure.database import SessionLocal
 from app.infrastructure.logging import configure_logging
 from app.infrastructure.metrics import update_generation_queue_metrics
+from app.infrastructure.production_check import require_production_config
 from app.infrastructure.retry import utc_now
 from app.providers.http_client import close_provider_http_clients
 from app.providers.models import ProviderAttempt
@@ -61,6 +62,11 @@ async def process_generation_work_concurrently_once(
         limit=limit,
         provider=provider,
     )
+    from app.providers.circuit import recovery_tick
+
+    async with session_factory() as db:
+        await recovery_tick(db, provider)
+        await db.commit()
 
     dispatched = await _run_bounded(
         queued_ids,
@@ -85,6 +91,7 @@ async def process_generation_work_concurrently_once(
 
 
 async def run_generation_worker_forever() -> None:
+    require_production_config()
     configure_logging()
     settings = get_settings()
     stop_event = asyncio.Event()
@@ -128,16 +135,13 @@ async def _load_candidate_ids(
     provider: str = PRIMARY_PROVIDER,
 ) -> tuple[list[str], list[str]]:
     async with session_factory() as db:
-        queued_result = await db.execute(
-            _fair_candidate_ids_query(("queued",), limit=limit)
-        )
-        active_result = await db.execute(
-            _fair_due_active_candidate_ids_query(provider=provider, limit=limit)
-        )
+        queued_result = await db.execute(_fair_candidate_ids_query(("queued",), limit=limit))
+        active_result = await db.execute(_fair_due_active_candidate_ids_query(provider=provider, limit=limit))
         return list(queued_result.scalars().all()), list(active_result.scalars().all())
 
 
 def _fair_candidate_ids_query(statuses: tuple[str, ...], *, limit: int):
+    deferred = select(ProviderAttempt.generation_id).where(ProviderAttempt.next_attempt_at > utc_now())
     ranked = (
         select(
             Generation.id.label("generation_id"),
@@ -149,7 +153,7 @@ def _fair_candidate_ids_query(statuses: tuple[str, ...], *, limit: int):
             )
             .label("partner_position"),
         )
-        .where(Generation.status.in_(statuses))
+        .where(Generation.status.in_(statuses), Generation.id.not_in(deferred))
         .subquery()
     )
     return (
@@ -179,8 +183,7 @@ def _fair_due_active_candidate_ids_query(*, provider: str, limit: int):
         )
         .join(
             ProviderAttempt,
-            (ProviderAttempt.generation_id == Generation.id)
-            & (ProviderAttempt.provider == provider),
+            (ProviderAttempt.generation_id == Generation.id) & (ProviderAttempt.provider == provider),
         )
         .where(
             Generation.status.in_(("sent_to_provider", "processing", "timeout")),
@@ -208,19 +211,15 @@ async def _dispatch_generation_candidate(
 ) -> bool:
     async with session_factory() as db:
         try:
-            result = await db.execute(
-                select(Generation)
-                .where(Generation.id == generation_id)
-                .with_for_update()
-            )
+            result = await db.execute(select(Generation).where(Generation.id == generation_id).with_for_update())
             generation = result.scalar_one_or_none()
             if generation is None or generation.status != "queued":
                 await db.rollback()
                 return False
 
-            await dispatch_generation_to_provider(db, generation, provider)
+            attempt = await dispatch_generation_to_provider(db, generation, provider)
             await db.commit()
-            return True
+            return attempt is not None
         except Exception:
             await db.rollback()
             logger.exception(
@@ -238,11 +237,7 @@ async def _poll_generation_candidate(
 ) -> bool:
     async with session_factory() as db:
         try:
-            result = await db.execute(
-                select(Generation)
-                .where(Generation.id == generation_id)
-                .with_for_update()
-            )
+            result = await db.execute(select(Generation).where(Generation.id == generation_id).with_for_update())
             generation = result.scalar_one_or_none()
             if generation is None or generation.status not in {"sent_to_provider", "processing", "timeout"}:
                 await db.rollback()
@@ -294,8 +289,8 @@ async def _dispatch_queued_generations(
     )
     count = 0
     for generation in result.scalars().all():
-        await dispatch_generation_to_provider(db, generation, provider)
-        count += 1
+        attempt = await dispatch_generation_to_provider(db, generation, provider)
+        count += int(attempt is not None)
     return count
 
 
@@ -309,8 +304,7 @@ async def _poll_active_generations(
         select(Generation)
         .join(
             ProviderAttempt,
-            (ProviderAttempt.generation_id == Generation.id)
-            & (ProviderAttempt.provider == provider),
+            (ProviderAttempt.generation_id == Generation.id) & (ProviderAttempt.provider == provider),
         )
         .where(
             Generation.status.in_(("sent_to_provider", "processing", "timeout")),

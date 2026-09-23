@@ -23,6 +23,7 @@ async def get_active_provider_credential(
             ProviderCredential.encrypted_api_key.is_not(None),
         )
         .order_by(ProviderCredential.created_at.desc())
+        .with_for_update()
     )
     return result.scalars().first()
 
@@ -31,8 +32,21 @@ async def get_partner_provider_adapter(
     db: AsyncSession,
     partner_id: str,
     provider: str,
+    *,
+    credential_id: str | None = None,
 ) -> ProviderAdapter:
-    credential = await get_active_provider_credential(db, partner_id, provider)
+    if credential_id is None:
+        credential = await get_active_provider_credential(db, partner_id, provider)
+    else:
+        # Existing jobs belong to the original upstream account, even after key rotation.
+        result = await db.execute(
+            select(ProviderCredential).where(
+                ProviderCredential.id == credential_id,
+                ProviderCredential.partner_id == partner_id,
+                ProviderCredential.provider == provider,
+            )
+        )
+        credential = result.scalar_one_or_none()
     if credential is None or not credential.encrypted_api_key:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

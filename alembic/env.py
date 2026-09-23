@@ -16,6 +16,7 @@ from app.media import models as media_models  # noqa: F401
 from app.payments import models as payment_models  # noqa: F401
 from app.providers import models as provider_models  # noqa: F401
 from app.support import models as support_models  # noqa: F401
+from app.telegram import models as telegram_models  # noqa: F401
 from app.webhooks import models as webhook_models  # noqa: F401
 
 config = context.config

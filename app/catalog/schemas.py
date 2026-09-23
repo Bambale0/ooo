@@ -31,8 +31,8 @@ class PartnerPriceUpsert(BaseModel):
     mode: str = "default"
     resolution: str = "default"
     price_rub: Decimal = Field(gt=0)
-    provider_cost_usdt: Decimal = Field(default=Decimal("0"), ge=0)
-    billing_unit: str = Field(default="generation", pattern="^(generation|second)$")
+    provider_cost_usdt: Decimal = Field(gt=0)
+    billing_unit: str = Field(default="generation", pattern="^(generation|second|million_tokens)$")
 
 
 class PricingRead(BaseModel):

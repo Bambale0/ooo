@@ -60,7 +60,8 @@ async def test_concurrent_worker_dispatches_candidates_in_parallel(tmp_path, mon
         await asyncio.sleep(0.03)
         async with lock:
             active -= 1
-        return None
+        # None now means the durable provider circuit deferred dispatch.
+        return object()
 
     async def fake_poll(db, generation, provider):
         raise AssertionError("poll should not run for queued-only fixture")

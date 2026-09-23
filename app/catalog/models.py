@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from sqlalchemy import Numeric, String, UniqueConstraint
+from sqlalchemy import JSON, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.database import Base
@@ -9,9 +9,10 @@ from app.infrastructure.types import utc_created_at, uuid_pk
 
 class Model(Base):
     __tablename__ = "models"
+    __table_args__ = (UniqueConstraint("slug", name="uq_models_slug"),)
 
     id: Mapped[str] = uuid_pk()
-    slug: Mapped[str] = mapped_column(String(80), nullable=False, unique=True, index=True)
+    slug: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     modality: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft", index=True)
@@ -36,6 +37,7 @@ class PartnerPrice(Base):
 
 
 class PartnerPriceHistory(Base):
+    fx_snapshot: Mapped[dict | None] = mapped_column(JSON)
     __tablename__ = "partner_price_history"
 
     id: Mapped[str] = uuid_pk()

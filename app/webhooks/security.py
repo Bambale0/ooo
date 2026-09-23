@@ -8,7 +8,7 @@ from fastapi import HTTPException, status
 
 async def validate_public_webhook_url(url: str) -> None:
     parsed = urlsplit(url)
-    if parsed.scheme != "https" or not parsed.hostname:
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.fragment:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_webhook_url")
 
     host = parsed.hostname.rstrip(".")

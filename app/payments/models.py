@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import JSON, BigInteger, Boolean, DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.database import Base
@@ -32,15 +32,18 @@ class PaymentInvoice(Base):
     paid_usd_rate: Mapped[Decimal | None] = mapped_column(Numeric(36, 18))
     was_expired_when_paid: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     credited_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
+    coverage_snapshot: Mapped[dict | None] = mapped_column(JSON)
+    reconciliation_snapshot: Mapped[dict | None] = mapped_column(JSON)
     refunded_rub: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=Decimal("0.00"))
     created_at: Mapped[object] = utc_created_at()
 
 
 class CryptoPayWebhookEvent(Base):
     __tablename__ = "crypto_pay_webhook_events"
+    __table_args__ = (UniqueConstraint("update_id", name="uq_crypto_pay_webhook_events_update_id"),)
 
     id: Mapped[str] = uuid_pk()
-    update_id: Mapped[int] = mapped_column(BigInteger, nullable=False, unique=True, index=True)
+    update_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
     update_type: Mapped[str] = mapped_column(String(80), nullable=False)
     provider_invoice_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
     created_at: Mapped[object] = utc_created_at()

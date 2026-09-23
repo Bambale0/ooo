@@ -99,16 +99,21 @@ DB_POOL_OVERFLOW = Gauge(
     "Current SQLAlchemy pool overflow when supported.",
 )
 
-_QUEUE_STATUSES = ("queued", "sent_to_provider", "processing", "timeout")
+_QUEUE_STATUSES = ("queued", "sent_to_provider", "processing", "timeout", "submitting", "reconciliation_required")
 
 
 def observe_http_request(*, method: str, route: str, status_code: int, duration_seconds: float) -> None:
+    method = method if method in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"} else "OTHER"
     HTTP_REQUESTS_TOTAL.labels(method=method, route=route, status_code=str(status_code)).inc()
     HTTP_REQUEST_DURATION_SECONDS.labels(method=method, route=route).observe(duration_seconds)
 
 
 def observe_provider_request(
-    *, provider: str, operation: str, outcome: str, duration_seconds: float,
+    *,
+    provider: str,
+    operation: str,
+    outcome: str,
+    duration_seconds: float,
 ) -> None:
     PROVIDER_REQUESTS_TOTAL.labels(provider=provider, operation=operation, outcome=outcome).inc()
     PROVIDER_REQUEST_DURATION_SECONDS.labels(provider=provider, operation=operation).observe(duration_seconds)
@@ -120,7 +125,9 @@ def observe_webhook_delivery(*, outcome: str, duration_seconds: float) -> None:
 
 
 def update_generation_queue_metrics(
-    rows: Mapping[str, tuple[int, datetime | None]], *, now: datetime,
+    rows: Mapping[str, tuple[int, datetime | None]],
+    *,
+    now: datetime,
 ) -> None:
     for status in _QUEUE_STATUSES:
         depth, oldest = rows.get(status, (0, None))
@@ -129,9 +136,7 @@ def update_generation_queue_metrics(
             GENERATION_QUEUE_OLDEST_AGE_SECONDS.labels(status=status).set(0)
             continue
         oldest_aware = oldest if oldest.tzinfo is not None else oldest.replace(tzinfo=now.tzinfo)
-        GENERATION_QUEUE_OLDEST_AGE_SECONDS.labels(status=status).set(
-            max(0.0, (now - oldest_aware).total_seconds())
-        )
+        GENERATION_QUEUE_OLDEST_AGE_SECONDS.labels(status=status).set(max(0.0, (now - oldest_aware).total_seconds()))
 
 
 def refresh_db_pool_metrics(pool: object) -> None:

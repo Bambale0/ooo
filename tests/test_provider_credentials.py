@@ -28,6 +28,7 @@ async def test_provider_credential_is_scoped_to_application_and_encrypted(
 
     first = await client.post(
         "/api/v1/accounts/applications",
+        headers=admin_headers,
         json={
             "telegram_id": "cred-app-1",
             "company_name": "First Partner",
@@ -38,6 +39,7 @@ async def test_provider_credential_is_scoped_to_application_and_encrypted(
     )
     second = await client.post(
         "/api/v1/accounts/applications",
+        headers=admin_headers,
         json={
             "telegram_id": "cred-app-2",
             "company_name": "Second Partner",
@@ -90,3 +92,37 @@ async def test_provider_credential_is_scoped_to_application_and_encrypted(
     await db_session.refresh(credential)
     assert credential.partner_id == approved_first.json()["id"]
     assert credential.partner_application_id == first.json()["id"]
+
+
+async def test_existing_job_uses_original_credential_after_rotation(db_session, monkeypatch):
+    from app.accounts.models import Partner
+    from app.infrastructure.security import encrypt_secret, hash_secret
+    from app.providers.service import get_partner_provider_adapter
+
+    partner = Partner(telegram_id="rotation-partner", company_name="Test", project_name="Test")
+    db_session.add(partner)
+    await db_session.flush()
+    master_key = get_settings().provider_credentials_master_key
+    old = ProviderCredential(
+        partner_id=partner.id,
+        provider="argolink",
+        label="old",
+        is_active=False,
+        key_hash=hash_secret("old-key"),
+        key_prefix="old",
+        encrypted_api_key=encrypt_secret("old-key", master_key),
+    )
+    new = ProviderCredential(
+        partner_id=partner.id,
+        provider="argolink",
+        label="new",
+        is_active=True,
+        key_hash=hash_secret("new-key"),
+        key_prefix="new",
+        encrypted_api_key=encrypt_secret("new-key", master_key),
+    )
+    db_session.add_all([old, new])
+    await db_session.flush()
+    monkeypatch.setattr("app.providers.service.get_provider_adapter", lambda provider, api_key: api_key)
+    assert await get_partner_provider_adapter(db_session, partner.id, "argolink", credential_id=old.id) == "old-key"
+    assert await get_partner_provider_adapter(db_session, partner.id, "argolink") == "new-key"

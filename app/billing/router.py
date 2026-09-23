@@ -11,11 +11,31 @@ from app.billing.schemas import (
     CoverageRead,
     LedgerEntryRead,
     ManualAdjustmentCreate,
+    MarginThresholdCreate,
+    ProfitWithdrawalCreate,
 )
 from app.billing.service import apply_cost_coverage_change, apply_partner_balance_change
 from app.infrastructure.security import hash_secret
 
 router = APIRouter()
+
+
+@router.post("/margin-thresholds", dependencies=[Depends(require_admin)])
+async def update_margin_threshold(payload: MarginThresholdCreate, db: DbSession):
+    from app.billing.margins import set_threshold
+
+    row = await set_threshold(db, actor="admin_api", **payload.model_dump())
+    return {"id": row.id, "scope": row.scope, "old_value": row.old_value, "new_value": row.new_value}
+
+
+@router.get("/margin-thresholds", dependencies=[Depends(require_admin)])
+async def read_margin_threshold_history(db: DbSession, before_id: int | None = None):
+    from app.billing.models import MarginThresholdHistory
+
+    query = select(MarginThresholdHistory).order_by(MarginThresholdHistory.id.desc()).limit(100)
+    if before_id is not None:
+        query = query.where(MarginThresholdHistory.id < before_id)
+    return list((await db.execute(query)).scalars())
 
 
 @router.post("/manual-adjustments", response_model=LedgerEntryRead, dependencies=[Depends(require_admin)])
@@ -99,23 +119,17 @@ async def list_partner_coverage_ledger(partner_id: str, db: DbSession) -> list[C
         .order_by(CoverageLedgerEntry.created_at.desc())
     )
     return list(result.scalars().all())
+
+
 @router.get("/safe-to-withdraw", dependencies=[Depends(require_admin)])
 async def get_safe_to_withdraw(db: DbSession) -> dict:
     from app.billing.safe_to_withdraw import calculate_safe_to_withdraw
+
     return await calculate_safe_to_withdraw(db)
 
 
 @router.post("/profit-withdrawals", dependencies=[Depends(require_admin)])
-async def create_profit_withdrawal(
-    payload: dict,
-    db: DbSession,
-) -> dict:
-    from app.api.dependencies import get_current_partner
+async def create_profit_withdrawal(payload: ProfitWithdrawalCreate, db: DbSession) -> dict:
     from app.billing.safe_to_withdraw import record_profit_withdrawal
-    partner = await get_current_partner()
-    return await record_profit_withdrawal(
-        db,
-        amount_usdt=payload["amount_usdt"],
-        reason=payload["reason"],
-        partner_id=partner.id,
-    )
+
+    return await record_profit_withdrawal(db, **payload.model_dump())
