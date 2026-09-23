@@ -57,6 +57,9 @@ async def financial_tick(db) -> None:
         )
         await observe_incident(db, kind="treasury", negative=safe < 0, detail=message, repeating=True)
     fx = (await current_fx(db))["rate"]
+    from app.billing.margins import overrides, threshold
+
+    thresholds = await overrides(db)
     rows = (
         await db.execute(
             select(Model, PartnerPrice)
@@ -66,6 +69,16 @@ async def financial_tick(db) -> None:
     ).all()
     for model, price in rows:
         negative = price.price_rub < price.provider_cost_usdt * fx
+        margin = (price.price_rub - price.provider_cost_usdt * fx) / price.price_rub * 100 if price.price_rub > 0 else 0
+        limit = threshold(thresholds, model.id, price.id)
+        await observe_incident(
+            db,
+            kind=f"margin:{price.id}",
+            negative=not negative and margin < limit,
+            repeating=False,
+            detail=f"Низкая маржа {model.slug} / {price.mode} / {price.resolution}: "
+            f"{margin:.2f}% при пороге {limit}%. Проверьте цену; положительная экономика не блокируется.",
+        )
         await observe_incident(
             db,
             kind=f"economics:{price.id}",

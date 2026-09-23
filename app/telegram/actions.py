@@ -36,7 +36,31 @@ async def confirm_action(event, db, telegram_id: str, action_id: str) -> None:
         raise HTTPException(403, "account_unavailable")
     result = "Готово."
     markup = keyboard()
-    if kind == "key_create":
+    if kind == "admin_catalog_import":
+        from app.catalog.sync import import_reviewed_catalog
+
+        await import_reviewed_catalog(db)
+    elif kind == "admin_form":
+        from app.telegram.admin_forms import execute
+
+        await execute(db, action, telegram_id)
+    elif kind == "trial":
+        from app.accounts.models import ApiKey
+        from app.api.dependencies import PartnerAuth
+        from app.contracts.registry import validate_request
+        from app.inference.service import reserve
+
+        body = validate_request("videos/generations", payload["body"])
+        generation, _ = await reserve(
+            db,
+            PartnerAuth(partner, ApiKey()),
+            "videos/generations",
+            body,
+            f"telegram-trial:{action.id}",
+            trial_telegram_id=telegram_id,
+        )
+        result = f"Пробная генерация {generation.id} в очереди. Стоимость: 0 ₽. Сообщим о результате."
+    elif kind == "key_create":
         key = await create_partner_api_key(partner.id, ApiKeyCreate(name=payload["name"]), db)
         result = (
             "Ключ создан. Сохраните его сейчас — повторно он не показывается.\n\n"

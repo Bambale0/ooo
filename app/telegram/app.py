@@ -18,6 +18,8 @@ from app.telegram.ui import show
 
 logger = logging.getLogger(__name__)
 ERRORS = {
+    "trial_limit_reached": "Оба бесплатных запуска уже использованы. Коммерческие запросы доступны через API.",
+    "provider_temporarily_unavailable": "Поставщик временно недоступен. Повторите запрос после восстановления.",
     "required_provider_key_missing": (
         "Для одобрения сначала привяжите ключ поставщика к заявке через защищённый API администратора."
     ),

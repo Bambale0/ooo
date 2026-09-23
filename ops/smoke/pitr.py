@@ -88,7 +88,7 @@ def drill():
                 "--user",
                 "postgres",
                 "-e",
-                "BACKUP_DIR=/var/lib/postgresql/archive/base",
+                "BACKUP_DIR=/var/lib/postgresql/archive/base",  # pragma: allowlist secret
                 primary,
                 "/usr/local/bin/physical-backup.sh",
             )
@@ -120,11 +120,11 @@ def drill():
                 "-e",
                 "AGE_IDENTITY_FILE=/key",
                 "-e",
-                "BASE_BACKUP_FILE=/archive/base/latest.base.tar.gz.age",
+                "BASE_BACKUP_FILE=/archive/base/latest.base.tar.gz.age",  # pragma: allowlist secret
                 "-e",
                 f"RECOVERY_TARGET_TIME={target}",
                 "-e",
-                "RESTORE_ISOLATED_CONFIRM=empty-recovery-volume",
+                "RESTORE_ISOLATED_CONFIRM=empty-recovery-volume",  # pragma: allowlist secret
                 "-v",
                 f"{restored}:/restore",
                 "-v",

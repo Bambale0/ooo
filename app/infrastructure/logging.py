@@ -18,6 +18,7 @@ class SecretRedactingFormatter(JsonFormatter):
             result = result.replace(secret, "[REDACTED]")
         result = re.sub(r"nrn_[A-Za-z0-9_-]{30,}", "[REDACTED]", result)
         result = re.sub(r"sk-[A-Za-z0-9_-]{20,}", "[REDACTED]", result)
+        result = re.sub(r"(/media/trials/[^/\s]+/\d+/)[a-f0-9]{64}", r"\1[REDACTED]", result)
         result = re.sub(r"(?<!\d)\d{6,12}:[A-Za-z0-9_-]{30,}", "[REDACTED]", result)
         return result
 

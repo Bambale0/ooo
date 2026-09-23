@@ -28,9 +28,7 @@ class ProviderCredential(Base):
 
 class ProviderModelCapability(Base):
     __tablename__ = "provider_model_capabilities"
-    __table_args__ = (
-        UniqueConstraint("provider", "model_id", "mode", "resolution", name="uq_provider_capability"),
-    )
+    __table_args__ = (UniqueConstraint("provider", "model_id", "mode", "resolution", name="uq_provider_capability"),)
 
     id: Mapped[str] = uuid_pk()
     provider: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
@@ -59,3 +57,24 @@ class ProviderAttempt(Base):
     poll_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[object] = utc_created_at()
+
+
+class ProviderCircuit(Base):
+    __tablename__ = "provider_circuits"
+    provider: Mapped[str] = mapped_column(String(80), primary_key=True)
+    state: Mapped[str] = mapped_column(String(20), nullable=False, default="closed")
+    episode: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    healthy_checks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    real_successes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    in_flight: Mapped[str | None] = mapped_column(String(36))
+    probe_started_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
+    last_check_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
+    recovered_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
+
+
+class ProviderOutcome(Base):
+    __tablename__ = "provider_outcomes"
+    generation_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    provider: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    outcome: Mapped[str] = mapped_column(String(20), nullable=False)
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False, index=True)

@@ -36,3 +36,10 @@ class BotNotification(Base):
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     created_at: Mapped[object] = utc_created_at()
+
+
+class TrialEntitlement(Base):
+    __tablename__ = "trial_entitlements"
+    # Intentionally independent of Partner: deletion/re-registration never resets it.
+    telegram_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

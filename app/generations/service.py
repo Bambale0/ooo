@@ -47,7 +47,7 @@ async def dispatch_generation_to_provider(
     db: AsyncSession,
     generation: Generation,
     provider: str = PRIMARY_PROVIDER,
-) -> ProviderAttempt:
+) -> ProviderAttempt | None:
     existing_result = await db.execute(
         select(ProviderAttempt).where(
             ProviderAttempt.generation_id == generation.id,
@@ -69,6 +69,10 @@ async def dispatch_generation_to_provider(
     owner = await lock_partner_for_update(db, generation.partner_id)
     if owner.status != "active":
         return await cancel_before_submit(db, generation, provider=provider)
+    from app.providers.circuit import admit
+
+    if not await admit(db, generation.id, provider=provider):
+        return None
     adapter = await get_partner_provider_adapter(db, generation.partner_id, provider)
     request = ProviderGenerationRequest(
         generation_id=generation.id,
@@ -141,6 +145,9 @@ async def dispatch_generation_to_provider(
             attempt = ProviderAttempt(generation_id=generation.id, provider=provider)
             db.add(attempt)
         _mark_attempt_error(attempt, generation, normalized)
+        from app.providers.circuit import observe
+
+        await observe(db, generation)
         if generation.status == "failed":
             await release_generation_reserves(
                 db,
@@ -233,6 +240,9 @@ async def poll_generation_provider(
         )
     except Exception as exc:
         normalized = adapter.normalize_error(exc)
+        from app.providers.circuit import observe
+
+        await observe(db, generation, outcome="error")
         if reconciling_late_success:
             attempt.public_error_code = normalized.public_code
             attempt.raw_error = normalized.raw_error
@@ -278,6 +288,9 @@ async def poll_generation_provider(
             if isinstance(seconds, bool) or not isinstance(seconds, int) or seconds < 1:
                 generation.status = attempt.status = "reconciliation_required"
                 generation.public_error_code = "usage_reconciliation_required"
+                from app.providers.circuit import observe
+
+                await observe(db, generation)
                 await db.flush()
                 return generation
             await settle_actual(db, generation, {"seconds": seconds})

@@ -72,7 +72,8 @@ jobs:
 
       - name: Secret scan
         run: |
-          detect-secrets scan app ops .github Dockerfile docker-compose.yml .env.example --exclude-files 'ops/load/README\\.md' > /tmp/secrets.json
+          # Exact public catalog revision, not a credential; other revisions still require review.
+          detect-secrets scan app ops .github Dockerfile docker-compose.yml .env.example --exclude-secrets '^6dbda1a9e5891d82$' --exclude-files 'ops/load/README\\.md' > /tmp/secrets.json
           python - <<'PY'
           import json
           import sys

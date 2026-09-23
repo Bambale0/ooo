@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from sqlalchemy import DateTime, ForeignKey, Index, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.database import Base
@@ -74,3 +74,13 @@ class FinancialIncident(Base):
     muted: Mapped[bool] = mapped_column(default=False, nullable=False)
     last_alert_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
     detail: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class MarginThresholdHistory(Base):
+    __tablename__ = "margin_threshold_history"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    scope: Mapped[str] = mapped_column(String(240), nullable=False, index=True)
+    old_value: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    new_value: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    actor: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[object] = utc_created_at()

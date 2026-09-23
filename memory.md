@@ -30,7 +30,9 @@
   и входят в encrypted backup. Генерационные референсы не превращаются в support data.
 - Проверены logical restore и WAL/PITR. `.backup.env` и recovery identity не коммитятся;
   private recovery identity не должна находиться на primary/backup server.
-- Последний локальный полный прогон: 209 tests с PostgreSQL; schema head 0019, no drift;
+- Последний локальный полный прогон: 223 tests, включая PostgreSQL concurrency; schema head 0020, no drift;
   app/workers restart и Redis failure проверены. CI PR остаётся источником проверки commit SHA.
-- Внешние launch gates и ещё не реализованные расширенные требования перечислены в
+- Внешние launch gates и границы live/isolated проверок перечислены в
   IMPLEMENTATION_STATUS.md. Не выдавайте полный resale PASS по одному unit-test прогону.
+
+- Lifetime trial, staged provider recovery, threshold hierarchy/history, legal notices и admin forms описаны в docs/CABINET_AND_RECOVERY.md.

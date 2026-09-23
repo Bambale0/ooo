@@ -140,6 +140,9 @@ async def create_generation(
     )
     db.add(generation)
     await db.flush()
+    from app.providers.circuit import require_admission
+
+    await require_admission(db, generation.id, claim=False)
     await apply_partner_balance_change(
         db=db,
         partner=locked_partner,
@@ -178,6 +181,8 @@ async def dispatch_generation(generation_id: str, db: DbSession) -> ProviderDisp
     if generation.status not in {"queued", "sent_to_provider"}:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="generation_not_dispatchable")
     attempt = await dispatch_generation_to_provider(db, generation, PRIMARY_PROVIDER)
+    if attempt is None:
+        raise HTTPException(503, "provider_temporarily_unavailable", headers={"Retry-After": "60"})
     await db.refresh(generation)
     return ProviderDispatchRead(
         generation_id=generation.id,

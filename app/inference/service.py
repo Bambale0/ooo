@@ -29,7 +29,9 @@ def fingerprint(protocol: str, body: dict, files_digest: str = "") -> str:
     ).hexdigest()
 
 
-async def reserve(db, auth: PartnerAuth, protocol: str, body: dict, idempotency_key: str, *, files_digest=""):
+async def reserve(
+    db, auth: PartnerAuth, protocol: str, body: dict, idempotency_key: str, *, files_digest="", trial_telegram_id=None
+):
     partner = await lock_partner_for_update(db, auth.partner.id)
     if partner.status != "active":
         raise HTTPException(403, "partner_not_active")
@@ -59,7 +61,15 @@ async def reserve(db, auth: PartnerAuth, protocol: str, body: dict, idempotency_
     from app.billing.fx import snapshot as fx_snapshot
 
     fx_data = await current_fx(db)
-    rates, units, resolution = quote(protocol, body, prices, fx=fx_data["rate"])
+    if trial_telegram_id is not None:
+        from app.telegram.trials import claim_trial
+
+        if protocol != "videos/generations" or partner.telegram_id != trial_telegram_id:
+            raise HTTPException(403, "trial_not_available")
+        await claim_trial(db, trial_telegram_id)
+    rates, units, resolution = quote(protocol, body, prices, fx=fx_data["rate"], trial=trial_telegram_id is not None)
+    if trial_telegram_id is not None:
+        rates = {key: {**value, "retail": "0"} for key, value in rates.items()}
     from app.generations.service import has_provider_capability
 
     for key in rates:
@@ -73,7 +83,7 @@ async def reserve(db, auth: PartnerAuth, protocol: str, body: dict, idempotency_
     charge, cost = charges(rates, units, divisor=divisor)
     fx = fx_data["rate"]
     coverage = (cost * fx).quantize(Decimal(".01"), rounding=ROUND_HALF_UP)
-    if charge < coverage:
+    if trial_telegram_id is None and charge < coverage:
         raise HTTPException(503, "provider_temporarily_unavailable")
     await require_sufficient_balance(partner, charge)
     from app.billing.capital import require_current_capital
@@ -91,6 +101,8 @@ async def reserve(db, auth: PartnerAuth, protocol: str, body: dict, idempotency_
     }
     if video:
         snapshot["native_body"] = body
+    if trial_telegram_id is not None:
+        snapshot["trial_telegram_id"] = trial_telegram_id
     generation = Generation(
         partner_id=partner.id,
         model_id=model.id,
@@ -111,6 +123,9 @@ async def reserve(db, auth: PartnerAuth, protocol: str, body: dict, idempotency_
     )
     db.add(generation)
     await db.flush()
+    from app.providers.circuit import require_admission
+
+    await require_admission(db, generation.id, claim=not video)
     await apply_partner_balance_change(
         db,
         partner,
@@ -141,7 +156,7 @@ async def reserve(db, auth: PartnerAuth, protocol: str, body: dict, idempotency_
     return generation, attempt
 
 
-def quote(protocol, body, prices, *, fx=None):
+def quote(protocol, body, prices, *, fx=None, trial=False):
     fx = fx if fx is not None else get_settings().rub_per_usdt
     rates = {}
 
@@ -153,7 +168,7 @@ def quote(protocol, body, prices, *, fx=None):
             raise HTTPException(503, "provider_temporarily_unavailable")
         # Check every rate individually; expensive cached/written tokens cannot
         # silently be sold below procurement just because the whole quote is positive.
-        if price.provider_cost_usdt <= 0 or price.price_rub < price.provider_cost_usdt * fx:
+        if price.provider_cost_usdt <= 0 or (not trial and price.price_rub < price.provider_cost_usdt * fx):
             raise HTTPException(503, "provider_temporarily_unavailable")
         observed = OBSERVATIONS["manual_procurement_review"].get(body["model"])
         if (

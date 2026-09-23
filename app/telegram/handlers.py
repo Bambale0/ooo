@@ -42,6 +42,8 @@ async def home(event, db, dialog) -> None:
     partner = await partner_for(db, actor(event))
     if partner:
         buttons = [
+            ("Бесплатные видеотесты", "trials"),
+            ("Документы", "legal_documents"),
             ("Баланс и пополнение", "balance"),
             ("API-ключи", "api_keys:0"),
             ("История и поиск", "history:0"),
@@ -116,7 +118,61 @@ async def handle_callback(event, db, dialog) -> None:
     partner = await partner_for(db, user)
     if not partner:
         raise HTTPException(403, "account_unavailable")
-    if data == "balance":
+    if data in {"legal_documents", "legal_accept_current"}:
+        from app.telegram.legal import accept_current
+
+        settings = get_settings()
+        if not settings.terms_url or not settings.privacy_policy_url:
+            raise HTTPException(503, "legal_not_configured")
+        if data == "legal_accept_current":
+            if dialog.state != "legal_review" or dialog.data.get("version") != settings.legal_document_version:
+                raise HTTPException(409, "consent_required")
+            await accept_current(db, partner)
+            reset(dialog)
+            await show(event, "Согласие с текущей версией документов сохранено.")
+        else:
+            dialog.state, dialog.data = "legal_review", {"version": settings.legal_document_version}
+            await show(
+                event,
+                f"Условия и политика, версия {settings.legal_document_version}.",
+                keyboard(
+                    ("Условия", settings.terms_url),
+                    ("Политика", settings.privacy_policy_url),
+                    ("Принимаю оба документа", "legal_accept_current"),
+                ),
+            )
+    elif data == "trials":
+        from app.catalog.models import Model
+        from app.telegram.models import TrialEntitlement
+
+        used = await db.get(TrialEntitlement, user)
+        remaining = 2 - used.used if used else 2
+        models = (
+            await db.execute(
+                select(Model).where(Model.modality == "video", Model.status == "production").order_by(Model.slug)
+            )
+        ).scalars()
+        buttons = [(m.name, f"trial_model:{m.id}") for m in models] if remaining else []
+        await show(
+            event,
+            f"Осталось бесплатных запусков: {remaining} из 2. "
+            "Доступны все параметры включённых видеомоделей. Повторная регистрация не восстанавливает тесты.",
+            keyboard(*buttons),
+        )
+    elif data.startswith("trial_model:"):
+        from app.catalog.models import Model
+
+        model = await db.get(Model, str(UUID(data.split(":")[1])))
+        if not model or model.modality != "video" or model.status != "production":
+            raise HTTPException(404, "model_not_available")
+        dialog.state, dialog.data = "trial_prompt", {"model": model.slug}
+        await show(
+            event,
+            f"Модель: {model.name}. Отправьте описание видео. "
+            "Для любых настроек и референсов отправьте JSON запроса videos/generations "
+            "текстом или файлом .json до 1 МБ. Поля передаются без урезания; model уже выбран.",
+        )
+    elif data == "balance":
         reset(dialog)
         await show(
             event,
@@ -373,7 +429,29 @@ async def support_callback(event, db, dialog, data: str, partner=None) -> None:
 
 
 async def admin_callback(event, db, dialog, data: str) -> None:
-    if data == "admin_menu":
+    if data == "admin_ops":
+        from app.telegram.admin_forms import menu
+
+        reset(dialog)
+        await menu(event)
+    elif data.startswith("admin_form:"):
+        from app.telegram.admin_forms import start
+
+        await start(event, dialog, data.split(":", 1)[1])
+    elif data == "admin_catalog_import":
+        await ask_confirmation(
+            event,
+            db,
+            "admin_catalog_import",
+            {},
+            "Сверить live-каталог и импортировать reviewed модели/себестоимость? "
+            "Новые модели останутся черновиками. Розничные цены сохраняются.",
+        )
+    elif data.startswith(("admin_catalog:", "admin_threshold_history:", "admin_reconcile_list", "admin_credentials:")):
+        from app.telegram.admin_forms import history
+
+        await history(event, db, data)
+    elif data == "admin_menu":
         reset(dialog)
         await show(
             event,
@@ -382,6 +460,7 @@ async def admin_callback(event, db, dialog, data: str) -> None:
                 ("Заявки", "admin_apps:0"),
                 ("Платежи", "admin_payments:0"),
                 ("Казначейство", "admin_stw"),
+                ("Цены, возвраты и сверки", "admin_ops"),
                 ("Поддержка", "admin_support"),
                 ("Управление аккаунтом", "admin_account"),
                 ("Состояние", "admin_health"),
@@ -508,9 +587,17 @@ async def admin_callback(event, db, dialog, data: str) -> None:
         from app.health.router import readiness
 
         result = json.loads((await readiness(db)).body)
+        from app.providers.models import ProviderCircuit
+
+        circuits = (await db.execute(select(ProviderCircuit))).scalars()
+        details = "\n".join(
+            f"{row.provider}: {row.state}, бесплатных проверок {row.healthy_checks}/3, "
+            f"реальных проб {row.real_successes}/3"
+            for row in circuits
+        )
         await show(
             event,
-            "Состояние сервиса\n" + "\n".join(f"{k}: {v}" for k, v in result["checks"].items()),
+            "Состояние сервиса\n" + "\n".join(f"{k}: {v}" for k, v in result["checks"].items()) + "\n" + details,
             keyboard(back="admin_menu"),
         )
     elif data == "admin_account":
@@ -578,16 +665,56 @@ async def handle_message(event, db, dialog) -> None:
     if not partner and not state.startswith("admin_"):
         await home(event, db, dialog)
         return
-    if state == "search":
+    if state == "admin_form_input":
+        from app.telegram.admin_forms import input_value
+
+        await input_value(event, db, dialog, value)
+    elif state == "trial_prompt":
+        import json
+
+        from app.contracts.registry import validate_request
+
+        if event.document:
+            from app.support.service import BoundedBuffer
+
+            if (event.document.file_size or 0) > 1024 * 1024:
+                raise ValueError("trial_file_too_large")
+            output = BoundedBuffer(1024 * 1024)
+            await event.bot.download(event.document, destination=output)
+            value = output.getvalue().decode("utf-8")
+        body = json.loads(value) if value.startswith("{") else {"prompt": value}
+        if not isinstance(body, dict):
+            raise ValueError("invalid_request")
+        if not value:
+            raise ValueError("empty_prompt")
+        body["model"] = dialog.data["model"]
+        body = validate_request("videos/generations", body)
+        reset(dialog)
+        await ask_confirmation(
+            event,
+            db,
+            "trial",
+            {"partner_id": partner.id, "body": body},
+            f"Запустить бесплатный тест {body['model']}? Стоимость 0 ₽. "
+            "Будет использован один из двух пробных запусков.",
+        )
+    elif state == "search":
         identifier = str(UUID(value))
         row = (
             await db.execute(select(Generation).where(Generation.id == identifier, Generation.partner_id == partner.id))
         ).scalar_one_or_none()
         if row:
+            from app.telegram.trials import download_link
+
             charge = row.actual_charge_rub if row.actual_charge_rub is not None else row.partner_price_rub
+            result = (
+                "\n" + download_link(row)
+                if row.status == "completed" and (row.request_payload or {}).get("trial_telegram_id")
+                else ""
+            )
             await show(
                 event,
-                f"Генерация {row.id}\n{status_label(row.status)}\nСумма: {charge:.2f} ₽",
+                f"Генерация {row.id}\n{status_label(row.status)}\nСумма: {charge:.2f} ₽{result}",
             )
         else:
             payment = (

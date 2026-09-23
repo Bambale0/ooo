@@ -30,6 +30,14 @@
   счета/проверка оплаты/зачисление, история и поиск UUID, перенос/отключение/удаление
   аккаунта, поддержка с файлами до 20 МБ, ответы/закрытие обращений и notification outbox.
   Состояния и подтверждения переживают перезапуск; роль и владелец проверяются повторно.
+- Lifetime trial: два бесплатных запуска видеомоделей на Telegram ID, все native
+  параметры, нулевая retail charge при учёте upstream cost и реальном capital gate.
+  Admin forms: цены/пороги, refund/withdrawal/corrections, сверки и provider/model configuration.
+  Пороги low-margin имеют три уровня и append-only history; смена документов создаёт
+  устойчивое уведомление и требует явного подтверждения отображённой версии в кабинете.
+- Durable provider circuit: бесплатные health checks, три успешные реальные recovery
+  задачи по одной, ускоренное повторное отключение; принятые задачи продолжают polling.
+  Точные условия описаны в [cabinet/recovery](CABINET_AND_RECOVERY.md).
 - Подделка Telegram-согласия через открытый HTTP endpoint закрыта. HTTP-подача заявки
   требует admin auth; обычная регистрация идёт через Telegram. Старый Telegram ID
   освобождается при удалении для новой заявки, финансовая история сохраняется.
@@ -48,7 +56,7 @@
 [контракты](ARGOLINK_CONTRACT.md), [финансовая модель](TREASURY.md),
 [эксплуатация](OPERATIONS.md), [backup/DR](../ops/backup/README.md).
 
-- PostgreSQL 16: миграции с чистой БД до `20260923_0019`, `alembic check` без drift.
+- PostgreSQL 16: миграции до `20260923_0020`, `alembic check` без drift.
 - Unit/integration suite включает финансовые повторы, конкуренцию PostgreSQL,
   crash/restart generation flow, клиентский SSE disconnect, tenant isolation,
   FX/кошелёк, перенос аккаунта и подтверждения бота. Итоговый результат запуска
@@ -82,8 +90,9 @@
 5. Опубликованная документация Gemini Omni не сопровождается моделью/ценой в текущем
    live-каталоге. Модель не включена в resale и не получила выдуманный тариф.
 
-Полный объём продуктовой спецификации не объявлен реализованным: оставшиеся
-расширенные требования перечислены в [implementation status](../IMPLEMENTATION_STATUS.md).
+Покрытие реализации и ограничения проверок перечислены в
+[implementation status](../IMPLEMENTATION_STATUS.md). Зелёный CI не подтверждает
+production SLO, внешнюю инфраструктуру или ещё не прошедшие live режимы upstream.
 
 Мерж в main запускает существующий production workflow. В рамках этой задачи
 изменения публикуются в PR, без мержа и без запуска production.

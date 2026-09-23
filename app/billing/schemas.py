@@ -74,3 +74,10 @@ class ProfitWithdrawalCreate(BaseModel):
     idempotency_key: str = Field(min_length=8, max_length=160)
     override_reason: str | None = Field(default=None, min_length=10, max_length=2000)
     correction_for_id: str | None = None
+
+
+class MarginThresholdCreate(BaseModel):
+    model: str | None = None
+    mode: str | None = None
+    resolution: str | None = None
+    value: Decimal | None = Field(default=None, ge=0, le=100, max_digits=5, decimal_places=2)

@@ -103,3 +103,5 @@ TEST_POSTGRES_DATABASE_URL направляйте только в отдельн
 Не запускайте pytest и queue workers на одной тестовой БД. WAL drill:
 `docker build -t ooo-pitr-check ops/backup/postgres` и `python ops/smoke/pitr.py`.
 Он создаёт только собственные временные контейнеры/volumes без сетевого доступа.
+
+Поведение кабинета, lifetime trials, provider circuit и low-margin настройки: [cabinet/recovery](CABINET_AND_RECOVERY.md). Для automatic recovery нужен generation worker; для legal/financial notices — Telegram process.

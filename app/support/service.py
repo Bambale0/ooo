@@ -17,8 +17,12 @@ MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
 
 
 class BoundedBuffer(io.BytesIO):
+    def __init__(self, limit=MAX_ATTACHMENT_BYTES):
+        super().__init__()
+        self.limit = limit
+
     def write(self, data: bytes) -> int:
-        if self.tell() + len(data) > MAX_ATTACHMENT_BYTES:
+        if self.tell() + len(data) > self.limit:
             raise HTTPException(422, "attachment_too_large")
         return super().write(data)
 

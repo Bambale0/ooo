@@ -297,6 +297,9 @@ async def fail(db, generation, attempt, code, *, definitive):
         return
     generation.status = attempt.status = "failed" if definitive else "reconciliation_required"
     generation.public_error_code = attempt.public_error_code = code
+    from app.providers.circuit import observe
+
+    await observe(db, generation)
     if definitive:
         await release_generation_reserves(db, generation, reason="Request definitively rejected")
         await ensure_terminal_webhook_event(db, generation)

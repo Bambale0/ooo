@@ -11,12 +11,31 @@ from app.billing.schemas import (
     CoverageRead,
     LedgerEntryRead,
     ManualAdjustmentCreate,
+    MarginThresholdCreate,
     ProfitWithdrawalCreate,
 )
 from app.billing.service import apply_cost_coverage_change, apply_partner_balance_change
 from app.infrastructure.security import hash_secret
 
 router = APIRouter()
+
+
+@router.post("/margin-thresholds", dependencies=[Depends(require_admin)])
+async def update_margin_threshold(payload: MarginThresholdCreate, db: DbSession):
+    from app.billing.margins import set_threshold
+
+    row = await set_threshold(db, actor="admin_api", **payload.model_dump())
+    return {"id": row.id, "scope": row.scope, "old_value": row.old_value, "new_value": row.new_value}
+
+
+@router.get("/margin-thresholds", dependencies=[Depends(require_admin)])
+async def read_margin_threshold_history(db: DbSession, before_id: int | None = None):
+    from app.billing.models import MarginThresholdHistory
+
+    query = select(MarginThresholdHistory).order_by(MarginThresholdHistory.id.desc()).limit(100)
+    if before_id is not None:
+        query = query.where(MarginThresholdHistory.id < before_id)
+    return list((await db.execute(query)).scalars())
 
 
 @router.post("/manual-adjustments", response_model=LedgerEntryRead, dependencies=[Depends(require_admin)])

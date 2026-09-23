@@ -38,6 +38,26 @@ class WebhookDeliveryOutcome:
 
 
 async def ensure_terminal_webhook_event(db: AsyncSession, generation: Generation) -> WebhookEvent | None:
+    from app.providers.circuit import observe
+
+    await observe(db, generation)
+    trial_user = (generation.request_payload or {}).get("trial_telegram_id")
+    if trial_user and generation.status in _TERMINAL_STATUSES:
+        from app.accounts.models import Partner
+        from app.telegram.service import notify
+        from app.telegram.trials import download_link
+
+        owner = await db.get(Partner, generation.partner_id)
+        if owner and owner.status == "active":
+            detail = (
+                download_link(generation) if generation.status == "completed" else _human_message(generation.status)
+            )
+            await notify(
+                db,
+                owner.telegram_id,
+                f"Пробная генерация {generation.id}: {generation.status}.\n{detail}",
+                f"trial:{generation.id}:{generation.status}",
+            )
     if generation.status not in _TERMINAL_STATUSES or not generation.webhook_url_snapshot:
         return None
 

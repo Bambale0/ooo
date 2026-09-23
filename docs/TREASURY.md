@@ -64,3 +64,9 @@ An uncertain Crypto Pay create is `creation_unknown`: refresh only looks for the
 already-created invoice. It cannot send another create automatically. If necessary,
 admin `POST /api/v1/payments/invoices/{id}/reconcile` takes `provider_invoice_id`
 and a reason; the service re-reads Crypto Pay and checks payment payload/amount.
+
+Low-margin incidents use a configurable threshold (default 30%) with configuration,
+model and global precedence. Changes are append-only and only affect subsequent
+incident evaluation. A positive margin never gets blocked by this alert threshold.
+Lifetime bot trials reserve/settle procurement through the same cash gate with
+zero retail rates. Their costs remain owner expenses, not partner charges.

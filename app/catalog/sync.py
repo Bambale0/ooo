@@ -7,7 +7,6 @@ from sqlalchemy import select
 
 from app.catalog.models import Model, PartnerPrice, PartnerPriceHistory
 from app.contracts.registry import CATALOG, MODELS, OBSERVATIONS
-from app.infrastructure.config import get_settings
 from app.providers.http_client import get_provider_http_client
 from app.providers.models import ProviderModelCapability
 
@@ -67,6 +66,10 @@ async def import_reviewed_catalog(db):
     drift = await check_catalog_drift()
     if drift["added"] or drift["removed"] or drift["changed"]:
         raise HTTPException(409, {"code": "catalog_review_required", **drift})
+    from app.billing.fx import current_fx
+    from app.billing.fx import snapshot as fx_snapshot
+
+    fx_data = await current_fx(db)
     created, updated_costs = [], []
     for slug, entry in MODELS.items():
         model = (await db.execute(select(Model).where(Model.slug == slug).with_for_update())).scalar_one_or_none()
@@ -110,7 +113,8 @@ async def import_reviewed_catalog(db):
                         old_provider_cost_usdt=price.provider_cost_usdt,
                         new_provider_cost_usdt=cost,
                         billing_unit=unit,
-                        rub_per_usdt_snapshot=get_settings().rub_per_usdt,
+                        rub_per_usdt_snapshot=fx_data["rate"],
+                        fx_snapshot=fx_snapshot(fx_data),
                     )
                 )
                 price.provider_cost_usdt, price.billing_unit = cost, unit

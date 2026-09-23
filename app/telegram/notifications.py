@@ -54,9 +54,11 @@ async def notification_loop(bot) -> None:
         try:
             if last_financial_tick is None or datetime.now(UTC) - last_financial_tick >= timedelta(seconds=60):
                 from app.billing.incidents import financial_tick
+                from app.telegram.legal import document_notices
 
                 async with SessionLocal() as db:
                     await financial_tick(db)
+                    await document_notices(db)
                     await db.commit()
                 last_financial_tick = datetime.now(UTC)
         except Exception:

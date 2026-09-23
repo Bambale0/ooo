@@ -72,6 +72,107 @@ async def partner(db, user="123"):
     return row
 
 
+async def test_document_change_notice_dedup_and_explicit_acceptance(cabinet, db_session, monkeypatch):
+    from app.telegram.legal import document_notices, needs_acceptance
+
+    feed, _ = cabinet
+    owner = await partner(db_session)
+    monkeypatch.setattr(get_settings(), "terms_url", "https://example.org/terms")
+    monkeypatch.setattr(get_settings(), "privacy_policy_url", "https://example.org/privacy")
+    await document_notices(db_session)
+    await document_notices(db_session)
+    await db_session.commit()
+    assert (await db_session.execute(select(func.count()).select_from(BotNotification))).scalar() == 1
+    await feed(callback="legal_accept_current")
+    assert await needs_acceptance(db_session, owner)
+    await feed(callback="legal_documents")
+    await feed(callback="legal_accept_current")
+    assert not await needs_acceptance(db_session, owner)
+    await feed(callback="legal_documents")
+    monkeypatch.setattr(get_settings(), "legal_document_version", "new-version")
+    await feed(callback="legal_accept_current")
+    assert await needs_acceptance(db_session, owner)  # stale screen cannot accept unseen documents
+    await document_notices(db_session)
+    await db_session.commit()
+    assert (await db_session.execute(select(func.count()).select_from(BotNotification))).scalar() == 2
+
+
+async def test_admin_financial_form_is_role_bound_confirmed_and_idempotent(cabinet, db_session):
+    from app.billing.models import LedgerEntry
+
+    feed, _ = cabinet
+    owner = await partner(db_session)
+    await feed(callback="admin_form:adjustment")
+    assert (await db_session.execute(select(func.count()).select_from(BotAction))).scalar() == 0
+    await feed(user=999, callback="admin_form:adjustment")
+    for value in (owner.id, "25.30", "Подтверждённая ручная корректировка"):
+        await feed(user=999, text=value)
+    action = (await db_session.execute(select(BotAction))).scalar_one()
+    assert owner.balance_rub == Decimal(1000)
+    await feed(user=123, callback=f"confirm:{action.id}")
+    assert owner.balance_rub == Decimal(1000)
+    await feed(user=999, callback=f"confirm:{action.id}")
+    await feed(user=999, callback=f"confirm:{action.id}")
+    assert owner.balance_rub == Decimal("1025.30")
+    assert (await db_session.execute(select(func.count()).select_from(LedgerEntry))).scalar() == 1
+
+
+async def test_admin_provider_key_form_never_persists_or_echoes_plaintext(cabinet, db_session, monkeypatch):
+    import json
+
+    from app.providers.models import ProviderCredential
+
+    feed, _ = cabinet
+    owner = await partner(db_session)
+    probe = AsyncMock(return_value=True)
+    monkeypatch.setattr("app.providers.argolink.ArgoLinkAdapter.validate_key", probe)
+    await feed(user=999, callback="admin_form:credential")
+    value = "synthetic-upstream-secret-for-cabinet-test"
+    for text in ("partner", owner.id, "Основной", value):
+        methods = await feed(user=999, text=text)
+    action = (await db_session.execute(select(BotAction))).scalar_one()
+    assert value not in json.dumps(action.payload)
+    assert all(value not in str(getattr(method, "text", "")) for method in methods)
+    assert value not in json.dumps((await db_session.get(BotDialog, "999")).data)
+    await feed(user=999, callback=f"confirm:{action.id}")
+    await feed(user=999, callback=f"confirm:{action.id}")
+    credential = (await db_session.execute(select(ProviderCredential))).scalar_one()
+    assert credential.partner_id == owner.id and credential.encrypted_api_key != value
+    assert probe.await_count == 1
+
+
+async def test_trial_bot_confirmation_is_durable_and_does_not_create_api_key(cabinet, db_session, monkeypatch):
+    from test_native_inference import setup
+
+    from app.catalog.models import Model
+    from app.generations.models import Generation
+    from app.telegram.models import TrialEntitlement
+
+    feed, _ = cabinet
+    owner, _, upstream = await setup(
+        db_session,
+        monkeypatch,
+        lambda r: None,
+        model="grok-imagine-video-1.5",
+        category="video",
+        rates=[("default", "720p", "second", Decimal(10), Decimal(".05"))],
+    )
+    owner.telegram_id, owner.balance_rub = "123", Decimal(0)
+    await db_session.commit()
+    model = (await db_session.execute(select(Model))).scalar_one()
+    keys_before = (await db_session.execute(select(func.count()).select_from(ApiKey))).scalar()
+    await feed(callback=f"trial_model:{model.id}")
+    await feed(text="Спокойная анимация с плавным движением камеры")
+    action = (await db_session.execute(select(BotAction))).scalar_one()
+    await feed(callback=f"confirm:{action.id}")
+    await feed(callback=f"confirm:{action.id}")
+    generation = (await db_session.execute(select(Generation))).scalar_one()
+    assert generation.partner_price_rub == 0 and generation.status == "queued"
+    assert (await db_session.get(TrialEntitlement, "123")).used == 1
+    assert (await db_session.execute(select(func.count()).select_from(ApiKey))).scalar() == keys_before
+    await upstream.aclose()
+
+
 async def test_registration_survives_restart_and_records_consents(cabinet, db_session, monkeypatch):
     feed, _ = cabinet
     monkeypatch.setattr(get_settings(), "terms_url", "https://example.org/terms")
