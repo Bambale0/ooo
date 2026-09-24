@@ -483,3 +483,255 @@ async def test_late_provider_success_recharges_released_reserves_exactly_once(
     )
     events = list(event_result.scalars().all())
     assert sorted(event.event_type for event in events) == ["completed", "timeout"]
+
+
+class _SubmitRetryAfterAdapter(_CountingProviderAdapter):
+    async def submit_generation(self, payload):
+        from app.providers.base import ProviderAdapterError
+
+        self.submit_calls += 1
+        raise ProviderAdapterError(
+            "provider_temporarily_unavailable",
+            "argolink_rate_limited",
+            retryable=True,
+            retry_after_seconds=17.0,
+        )
+
+    def normalize_error(self, error: Exception):
+        return error
+
+
+class _AmbiguousSubmitAdapter(_CountingProviderAdapter):
+    async def submit_generation(self, payload):
+        from app.providers.base import ProviderAdapterError
+
+        self.submit_calls += 1
+        raise ProviderAdapterError(
+            "provider_temporarily_unavailable",
+            "argolink_submit_outcome_unknown",
+            retryable=False,
+        )
+
+    def normalize_error(self, error: Exception):
+        return error
+
+
+class _PollRetryAfterAdapter(_CountingProviderAdapter):
+    async def poll_generation(self, provider_task_id: str):
+        from app.providers.base import ProviderAdapterError
+
+        raise ProviderAdapterError(
+            "provider_temporarily_unavailable",
+            "argolink_rate_limited",
+            retryable=True,
+            retry_after_seconds=23.0,
+        )
+
+    def normalize_error(self, error: Exception):
+        return error
+
+
+async def test_submit_retry_after_defers_without_releasing_partner_reserve(db_session, monkeypatch):
+    from app.generations.service import dispatch_generation_to_provider
+    from app.infrastructure.retry import utc_now
+
+    partner = Partner(
+        telegram_id=f"retry-after-submit-{uuid4()}",
+        company_name="Retry After Partner",
+        project_name="Retry After Bot",
+        balance_rub=Decimal("100.00"),
+    )
+    db_session.add(partner)
+    await db_session.flush()
+
+    generation = Generation(
+        partner_id=partner.id,
+        model_id="retry-after-model",
+        model_slug="seedance-2.5",
+        mode="text_to_video",
+        resolution="720p",
+        duration_seconds=5,
+        idempotency_key=f"retry-after-submit-{uuid4()}",
+        partner_price_rub=Decimal("80.00"),
+        prompt="retry after submit",
+        status="queued",
+    )
+    db_session.add(generation)
+    await db_session.flush()
+    await apply_partner_balance_change(
+        db=db_session,
+        partner=partner,
+        amount_rub=Decimal("-80.00"),
+        operation_type="generation_reserve",
+        idempotency_key=f"generation-reserve:{generation.id}",
+        generation_id=generation.id,
+        allow_negative=False,
+    )
+
+    adapter = _SubmitRetryAfterAdapter()
+
+    async def get_adapter(db, partner_id: str, provider: str = "argolink"):
+        return adapter
+
+    monkeypatch.setattr("app.generations.service.get_partner_provider_adapter", get_adapter)
+    monkeypatch.setattr("app.generations.service.get_provider_rate_limiter", lambda *args: _NoopRateLimiter())
+
+    before = utc_now()
+    attempt = await dispatch_generation_to_provider(db_session, generation)
+    after = utc_now()
+
+    assert attempt is not None
+    assert adapter.submit_calls == 1
+    assert attempt.status == "retry_pending"
+    assert generation.status == "queued"
+    assert attempt.next_attempt_at is not None
+    assert before.timestamp() + 16.5 <= attempt.next_attempt_at.timestamp()
+    assert attempt.next_attempt_at.timestamp() <= after.timestamp() + 17.5
+
+    await db_session.refresh(partner)
+    assert Decimal(partner.balance_rub) == Decimal("20.00")
+
+    ledger = list(
+        (
+            await db_session.execute(
+                select(LedgerEntry).where(LedgerEntry.generation_id == generation.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert [(entry.operation_type, Decimal(entry.amount_rub)) for entry in ledger] == [
+        ("generation_reserve", Decimal("-80.00"))
+    ]
+
+
+async def test_ambiguous_submit_enters_reconciliation_without_replay_or_refund(db_session, monkeypatch):
+    from app.generations.service import dispatch_generation_to_provider
+
+    partner = Partner(
+        telegram_id=f"ambiguous-submit-{uuid4()}",
+        company_name="Ambiguous Submit Partner",
+        project_name="Ambiguous Submit Bot",
+        balance_rub=Decimal("100.00"),
+    )
+    db_session.add(partner)
+    await db_session.flush()
+
+    generation = Generation(
+        partner_id=partner.id,
+        model_id="ambiguous-submit-model",
+        model_slug="seedance-2.5",
+        mode="text_to_video",
+        resolution="720p",
+        duration_seconds=5,
+        idempotency_key=f"ambiguous-submit-{uuid4()}",
+        partner_price_rub=Decimal("80.00"),
+        prompt="ambiguous submit",
+        status="queued",
+    )
+    db_session.add(generation)
+    await db_session.flush()
+    await apply_partner_balance_change(
+        db=db_session,
+        partner=partner,
+        amount_rub=Decimal("-80.00"),
+        operation_type="generation_reserve",
+        idempotency_key=f"generation-reserve:{generation.id}",
+        generation_id=generation.id,
+        allow_negative=False,
+    )
+
+    adapter = _AmbiguousSubmitAdapter()
+
+    async def get_adapter(db, partner_id: str, provider: str = "argolink"):
+        return adapter
+
+    monkeypatch.setattr("app.generations.service.get_partner_provider_adapter", get_adapter)
+    monkeypatch.setattr("app.generations.service.get_provider_rate_limiter", lambda *args: _NoopRateLimiter())
+
+    first = await dispatch_generation_to_provider(db_session, generation)
+    second = await dispatch_generation_to_provider(db_session, generation)
+
+    assert first is not None
+    assert second is not None
+    assert first.id == second.id
+    assert adapter.submit_calls == 1
+    assert generation.status == "reconciliation_required"
+    assert generation.public_error_code == "submission_outcome_unknown"
+    assert first.status == "reconciliation_required"
+    assert first.provider_task_id is None
+    assert first.next_attempt_at is None
+
+    await db_session.refresh(partner)
+    assert Decimal(partner.balance_rub) == Decimal("20.00")
+
+    ledger = list(
+        (
+            await db_session.execute(
+                select(LedgerEntry).where(LedgerEntry.generation_id == generation.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert [(entry.operation_type, Decimal(entry.amount_rub)) for entry in ledger] == [
+        ("generation_reserve", Decimal("-80.00"))
+    ]
+
+
+async def test_poll_retry_after_preserves_provider_task_and_defers_next_poll(db_session, monkeypatch):
+    from app.generations.service import poll_generation_provider
+    from app.infrastructure.retry import utc_now
+
+    partner = Partner(
+        telegram_id=f"retry-after-poll-{uuid4()}",
+        company_name="Poll Retry Partner",
+        project_name="Poll Retry Bot",
+    )
+    db_session.add(partner)
+    await db_session.flush()
+
+    generation = Generation(
+        partner_id=partner.id,
+        model_id="poll-retry-model",
+        model_slug="seedance-2.5",
+        mode="text_to_video",
+        resolution="720p",
+        duration_seconds=5,
+        idempotency_key=f"retry-after-poll-{uuid4()}",
+        partner_price_rub=Decimal("80.00"),
+        prompt="retry after poll",
+        status="processing",
+    )
+    db_session.add(generation)
+    await db_session.flush()
+
+    attempt = ProviderAttempt(
+        generation_id=generation.id,
+        provider="argolink",
+        provider_task_id="existing-provider-task",
+        status="processing",
+        next_poll_at=utc_now(),
+    )
+    db_session.add(attempt)
+    await db_session.flush()
+
+    adapter = _PollRetryAfterAdapter()
+
+    async def get_adapter(db, partner_id: str, provider: str = "argolink", **kwargs):
+        return adapter
+
+    monkeypatch.setattr("app.generations.service.get_partner_provider_adapter", get_adapter)
+    monkeypatch.setattr("app.generations.service.get_provider_rate_limiter", lambda *args: _NoopRateLimiter())
+
+    before = utc_now()
+    result = await poll_generation_provider(db_session, generation)
+    after = utc_now()
+
+    assert result.status == "processing"
+    assert attempt.status == "retry_pending"
+    assert attempt.provider_task_id == "existing-provider-task"
+    assert attempt.next_attempt_at is not None
+    assert before.timestamp() + 22.5 <= attempt.next_attempt_at.timestamp()
+    assert attempt.next_attempt_at.timestamp() <= after.timestamp() + 23.5
+    assert attempt.retry_count == 1
