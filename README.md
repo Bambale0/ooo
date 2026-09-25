@@ -592,7 +592,7 @@ Production-like test contour через Docker Compose:
 docker compose up --build
 ```
 
-После старта API доступен на `http://localhost:8000`, Nginx proxy — на `http://localhost:8080`, OpenAPI docs — на `/docs`.
+После старта API доступен на `http://localhost:8000`, Nginx proxy — на `http://localhost:8080`. Публичный `/docs` — это только минимальная инструкция подключения моделей и base URL; полный OpenAPI/Swagger публично не публикуется.
 
 Миграции:
 
@@ -716,3 +716,15 @@ Implementation epics и README не должны самовольно менят
 ---
 
 Проект развивается specification-first: сначала фиксируется поведение и acceptance criteria, затем оно реализуется небольшими проверяемыми PR.
+
+
+### Public documentation boundary
+
+Открытый `/docs` намеренно минимален. Без авторизации он содержит только:
+
+- production API base URL;
+- partner authentication header;
+- список/ID включённых production-моделей;
+- endpoint family для подключения каждой модели.
+
+Полный OpenAPI, Swagger/ReDoc, billing/admin/provider internals, webhook/retry/reconciliation детали публично не выдаются. Это отдельная граница безопасности продукта, а не отсутствие документации в коде.
