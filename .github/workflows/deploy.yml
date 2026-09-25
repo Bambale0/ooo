@@ -68,6 +68,21 @@ jobs:
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/deploy_key ~/.ssh/known_hosts
 
+      - name: Package and upload verified release configuration
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_HOST"
+          bundle="/tmp/neironych-${RELEASE_SHA}.tar.gz"
+          tar -czf "$bundle" \
+            docker-compose.prod.yml \
+            docker-compose.pitr.yml \
+            nginx/production.conf \
+            ops/backup/postgres
+          scp -o BatchMode=yes -i ~/.ssh/deploy_key \
+            "$bundle" "deploy@$DEPLOY_HOST:/tmp/neironych-${RELEASE_SHA}.tar.gz"
+
       - name: Deploy verified revision with automatic rollback
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
@@ -80,17 +95,37 @@ jobs:
 
           REPO="ghcr.io/${REPOSITORY,,}"
           TAG="${RELEASE_SHA}"
-          COMPOSE_DIR="/opt/neironych"
-          REVISION_FILE="${COMPOSE_DIR}/REVISION"
+          ROOT="/opt/neironych"
+          RELEASES="${ROOT}/releases"
+          SHARED="${ROOT}/shared"
+          RELEASE_DIR="${RELEASES}/${TAG}"
+          REVISION_FILE="${ROOT}/REVISION"
           PREVIOUS_TAG="$(cat "${REVISION_FILE}" 2>/dev/null || true)"
+          BUNDLE="/tmp/neironych-${TAG}.tar.gz"
 
-          cd "${COMPOSE_DIR}"
-          test -f .backup.env
+          mkdir -p "${RELEASES}" "${SHARED}" "${RELEASE_DIR}" "${SHARED}/nginx"
+          test -f "${BUNDLE}"
+          test -f "${SHARED}/.env"
+          test -f "${SHARED}/.backup.env"
+          test -f "${SHARED}/nginx/ssl/fullchain.pem"
+          test -f "${SHARED}/nginx/ssl/privkey.pem"
 
-          compose() {
+          tar -xzf "${BUNDLE}" -C "${RELEASE_DIR}"
+          rm -f "${BUNDLE}"
+
+          ln -sfn "${SHARED}/.env" "${RELEASE_DIR}/.env"
+          ln -sfn "${SHARED}/.backup.env" "${RELEASE_DIR}/.backup.env"
+          mkdir -p "${RELEASE_DIR}/nginx"
+          ln -sfn "${SHARED}/nginx/ssl" "${RELEASE_DIR}/nginx/ssl"
+
+          compose_for() {
+            release_dir="$1"
+            shift
             docker compose \
-              -f "${COMPOSE_DIR}/docker-compose.prod.yml" \
-              -f "${COMPOSE_DIR}/docker-compose.pitr.yml" \
+              --project-name neironych \
+              --env-file "${release_dir}/.env" \
+              -f "${release_dir}/docker-compose.prod.yml" \
+              -f "${release_dir}/docker-compose.pitr.yml" \
               "$@"
           }
 
@@ -113,11 +148,18 @@ jobs:
               return 1
             fi
 
-            echo "Rolling back to ${PREVIOUS_TAG}"
+            previous_dir="${RELEASES}/${PREVIOUS_TAG}"
+            if [ ! -d "${previous_dir}" ]; then
+              echo "Previous release bundle ${previous_dir} is missing"
+              return 1
+            fi
+
+            echo "Rolling back application and runtime configuration to ${PREVIOUS_TAG}"
             export NEIRONYCH_IMAGE="${REPO}:${PREVIOUS_TAG}"
             export APP_REVISION="${PREVIOUS_TAG}"
             docker pull "${NEIRONYCH_IMAGE}"
-            compose up -d --no-build app worker webhook_worker
+            compose_for "${previous_dir}" --profile telegram up -d --no-build \
+              app worker webhook_worker telegram nginx
             verify_revision "${PREVIOUS_TAG}"
           }
 
@@ -126,13 +168,20 @@ jobs:
 
           docker pull "${NEIRONYCH_IMAGE}"
 
-          # Migrations must follow the project's expand/deploy/contract rule so the
-          # previous application image remains compatible if health verification fails.
-          compose run --rm -e APP_REVISION="${TAG}" app alembic upgrade head
+          # Keep the PITR image/config versioned with the release bundle.
+          compose_for "${RELEASE_DIR}" build postgres
 
-          compose up -d --no-build app worker webhook_worker
+          # Migrations follow expand/deploy/contract so the previous application
+          # release remains compatible if health verification forces rollback.
+          compose_for "${RELEASE_DIR}" run --rm -e APP_REVISION="${TAG}" app alembic upgrade head
+
+          # A production release includes every mandatory runtime process and the
+          # external TLS proxy, not only the API container.
+          compose_for "${RELEASE_DIR}" --profile telegram up -d --no-build \
+            app worker webhook_worker telegram nginx
 
           if verify_revision "${TAG}"; then
+            ln -sfn "${RELEASE_DIR}" "${ROOT}/current"
             printf '%s\n' "${TAG}" > "${REVISION_FILE}"
             echo "Deploy verified: revision ${TAG} is live"
             exit 0
