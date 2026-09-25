@@ -287,11 +287,12 @@
 - [ ] confirmation показывает old -> new + margin %
 - [ ] price history бессрочная
 - [ ] `/balance` работает
-- [ ] RU/EN API docs актуальны
-- [ ] OpenAPI соответствует production API
+- [ ] public `/docs` содержит только base URL, auth header, production model IDs и endpoint family
+- [ ] public `/docs` не раскрывает billing/admin/provider/webhook/reconciliation internals
+- [ ] public `/openapi.json`, Swagger и ReDoc отключены
+- [ ] RU/EN model-connection guide актуален
 - [ ] public price актуален
 - [ ] changelog актуален
-- [ ] price/API/docs/changelog обновляются атомарно
 - [ ] deprecated major API countdown работает
 
 ## 21. Support
