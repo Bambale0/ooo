@@ -49,8 +49,8 @@ jobs:
             poll_429_every: "0"
             latency_ms: "0"
           - name: retry-after
-            submit_429_every: "4"
-            poll_429_every: "5"
+            submit_429_every: "20"
+            poll_429_every: "25"
             latency_ms: "10"
 
     env:
