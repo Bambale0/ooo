@@ -139,3 +139,23 @@ other than `true` or remove it. CI continues to run while deployment remains ski
 
 This gate prevents an unconfigured repository from repeatedly attempting production SSH deploys or
 publishing a green-CI change as if infrastructure were already ready.
+
+
+## Main-branch release provenance
+
+The repository currently cannot rely on GitHub branch protection as the only release control.
+CI therefore fails closed on every `push` to `main` unless the pushed commit is associated with
+a **merged pull request whose base is `main`**.
+
+This is a release safeguard, not a replacement for server-side branch protection:
+
+- a direct push can still alter Git history if GitHub allows it;
+- the resulting main CI fails;
+- because production deployment only follows a successful main CI, that direct push cannot become an automated production release;
+- normal merged PRs continue through CI and may deploy only when the separate production arming gate is enabled.
+
+The check uses GitHub's commit-to-pull-request API with the workflow's read-only
+`GITHUB_TOKEN`. It does not require repository write permission and does not expose secrets.
+
+If GitHub plan/settings later allow mandatory branch protection, enable it as well; keep this
+check as defense in depth for release provenance.
