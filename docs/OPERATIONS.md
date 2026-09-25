@@ -18,10 +18,26 @@ ADMIN_TELEGRAM_ID и HTTPS TERMS_URL/PRIVACY_POLICY_URL с реальными о
 документами. Эти значения нельзя брать из тестов.
 
 Создайте `.backup.env` по [backup runbook](../ops/backup/README.md). Release требует
-этот файл и использует production + PITR compose. Соберите/зафиксируйте собственный
-PostgreSQL image и заранее проверьте S3 storage/permissions. Новые deployment-файлы
-должны быть доставлены в `/opt/neironych` до запуска существующего workflow;
-workflow не синхронизирует конфигурацию сервера автоматически.
+этот файл и использует production + PITR compose. Заранее проверьте S3
+storage/permissions.
+
+Production host использует разделение:
+
+```text
+/opt/neironych/
+  shared/.env
+  shared/.backup.env
+  shared/nginx/ssl/fullchain.pem
+  shared/nginx/ssl/privkey.pem
+  releases/<commit-sha>/...
+  current -> releases/<live-commit-sha>
+  REVISION
+```
+
+GitHub Actions сам доставляет в новый versioned release directory только
+несекретную конфигурацию конкретного проверенного commit: production/PITR compose,
+Nginx config и build-context PostgreSQL PITR image. Secrets, TLS private key и
+backup credentials остаются только в `shared/` на production host.
 
 ```sh
 export NEIRONYCH_IMAGE=ghcr.io/bambale0/ooo:COMMIT_SHA
@@ -30,13 +46,15 @@ docker compose -f docker-compose.prod.yml -f docker-compose.pitr.yml config -q
 docker compose -f docker-compose.prod.yml -f docker-compose.pitr.yml build postgres
 docker compose -f docker-compose.prod.yml -f docker-compose.pitr.yml up -d postgres redis
 docker compose -f docker-compose.prod.yml -f docker-compose.pitr.yml run --rm app alembic upgrade head
-docker compose -f docker-compose.prod.yml -f docker-compose.pitr.yml up -d app worker webhook_worker nginx
-docker compose -f docker-compose.prod.yml -f docker-compose.pitr.yml --profile telegram up -d telegram
+docker compose -f docker-compose.prod.yml -f docker-compose.pitr.yml --profile telegram up -d \
+  app worker webhook_worker telegram nginx
 ```
 
 Не объединяйте production compose с development compose: иначе вернутся development
 credentials и открытые DB ports. Bot polling должен иметь **один** экземпляр.
-При каждом release обновляйте также Telegram service, если профиль используется.
+Release workflow всегда обновляет API, generation worker, webhook worker, Telegram
+polling и Nginx одной проверенной revision. Bot polling должен оставаться в одном
+экземпляре.
 GitHub environment `production` требует DEPLOY_HOST, DEPLOY_SSH_KEY,
 DEPLOY_KNOWN_HOSTS, registry auth и CI для точного SHA; `latest` не используется.
 
@@ -120,8 +138,9 @@ Before arming it, verify all of the following:
 - `DEPLOY_SSH_KEY` is installed as an Actions secret;
 - `DEPLOY_KNOWN_HOSTS` contains the pinned production host key;
 - `DEPLOY_HOST` points to the intended production host;
-- `/opt/neironych` exists on the target and contains the production compose files and `.backup.env`;
-- the target has the required production `.env`, TLS certificates, Docker/Compose and recovery material;
+- `/opt/neironych/shared/.env` and `/opt/neironych/shared/.backup.env` exist on the target;
+- TLS certificate/key exist under `/opt/neironych/shared/nginx/ssl/`;
+- the target has Docker/Compose, GHCR pull access and recovery material;
 - the previous revision/rollback path is known;
 - production readiness checks and external launch gates have been explicitly approved.
 
