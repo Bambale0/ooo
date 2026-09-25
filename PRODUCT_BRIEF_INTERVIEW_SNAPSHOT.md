@@ -2343,3 +2343,25 @@ Partner changelog notification:
 - если администратор снижает low-margin threshold ниже текущей фактической маржи, настройка просто сохраняется
 - дополнительных alert, блокировок, пересчётов или иных действий не требуется
 - новая граница применяется только к последующей оценке low-margin incidents
+
+
+## 127. Public documentation exposure
+
+Подтверждено, supersedes прежнее решение о публичном полном Swagger/OpenAPI:
+
+- открытая документация без авторизации должна быть минимальной
+- публично показываем только то, что нужно партнёру для подключения моделей:
+  - production API base URL
+  - формат partner API authentication header
+  - список/ID доступных production-моделей
+  - endpoint family, необходимый для подключения каждой модели
+- полная OpenAPI schema не должна быть публично доступна
+- публичные Swagger UI / ReDoc с полным API contract отключаются
+- открытая документация не должна раскрывать:
+  - billing/ledger/admin endpoints
+  - provider internals
+  - webhook operational details
+  - retry/incident/reconciliation internals
+  - support/admin/financial APIs
+- полная техническая документация может быть доступна авторизованному партнёру внутри закрытого partner surface, но не является публичной страницей
+- `/docs` используется как минимальная публичная страница подключения моделей; `/guide` может оставаться её alias
