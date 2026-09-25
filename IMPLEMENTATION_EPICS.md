@@ -1142,29 +1142,34 @@ EPIC 05, EPIC 07.
 
 ---
 
-# EPIC 20. Public docs, OpenAPI, pricing и changelog
+# EPIC 20. Partner documentation surface
 
 ## Цель
 
-Сделать интеграцию партнёра максимально близкой к ArgoLink и документировать только реально поддерживаемое поведение.
+Дать партнёру ровно ту документацию, которая нужна для подключения моделей, не публикуя полный внутренний API contract.
 
 ## Scope
 
-Domains:
+Public docs domain:
 - `docs.нейроныч.online`;
-- raw OpenAPI: `api.нейроныч.online/openapi.json`.
+- public `/docs` содержит только model connection guide;
+- публичный full OpenAPI / Swagger / ReDoc отключён.
 
-Docs:
-- RU + EN API docs;
-- bot UI Russian only;
-- public price/changelog Russian;
-- model-specific Markdown docs;
-- documented billing units;
-- documented errors;
-- webhook signing;
-- idempotency;
-- result download responsibility;
-- API deprecation timeline.
+Public docs:
+- RU + EN;
+- production API base URL;
+- partner authentication header;
+- список/ID production-моделей;
+- endpoint family для подключения каждой модели.
+
+Не публикуются в открытой документации:
+- billing/ledger/admin endpoints;
+- provider internals;
+- webhook/retry/reconciliation operational details;
+- support/admin/financial APIs;
+- полный OpenAPI schema.
+
+Полная техническая документация при необходимости живёт только в авторизованном partner surface.
 
 ### ArgoLink compatibility
 
@@ -1174,10 +1179,11 @@ Docs:
 
 ## Acceptance criteria
 
-- docs generated from actual schemas where possible;
-- no enabled model without current docs;
-- price changes appear atomically;
-- deprecation countdown visible.
+- публичный `/docs` показывает только base URL, authentication и подключение production-моделей;
+- `/openapi.json` и публичные Swagger/ReDoc недоступны;
+- public docs не раскрывают billing/admin/provider operational contract;
+- no enabled model without current model-connection docs;
+- закрытая partner documentation остаётся доступной только после partner authentication, если она реализована.
 
 ## Зависимости
 
