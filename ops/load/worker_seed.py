@@ -15,7 +15,8 @@ from app.generations.models import Generation
 from app.infrastructure.config import get_settings
 from app.infrastructure.database import SessionLocal
 from app.infrastructure.security import encrypt_secret, hash_secret
-from app.providers.models import ProviderAttempt, ProviderCredential, ProviderOutcome
+from app.media.models import MediaAsset
+from app.providers.models import ProviderAttempt, ProviderCircuit, ProviderCredential, ProviderOutcome
 from app.webhooks.models import WebhookDelivery, WebhookEvent
 
 PREFIX = "worker-load-"
@@ -193,12 +194,16 @@ async def clean() -> None:
                     await db.execute(delete(WebhookDelivery).where(WebhookDelivery.event_id.in_(event_ids)))
                 await db.execute(delete(WebhookEvent).where(WebhookEvent.generation_id.in_(generation_ids)))
                 await db.execute(delete(ProviderOutcome).where(ProviderOutcome.generation_id.in_(generation_ids)))
+                await db.execute(delete(MediaAsset).where(MediaAsset.generation_id.in_(generation_ids)))
                 await db.execute(delete(ProviderAttempt).where(ProviderAttempt.generation_id.in_(generation_ids)))
                 await db.execute(delete(Generation).where(Generation.id.in_(generation_ids)))
 
             await db.execute(delete(ProviderCredential).where(ProviderCredential.partner_id.in_(partner_ids)))
             await db.execute(delete(Partner).where(Partner.id.in_(partner_ids)))
 
+        # The circuit is provider-global. The harness requires an isolated disposable DB,
+        # so cleanup resets synthetic breaker state between scenarios.
+        await db.execute(delete(ProviderCircuit).where(ProviderCircuit.provider == "argolink"))
         await db.commit()
 
     print(f"Removed {len(partner_ids)} synthetic worker-load partner(s).")
