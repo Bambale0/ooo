@@ -1,0 +1,127 @@
+name: Worker Resilience Smoke
+
+on:
+  pull_request:
+    paths:
+      - "ops/load/**"
+      - "app/workers/**"
+      - "app/generations/**"
+      - "app/providers/**"
+      - ".github/workflows/worker-resilience.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  worker-resilience:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: neironych
+          POSTGRES_PASSWORD: neironych # pragma: allowlist secret
+          POSTGRES_DB: neironych_worker_resilience
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U neironych -d neironych_worker_resilience"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario:
+          - name: baseline
+            submit_429_every: "0"
+            poll_429_every: "0"
+            latency_ms: "0"
+          - name: retry-after
+            submit_429_every: "4"
+            poll_429_every: "5"
+            latency_ms: "10"
+
+    env:
+      APP_ENV: test
+      DATABASE_URL: postgresql+asyncpg://neironych:neironych@127.0.0.1:5432/neironych_worker_resilience # pragma: allowlist secret
+      REDIS_URL: redis://127.0.0.1:6379/0
+      ADMIN_API_TOKEN: worker-resilience-admin-token # pragma: allowlist secret
+      PROVIDER_CREDENTIALS_MASTER_KEY: worker-resilience-master-key-at-least-32-characters # pragma: allowlist secret
+      ARGOLINK_BASE_URL: http://127.0.0.1:18080
+      ARGOLINK_SUBMIT_RPS: "200"
+      ARGOLINK_POLL_RPS: "400"
+      WORKER_BATCH_SIZE: "30"
+      WORKER_SUBMIT_CONCURRENCY: "10"
+      WORKER_POLL_CONCURRENCY: "20"
+      WORKER_INITIAL_POLL_DELAY_SECONDS: "0.05"
+      WORKER_POLL_BACKOFF_BASE_SECONDS: "0.05"
+      WORKER_POLL_BACKOFF_MAX_SECONDS: "0.25"
+      WORKER_RETRY_BASE_SECONDS: "0.05"
+      WORKER_RETRY_MAX_SECONDS: "0.25"
+      WORKER_MAX_RETRIES: "8"
+      LOAD_WORKER_TEST_ACK: I_UNDERSTAND_LOCAL_STUB_ONLY
+      LOAD_WORKER_PARTNERS: "5"
+      LOAD_WORKER_GENERATIONS_PER_PARTNER: "8"
+      LOAD_STUB_PROCESSING_POLLS: "2"
+      LOAD_STUB_RETRY_AFTER_SECONDS: "0.05"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install locked dependencies
+        run: |
+          python -m pip install --require-hashes -r requirements-dev.lock
+          python -m pip install --no-deps -e .
+
+      - name: Apply migrations
+        run: alembic upgrade head
+
+      - name: Start loopback provider stub
+        env:
+          LOAD_STUB_SUBMIT_429_EVERY: ${{ matrix.scenario.submit_429_every }}
+          LOAD_STUB_POLL_429_EVERY: ${{ matrix.scenario.poll_429_every }}
+          LOAD_STUB_LATENCY_MS: ${{ matrix.scenario.latency_ms }}
+        run: |
+          uvicorn ops.load.provider_stub:app --host 127.0.0.1 --port 18080 > /tmp/provider-stub.log 2>&1 &
+          echo $! > /tmp/provider-stub.pid
+          python - <<'PY'
+          import time
+          import httpx
+
+          deadline = time.time() + 10
+          while time.time() < deadline:
+              try:
+                  response = httpx.get("http://127.0.0.1:18080/v1/models", timeout=1)
+                  if response.status_code == 200:
+                      raise SystemExit(0)
+              except httpx.HTTPError:
+                  pass
+              time.sleep(0.2)
+          raise SystemExit("provider stub did not become ready")
+          PY
+
+      - name: Drain synthetic worker backlog
+        run: python -m ops.load.worker_scenario --timeout-seconds 60
+
+      - name: Provider stub log
+        if: always()
+        run: cat /tmp/provider-stub.log || true
