@@ -16,7 +16,10 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    if: github.event.workflow_run.conclusion == 'success'
+    # Production stays fail-closed until the repository is explicitly armed.
+    # Set repository Actions variable PRODUCTION_DEPLOY_ENABLED=true only after
+    # the production host, SSH identity, known_hosts and environment are ready.
+    if: github.event.workflow_run.conclusion == 'success' && vars.PRODUCTION_DEPLOY_ENABLED == 'true'
     environment: production
     concurrency:
       group: production-deploy
