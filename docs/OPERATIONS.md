@@ -105,3 +105,37 @@ TEST_POSTGRES_DATABASE_URL направляйте только в отдельн
 Он создаёт только собственные временные контейнеры/volumes без сетевого доступа.
 
 Поведение кабинета, lifetime trials, provider circuit и low-margin настройки: [cabinet/recovery](CABINET_AND_RECOVERY.md). Для automatic recovery нужен generation worker; для legal/financial notices — Telegram process.
+
+
+## Production deploy arming gate
+
+Production deploys are intentionally disabled by default even when CI on `main` is green.
+
+The deploy job runs only when the **repository Actions variable**
+`PRODUCTION_DEPLOY_ENABLED` is exactly `true`.
+
+Before arming it, verify all of the following:
+
+- GitHub Environment `production` exists and its required approvals/policies are configured as intended;
+- `DEPLOY_SSH_KEY` is installed as an Actions secret;
+- `DEPLOY_KNOWN_HOSTS` contains the pinned production host key;
+- `DEPLOY_HOST` points to the intended production host;
+- `/opt/neironych` exists on the target and contains the production compose files and `.backup.env`;
+- the target has the required production `.env`, TLS certificates, Docker/Compose and recovery material;
+- the previous revision/rollback path is known;
+- production readiness checks and external launch gates have been explicitly approved.
+
+Only then set:
+
+```text
+PRODUCTION_DEPLOY_ENABLED=true
+```
+
+With the gate armed, a successful CI run for `main` triggers the existing immutable-image deploy,
+readiness revision verification and automatic rollback flow.
+
+To freeze automated production deploys without editing workflow code, set the variable to any value
+other than `true` or remove it. CI continues to run while deployment remains skipped.
+
+This gate prevents an unconfigured repository from repeatedly attempting production SSH deploys or
+publishing a green-CI change as if infrastructure were already ready.
