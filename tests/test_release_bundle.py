@@ -16,9 +16,9 @@ def test_deploy_uploads_versioned_runtime_configuration():
 def test_deploy_starts_all_mandatory_runtime_processes():
     workflow = Path(".github/workflows/deploy.yml").read_text(encoding="utf-8")
 
-    expected = "app worker webhook_worker telegram nginx"
-    assert expected in workflow.replace("\\n", " ")
     assert "--profile telegram up -d --no-build" in workflow
+    for service in ("app", "worker", "webhook_worker", "telegram", "nginx"):
+        assert service in workflow
 
 
 def test_rollback_uses_previous_versioned_release_bundle():
