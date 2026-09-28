@@ -36,15 +36,20 @@ docker compose --project-directory "$PWD" --project-name ooo-preprod --env-file 
 docker compose --project-directory "$PWD" --project-name ooo-preprod --env-file .env \
   -f current/docker-compose.prod.yml -f current/docker-compose.preprod.yml run --rm app alembic upgrade head
 docker compose --project-directory "$PWD" --project-name ooo-preprod --env-file .env \
-  -f current/docker-compose.prod.yml -f current/docker-compose.preprod.yml up -d --wait app worker webhook_worker
+  -f current/docker-compose.prod.yml -f current/docker-compose.preprod.yml up -d --wait app
+docker compose --project-directory "$PWD" --project-name ooo-preprod --env-file .env \
+  -f current/docker-compose.prod.yml -f current/docker-compose.preprod.yml up -d worker webhook_worker
 # Только после настройки TELEGRAM_BOT_TOKEN, TERMS_URL, PRIVACY_POLICY_URL:
 docker compose --project-directory "$PWD" --project-name ooo-preprod --env-file .env \
   -f current/docker-compose.prod.yml -f current/docker-compose.preprod.yml --profile telegram up -d telegram
 ```
 
 На данном VPS Docker egress закрыт по умолчанию. Разрешать HTTP(S)/DNS только для
-bridge/subnet `ooo-preprod_default`; Telegram использует существующий egress tunnel.
-Не очищать общие firewall-таблицы и не выключать общий Telegram NAT.
+bridge/subnet `ooo-preprod_default`. Telegram DNS возвращает адрес, который недоступен
+с данного VPS; `TELEGRAM_API_IPV4` выбирает проверенный доступный адрес только внутри
+тестового Telegram-контейнера. Значение по умолчанию `149.154.167.220` проверено с обычной
+проверкой сертификата `api.telegram.org`. При смене адресов повторить TLS/getMe probe.
+Никакой подмены сертификатов или отключения TLS-проверки. Не очищать общие firewall-таблицы.
 
 В HTTPS server block добавить `nginx/preprod.locations.conf`, проверить `nginx -t`
 и выполнить reload. Основной `location /` не меняется. `/preprod/internal/` закрыт.
