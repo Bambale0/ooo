@@ -39,3 +39,13 @@ async def test_guide_alias_uses_same_minimal_public_scope(client):
     assert docs.status_code == 200
     assert guide.status_code == 200
     assert docs.text == guide.text
+
+
+async def test_docs_navigation_stays_in_configured_deployment(client, monkeypatch):
+    monkeypatch.setattr(get_settings(), "public_api_base_url", "https://api.example.org/preprod/")
+    for route in ("/docs", "/guide", "/prices"):
+        response = await client.get(route)
+        assert response.status_code == 200
+        assert 'href="/preprod/docs?lang=ru"' in response.text
+        assert 'href="/preprod/docs?lang=en"' in response.text
+        assert 'href="/docs?' not in response.text

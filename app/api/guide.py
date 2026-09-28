@@ -9,6 +9,7 @@ OpenAPI schema are deliberately not part of the public documentation.
 """
 
 from html import escape
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Query
 from fastapi.responses import HTMLResponse
@@ -22,8 +23,10 @@ router = APIRouter()
 
 
 def page(title: str, body: str, lang: str = "ru") -> HTMLResponse:
+    prefix = escape(urlsplit(get_settings().public_api_base_url).path.rstrip("/"), quote=True)
     language_nav = (
-        '<nav><a href="/docs?lang=ru">Русский</a> · <a href="/docs?lang=en">English</a></nav>'
+        f'<nav><a href="{prefix}/docs?lang=ru">Русский</a> · '
+        f'<a href="{prefix}/docs?lang=en">English</a></nav>'
     )
     return HTMLResponse(
         f'<!doctype html><html lang="{lang}"><meta charset="utf-8">'
