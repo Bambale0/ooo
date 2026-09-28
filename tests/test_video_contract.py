@@ -78,6 +78,18 @@ def test_seedance_last_frame_is_forwarded():
     assert body["end_image"] == {"url": "https://example.com/b.jpg"}
 
 
+def test_normalized_seedance_frame_accepts_adaptive():
+    body = video_request_body(
+        replace(
+            BASE,
+            mode="first_frame",
+            start_image="https://example.com/a.jpg",
+            aspect_ratio="adaptive",
+        )
+    )
+    assert body["aspect_ratio"] == "adaptive"
+
+
 @pytest.mark.parametrize(
     "field,value",
     [

@@ -13,7 +13,7 @@ from pathlib import Path
 
 import httpx
 
-from app.contracts.registry import CATALOG, MODELS
+from app.contracts.registry import CATALOG, MODELS, validate_request
 
 
 def money_json(text):
@@ -32,7 +32,51 @@ def quota_summary(data):
     }
 
 
+def catalog_matches(data, models):
+    """A targeted smoke reviews only selected entries, including exact prices."""
+    if not models:
+        return data.get("revision") == CATALOG["revision"]
+    live = {entry["id"]: entry for entry in data["items"]}
+    for slug in models:
+        saved, current = MODELS[slug], live.get(slug)
+        if current is None or any(saved[field] != current[field] for field in ("category", "endpoint")):
+            return False
+        effective = {key: value for key, value in current["pricing"]["effective"].items() if value is not None}
+        if effective != saved["procurement"]:
+            return False
+    return True
+
+
+def validate_budget(budget, usage):
+    if budget is None or not budget.is_finite() or budget <= 0:
+        raise SystemExit("--execute requires a finite positive --budget-usd.")
+    remaining = (usage.get("quota") or {}).get("remaining")
+    if remaining is None:
+        if usage.get("mode") != "unrestricted":
+            raise SystemExit("Cannot verify the current key quota.")
+    elif not Decimal(str(remaining)).is_finite() or budget > Decimal(str(remaining)):
+        raise SystemExit("The requested test budget exceeds the current key quota.")
+
+
+def video_smoke_request(slug, media_url, mode):
+    tier = min(MODELS[slug]["procurement"]["tiers"], key=lambda t: Decimal(str(t["price"])))
+    duration = 4 if slug.startswith("seedance") or slug == "minimax-h3" else 2 if slug == "wan-3" else 1
+    body = {
+        "model": slug,
+        "prompt": "Animate this reference with a gentle camera move.",
+        "duration": duration,
+        "resolution": tier["label"],
+    }
+    if mode == "reference":
+        body["reference_images"] = [{"url": media_url}]
+    else:
+        body["image" if slug.startswith("grok") else "start_image"] = {"url": media_url}
+    return validate_request("videos/generations", body), Decimal(str(tier["price"])) * duration
+
+
 async def run(args):
+    if args.model and set(args.model) - MODELS.keys():
+        raise SystemExit("Unknown --model; use the reviewed catalog")
     secret = json.loads(await asyncio.to_thread(Path(args.secret_file).read_text))["argolink_key"]
     report_path = Path(args.report)
     if await asyncio.to_thread(report_path.exists):
@@ -47,25 +91,24 @@ async def run(args):
     ) as client:
         before = await client.get("/v1/usage")
         before.raise_for_status()
-        report["quota_before"] = quota_summary(money_json(before.text))
+        usage_before = money_json(before.text)
+        report["quota_before"] = quota_summary(usage_before)
         save()
         catalog = await client.get("/api/catalog/v1/models?page_size=100")
         catalog.raise_for_status()
-        report["live_catalog_revision"] = catalog.json().get("revision")
+        live_catalog = money_json(catalog.text)
+        report["live_catalog_revision"] = live_catalog.get("revision")
+        report["reviewed_models"] = args.model or list(MODELS)
         save()
-        if catalog.json().get("revision") != CATALOG["revision"]:
+        if not catalog_matches(live_catalog, args.model):
             report["catalog_drift"] = True
             save()
             raise SystemExit("Catalog changed; review contracts before paid testing.")
         if not args.execute:
             return
-        if not args.reference or args.budget_usd is None or args.budget_usd <= 0:
-            raise SystemExit("--execute requires --reference JPEG/PNG and a positive --budget-usd.")
-        quota_remaining = Decimal(report["quota_before"]["remaining_usd"])
-        if args.budget_usd > quota_remaining:
-            raise SystemExit("The requested test budget exceeds the current key quota.")
-        if args.model and set(args.model) - MODELS.keys():
-            raise SystemExit("Unknown --model; use the reviewed catalog")
+        if not args.reference:
+            raise SystemExit("--execute requires --reference JPEG/PNG.")
+        validate_budget(args.budget_usd, usage_before)
         if args.protocol and (not args.model or len(args.model) != 1 or MODELS[args.model[0]]["category"] != "chat"):
             raise SystemExit("--protocol requires exactly one text --model")
         photo = await asyncio.to_thread(Path(args.reference).read_bytes)
@@ -113,16 +156,7 @@ async def run(args):
                     "images": [{"image_url": "data:" + content_type + ";base64," + base64.b64encode(photo).decode()}],
                 }
             else:
-                tier = min(p["tiers"], key=lambda t: Decimal(str(t["price"])))
-                duration = 4 if slug.startswith("seedance") or slug == "minimax-h3" else 2 if slug == "wan-3" else 1
-                estimate = Decimal(str(tier["price"])) * duration
-                body = {
-                    "model": slug,
-                    "prompt": "Animate this reference with a gentle camera move.",
-                    "duration": duration,
-                    "resolution": tier["label"],
-                    "image" if slug.startswith("grok") else "start_image": {"url": ticket["media_url"]},
-                }
+                body, estimate = video_smoke_request(slug, ticket["media_url"], args.video_mode)
             if held + estimate > args.budget_usd:
                 report["results"].append({"model": slug, "result": "budget_skipped"})
                 save()
@@ -131,6 +165,8 @@ async def run(args):
             report["reserved_estimate_usd"] = str(held)
             save()
             row = {"model": slug, "protocol": endpoint}
+            if entry["category"] == "video":
+                row.update(mode=args.video_mode, resolution=body["resolution"], duration=body["duration"])
             try:
                 response = await client.post(endpoint, json=body)
                 row.update(http_status=response.status_code, content_type=response.headers.get("content-type"))
@@ -187,10 +223,18 @@ async def run(args):
                             async for chunk in media.aiter_bytes():
                                 row["content_received"] = bool(chunk)
                                 break
+                            if (
+                                media.status_code not in {200, 206}
+                                or "video/" not in (row["content_type"] or "")
+                                or not row.get("content_received")
+                            ):
+                                row["result"] = "content_unverified"
                     pending.remove((row, task))
                     save()
             if pending:
                 await asyncio.sleep(10)
+        for row, _ in pending:
+            row["result"] = "poll_timeout"
         after = await client.get("/v1/usage")
         after.raise_for_status()
         report["quota_after"] = quota_summary(money_json(after.text))
@@ -206,6 +250,7 @@ def main():
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--reference")
     parser.add_argument("--model", action="append")
+    parser.add_argument("--video-mode", choices=["first_frame", "reference"], default="first_frame")
     parser.add_argument("--protocol", choices=["/v1/responses", "/v1/chat/completions", "/v1/messages"])
     parser.add_argument("--budget-usd", type=Decimal)
     asyncio.run(run(parser.parse_args()))

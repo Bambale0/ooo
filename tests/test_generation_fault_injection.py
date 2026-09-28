@@ -1,5 +1,6 @@
 import asyncio
 import os
+from datetime import UTC
 from decimal import Decimal
 from uuid import uuid4
 
@@ -585,8 +586,13 @@ async def test_submit_retry_after_defers_without_releasing_partner_reserve(db_se
     assert attempt.status == "retry_pending"
     assert generation.status == "queued"
     assert attempt.next_attempt_at is not None
-    assert before.timestamp() + 16.5 <= attempt.next_attempt_at.timestamp()
-    assert attempt.next_attempt_at.timestamp() <= after.timestamp() + 17.5
+    # SQLite returns UTC columns without tzinfo; timestamp() would interpret
+    # them in the machine's local zone (e.g. UTC+3) and fail outside UTC.
+    deadline = attempt.next_attempt_at
+    if deadline.tzinfo is None:
+        deadline = deadline.replace(tzinfo=UTC)
+    assert before.timestamp() + 16.5 <= deadline.timestamp()
+    assert deadline.timestamp() <= after.timestamp() + 17.5
 
     await db_session.refresh(partner)
     assert Decimal(partner.balance_rub) == Decimal("20.00")

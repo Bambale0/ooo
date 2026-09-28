@@ -4,6 +4,11 @@
 Она заменяет ранние записи о семи тестах, hash-only provider keys и заглушках кабинета.
 Production launch отдельно регулируется [чек-листом](PRODUCTION_LAUNCH_CHECKLIST.md).
 
+Обновление 28.09.2026: [проверка Seedance 2.5 с референсом](docs/SEEDANCE_REFERENCE_VERIFICATION_2026-09-28.md)
+подтвердила реальную генерацию с JPEG; исправлены контракты frame/edit и ограниченный
+smoke для unrestricted-ключей. Новый каталог провайдера содержит изменения за
+пределами Seedance; прежний результат 30/40 ниже относится к снимку от 23 сентября.
+
 | Область | Проверенный результат |
 | --- | --- |
 | Контракты | 40 моделей в reviewed catalog; text JSON/SSE, images JSON/multipart, video/reference/edit, upload tickets |

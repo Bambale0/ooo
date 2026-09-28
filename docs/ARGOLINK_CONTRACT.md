@@ -16,7 +16,7 @@ retail prices are always configured by the operator.
 | `POST /v1/messages` | Messages JSON/SSE; Bearer or `x-api-key`, forwards Anthropic version/beta headers |
 | `POST /v1/images/generations` | All 9 catalog image models, native JSON |
 | `POST /v1/images/edits` | Native JSON or multipart, including repeated image fields and masks |
-| `POST /v1/videos/generations` | All 6 catalog video models, asynchronous JSON |
+| `POST /v1/videos/generations` | All 7 reviewed catalog video models, asynchronous JSON |
 | `GET /v1/videos/{id}` | Tenant-isolated status; own request IDs |
 | `GET /v1/videos/{id}/content` | Protected MP4 stream, Range supported |
 | `POST /v1/media/uploads` | Provider upload ticket; client PUTs bytes directly to storage |
@@ -59,6 +59,31 @@ validated before reserving funds. The 2.0 family requires visual input alongside
 audio; 2.5 allows audio alone. Wan requires a prompt and supports its audio toggle.
 Grok image references are capped at 720p; its native `image` first-frame input is
 preserved, including data URLs/file IDs supported upstream.
+
+Rechecked Seedance against the provider documentation on 2026-09-28: frame modes
+accept explicit `adaptive`; the 2.0 family also accepts fixed ratios, while 2.5
+frames accept only `adaptive`. Text and ordinary reference requests still reject
+`adaptive`. Seedance 2.5 edit accepts omitted duration or integer `-1`, and omitted
+aspect ratio or `adaptive`; fixed output dimensions are rejected. Its conservative
+60-second reservation remains unchanged until actual usage is reported.
+
+For a supplied image used as a reference, send `reference_images` rather than
+`start_image`. A verified 480p request is:
+
+```json
+{
+  "model": "seedance-2.5",
+  "prompt": "Animate the poster in @Image 1 with a gentle camera move.",
+  "reference_images": [{"url": "https://your-upload-host/reference.jpg"}],
+  "duration": 4,
+  "resolution": "480p",
+  "aspect_ratio": "9:16"
+}
+```
+
+The image URL comes from an upload ticket (`POST /v1/media/uploads` followed by
+the client PUT). Image-only references add no billable reference-video seconds.
+See [the Seedance reference verification](SEEDANCE_REFERENCE_VERIFICATION_2026-09-28.md).
 
 MiniMax H3 requires a prompt, accepts first frame alone or first+last frame, and
 supports `adaptive` aspect ratio with references. Audio references need an image

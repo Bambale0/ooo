@@ -133,6 +133,63 @@ def test_aliases_preserved_and_validated_before_charge():
         validate_request("videos/generations", {**body, "reference_videos": []})
 
 
+@pytest.mark.parametrize("model", sorted(name for name in MODELS if name.startswith("seedance-")))
+@pytest.mark.parametrize("last_frame", [False, True])
+def test_seedance_frames_accept_explicit_adaptive_without_rewriting(model, last_frame):
+    body = {
+        "model": model,
+        "start_image": {"url": "https://example.org/first.jpg"},
+        "aspect_ratio": "adaptive",
+    }
+    if last_frame:
+        body["end_image"] = {"url": "https://example.org/last.jpg"}
+    assert validate_request("videos/generations", body) == body
+
+
+@pytest.mark.parametrize("ratio", ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"])
+def test_seedance_20_frames_accept_fixed_ratio_but_25_rejects_it(ratio):
+    body = {"model": "seedance-2.0", "image_url": "https://example.org/first.jpg", "ratio": ratio}
+    assert validate_request("videos/generations", body) == body
+    with pytest.raises(ValueError):
+        validate_request("videos/generations", {**body, "model": "seedance-2.5"})
+
+
+@pytest.mark.parametrize("controls", [{}, {"duration": -1}, {"seconds": -1, "ratio": "adaptive"}])
+def test_seedance_edit_inherited_dimensions_keep_conservative_reserve(controls):
+    body = {
+        "model": "seedance-2.5",
+        "prompt": "Change the lighting",
+        "omni_reference_task_type": "edit",
+        "reference_videos": [{"url": "https://example.org/clip.mp4"}],
+        **controls,
+    }
+    assert validate_request("videos/generations", body) == body
+    assert video_reserve_seconds(body) == 60
+
+
+@pytest.mark.parametrize(
+    "controls",
+    [
+        {"duration": 4},
+        {"duration": "-1"},
+        {"duration": -1.0},
+        {"aspect_ratio": "16:9"},
+    ],
+)
+def test_seedance_edit_rejects_explicit_output_dimensions(controls):
+    with pytest.raises(ValueError):
+        validate_request(
+            "videos/generations",
+            {
+                "model": "seedance-2.5",
+                "prompt": "Edit",
+                "omni_reference_task_type": "edit",
+                "reference_videos": [{"url": "https://example.org/clip.mp4"}],
+                **controls,
+            },
+        )
+
+
 @pytest.mark.parametrize(
     "field,value",
     [
