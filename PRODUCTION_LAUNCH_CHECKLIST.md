@@ -287,7 +287,9 @@
 - [ ] confirmation показывает old -> new + margin %
 - [ ] price history бессрочная
 - [ ] `/balance` работает
-- [ ] public `/docs` содержит только base URL, auth header, production model IDs и endpoint family
+- [ ] public `/docs` содержит самостоятельный inference reference: base URL, auth, production model IDs,
+  параметры/лимиты, примеры, собственные ответы/ошибки, upload → generation → status → download
+- [ ] исполняемые примеры проверены без обращения к платным сервисам; документы не обещают недоступные опции
 - [ ] public `/docs` не раскрывает billing/admin/provider/webhook/reconciliation internals
 - [ ] public `/openapi.json`, Swagger и ReDoc отключены
 - [ ] RU/EN model-connection guide актуален

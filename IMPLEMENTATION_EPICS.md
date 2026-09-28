@@ -1152,7 +1152,7 @@ EPIC 05, EPIC 07.
 
 Public docs domain:
 - `docs.нейроныч.online`;
-- public `/docs` содержит только model connection guide;
+- public `/docs` содержит самостоятельный справочник inference API (§128 product brief);
 - публичный full OpenAPI / Swagger / ReDoc отключён.
 
 Public docs:
@@ -1160,7 +1160,11 @@ Public docs:
 - production API base URL;
 - partner authentication header;
 - список/ID production-моделей;
-- endpoint family для подключения каждой модели.
+- endpoint family для подключения каждой модели;
+- параметры, типы, обязательность, defaults, лимиты и несовместимые сочетания;
+- JSON/curl/Python примеры текста, изображений, видео с референсом;
+- upload → create → status → download, SSE и клиентские правила идемпотентности;
+- собственные форматы ответов/ошибок без раскрытия первого провайдера.
 
 Не публикуются в открытой документации:
 - billing/ledger/admin endpoints;
@@ -1179,7 +1183,9 @@ Public docs:
 
 ## Acceptance criteria
 
-- публичный `/docs` показывает только base URL, authentication и подключение production-моделей;
+- публичный `/docs` позволяет интегрировать native inference API без сторонней документации;
+- параметры и примеры проверены относительно исполняемого контракта;
+- справочные примеры отделены от актуального списка включённых моделей;
 - `/openapi.json` и публичные Swagger/ReDoc недоступны;
 - public docs не раскрывают billing/admin/provider operational contract;
 - no enabled model without current model-connection docs;
