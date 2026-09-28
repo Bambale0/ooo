@@ -36,7 +36,9 @@ No preproduction prices, data or credentials were copied into production.
   override selects `149.154.167.220`, with normal TLS validation. The first bot
   startup hit a network timeout; Docker restarted it and polling started normally.
   `getMe`, registered `/start` and `/cancel` commands, and absent webhook were verified.
-  This address is an operational dependency; recheck it if Telegram connectivity changes.
+  A subsequent real `/start` exposed intermittent connect timeouts on replies;
+  successful startup/getMe alone did not establish reliable message delivery.
+  See the incident correction below.
 - ArgoLink uses encrypted credentials attached to each real partner/application.
   No shared test credential or fake customer was installed into production.
 
@@ -103,3 +105,34 @@ current customer state with an old dump or downgrade the schema blindly.
 
 Skills used: `devops`, `bot-tester`, project-local `systematic-debugging` and
 `verification-before-completion`.
+
+## Telegram connectivity incident correction
+
+After handoff the owner reported a silent bot. Logs showed the real `/start`
+reaching `home()` and `sendMessage` failing during TCP connection establishment,
+after 60 seconds. The next message waited behind the dialog transaction lock.
+The owner subsequently observed replies again: the direct connection failure
+was intermittent, not a missing handler or missing admin registration.
+
+The previously configured Telegram relay server was reachable, but its former
+tunnel service and private identity were absent on the application host. A
+dedicated `neironych-telegram-egress.service` now maintains SSH TCP forwarding
+to `api.telegram.org:443`. TLS stays end-to-end with normal certificate validation.
+Its SSH identity is source-IP restricted, has no shell/PTY, and permits forwarding
+only to that destination. The local listener binds the project's private Docker
+gateway, port 18444; firewall/NAT rules affect only `ooo_default` Telegram traffic.
+No global OUTPUT redirection or other project's traffic was changed.
+
+Five separate fresh Bot API sessions from the production Telegram container
+then completed `getMe` successfully in 1.37–1.39 seconds each; NAT counters confirmed
+all five used the new route. The service has keepalives, automatic restart and
+boot activation; the application unit depends on its startup. The application
+image, customer state and pricing were not changed for this repair. No synthetic
+messages, updates, customers, payments or generations were inserted.
+
+The encrypted host backup now includes the dedicated forwarding identity,
+pinned host keys, systemd unit and project-scoped network helper. These files must
+be restored together; the relay's restricted public-key entry must remain valid.
+Remaining verification boundary: fresh connection probes establish transport
+recovery, while user-visible handler behavior is observed through actual user
+interaction, not fabricated production updates.
