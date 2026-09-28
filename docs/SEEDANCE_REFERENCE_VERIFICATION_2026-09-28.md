@@ -21,6 +21,7 @@ verification does not authorize replacing other models or changing retail prices
 | Path | Input | Result |
 | --- | --- | --- |
 | Project provider adapter, live ArgoLink | One JPEG reference, 4s, 480p, 9:16 | PASS: completed, billed 4s, $0.312 actual key usage |
+| Isolated project API + queue + live ArgoLink | One JPEG reference, 4s, 720p, 9:16 | PASS: completed, billed 4s, $0.68 actual procurement |
 
 The 480p job completed after approximately 6½ minutes. Upload ticket returned 201,
 image PUT returned 200, protected content Range returned 206 with 1,024 bytes.
@@ -29,6 +30,20 @@ The complete 2,021,728-byte MP4 was downloaded and inspected with ffprobe:
 A sampled frame retained the supplied illustrated family and robot. The requested
 9:16 composition crops some of the poster lettering; this is not a guarantee of
 pixel-exact reference reproduction or typography preservation.
+
+The 720p job completed after approximately 7¼ minutes. It exercised the project's
+upload-ticket endpoint, native video endpoint, database reservation, dispatch and
+polling functions, tenant-authenticated status endpoint and protected content proxy.
+The downloaded MP4 is 4,317,792 bytes, 720×1280, 24 fps H.264 with AAC audio,
+4.064 seconds. Range returned 206 with 1,024 bytes. Both full files decoded without
+errors with ffmpeg.
+
+The isolated gateway used synthetic retail prices of 30 RUB/second and a fake
+wallet snapshot; these are test fixtures, not production financial settings.
+The 120 RUB reserve settled to 120 RUB once, procurement was $0.68, and a repeated
+poll plus repeated create left the same generation and balance unchanged. Provider
+traffic used the real test key through the project's encrypted credential lookup.
+Combined actual key usage for both jobs was **$0.992** (initial usage: $0).
 
 ## Changes
 
