@@ -178,7 +178,12 @@ def validate_video(original: dict[str, Any]) -> None:
     maximum = 30 if model in {"seedance-2.5", "wan-3"} else 15
     minimum = 4 if url_video else 2 if wan else 1
     edit = body.get("omni_reference_task_type") == "edit"
-    if edit and (model != "seedance-2.5" or "duration" in body):
+    if edit and (
+        model != "seedance-2.5"
+        or not isinstance(body.get("duration", -1), int)
+        or body.get("duration", -1) != -1
+        or body.get("aspect_ratio", "adaptive") != "adaptive"
+    ):
         raise ValueError("invalid_edit_request")
     if not edit:
         integer(body.get("duration", 5), "duration", minimum, maximum)
@@ -214,12 +219,16 @@ def validate_video(original: dict[str, Any]) -> None:
     end = body.get("end_image")
     if (start and refs) or (end and not start) or (edit and (start or not counts[1])):
         raise ValueError("conflicting_media_inputs")
-    if url_video and start and "aspect_ratio" in body:
+    if minimax and start and "aspect_ratio" in body:
         raise ValueError("frame_aspect_ratio_is_derived_from_input")
     if not url_video and not wan and counts[0] and body.get("resolution") == "1080p":
         raise ValueError("reference_resolution_not_supported")
     ratios = {"1:1", "16:9", "9:16", "4:3", "3:4"}
     ratios |= {"21:9"} if url_video else set() if wan else {"3:2", "2:3"}
+    if seedance and start:
+        ratios = {"adaptive"} if model == "seedance-2.5" else ratios | {"adaptive"}
+    if edit:
+        ratios = {"adaptive"}
     if minimax and refs and not start:
         ratios.add("adaptive")
     if "aspect_ratio" in body and body["aspect_ratio"] not in ratios:

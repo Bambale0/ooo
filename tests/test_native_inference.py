@@ -74,6 +74,48 @@ async def test_minimax_native_references_default_tier_and_actual_video_seconds(c
     await upstream.aclose()
 
 
+@pytest.mark.parametrize(
+    "media",
+    [
+        {"reference_images": [{"url": "https://example.org/photo.jpg"}], "aspect_ratio": "adaptive"},
+        {"start_image": {"url": "https://example.org/photo.jpg"}, "aspect_ratio": "16:9"},
+        {
+            "reference_images": [{"url": "https://example.org/photo.jpg"}],
+            "start_image": {"url": "https://example.org/a.jpg"},
+        },
+    ],
+)
+async def test_seedance_invalid_reference_combination_does_not_reserve(client, db_session, monkeypatch, media):
+    def handler(request):
+        raise AssertionError("Invalid request must not reach the provider")
+
+    partner, headers, upstream = await setup(
+        db_session,
+        monkeypatch,
+        handler,
+        model="seedance-2.5",
+        category="video",
+        rates=[("default", "480p", "second", Decimal("20"), Decimal(".078"))],
+    )
+    response = await client.post(
+        "/v1/videos/generations",
+        headers=headers,
+        json={
+            "model": "seedance-2.5",
+            "prompt": "Animate",
+            "duration": 4,
+            "resolution": "480p",
+            **media,
+        },
+    )
+    assert response.status_code == 422
+    await db_session.refresh(partner)
+    assert partner.balance_rub == Decimal("1000000")
+    assert (await db_session.execute(select(LedgerEntry))).scalars().all() == []
+    assert (await db_session.execute(select(Generation))).scalars().all() == []
+    await upstream.aclose()
+
+
 async def setup(db, monkeypatch, handler, *, model="gpt-5.4", category="llm", rates=None):
     partner = Partner(
         telegram_id="native-1",
@@ -314,6 +356,75 @@ async def test_native_video_reserves_references_and_preserves_controls(client, d
     assert g.actual_charge_rub == Decimal("180")
     entries = list((await db_session.execute(select(LedgerEntry))).scalars())
     assert len(entries) == 2
+    await upstream.aclose()
+
+
+@pytest.mark.parametrize(
+    "media",
+    [
+        {"reference_images": [{"url": "https://example.org/photo.jpg"}], "aspect_ratio": "9:16"},
+        {"image_urls": ["https://example.org/photo.jpg"]},
+        {"input_references": [{"type": "image_url", "image_url": {"url": "https://example.org/photo.jpg"}}]},
+        {"start_image": {"url": "https://example.org/photo.jpg"}, "aspect_ratio": "adaptive"},
+    ],
+)
+async def test_seedance_reference_queue_content_and_settlement_are_idempotent(client, db_session, monkeypatch, media):
+    from unittest.mock import AsyncMock
+
+    from app.generations.service import dispatch_generation_to_provider, poll_generation_provider
+
+    submitted = []
+
+    def handler(request):
+        if request.method == "POST":
+            submitted.append(json.loads(request.content))
+            return httpx.Response(202, json={"request_id": "private-reference-job"})
+        if request.url.path.endswith("/content"):
+            assert request.headers["Range"] == "bytes=0-1023"
+            return httpx.Response(206, content=b"video-fixture", headers={"content-type": "video/mp4"})
+        return httpx.Response(
+            200,
+            json={
+                "status": "done",
+                "model": "seedance-2.5",
+                "usage": {"billed_seconds": 4, "output_seconds": 4, "reference_video_seconds": 0},
+            },
+        )
+
+    partner, headers, upstream = await setup(
+        db_session,
+        monkeypatch,
+        handler,
+        model="seedance-2.5",
+        category="video",
+        rates=[("default", "480p", "second", Decimal("20"), Decimal(".078"))],
+    )
+    adapter = ArgoLinkAdapter(api_key="upstream", client=upstream)
+    for target in ("app.generations.service", "app.media.router"):
+        monkeypatch.setattr(target + ".get_partner_provider_adapter", AsyncMock(return_value=adapter))
+    body = {"model": "seedance-2.5", "prompt": "Animate the poster", "duration": 4, "resolution": "480p", **media}
+    response = await client.post("/v1/videos/generations", headers=headers, json=body)
+    assert response.status_code == 202
+    identity = response.json()["request_id"]
+    generation = await db_session.get(Generation, identity)
+    assert generation.partner_price_rub == Decimal("80")  # image references add no video seconds
+    attempt = await dispatch_generation_to_provider(db_session, generation)
+    await db_session.commit()
+    await dispatch_generation_to_provider(db_session, generation)
+    attempt.next_poll_at = None
+    await db_session.commit()
+    await poll_generation_provider(db_session, generation)
+    await db_session.commit()
+    await poll_generation_provider(db_session, generation)
+    duplicate = await client.post("/v1/videos/generations", headers=headers, json=body)
+    assert duplicate.json()["request_id"] == identity and submitted == [body]
+    assert generation.actual_charge_rub == Decimal("80")
+    assert generation.actual_provider_cost_usdt == Decimal(".312")
+    assert partner.balance_rub == Decimal("999920")
+    status = await client.get(f"/v1/videos/{identity}", headers=headers)
+    assert status.json()["status"] == "done" and "private-reference-job" not in status.text
+    content = await client.get(f"/v1/videos/{identity}/content", headers={**headers, "Range": "bytes=0-1023"})
+    assert content.status_code == 206 and content.content == b"video-fixture"
     await upstream.aclose()
 
 

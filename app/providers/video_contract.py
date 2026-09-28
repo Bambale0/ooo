@@ -29,7 +29,10 @@ def validate_video_request(payload: ProviderGenerationRequest) -> None:
         resolutions = {"480p", "720p"}
     if payload.resolution not in resolutions:
         raise ValueError("unsupported_resolution")
-    if payload.aspect_ratio and payload.aspect_ratio not in (SEEDANCE_RATIOS if seedance else GROK_RATIOS):
+    ratios = SEEDANCE_RATIOS if seedance else GROK_RATIOS
+    if seedance and payload.start_image:
+        ratios = {"adaptive"} if payload.model_slug == "seedance-2.5" else ratios | {"adaptive"}
+    if payload.aspect_ratio and payload.aspect_ratio not in ratios:
         raise ValueError("unsupported_aspect_ratio")
     max_images = (30 if payload.model_slug == "seedance-2.5" else 9) if seedance else 7
     if len(payload.reference_images) > max_images:
@@ -38,8 +41,6 @@ def validate_video_request(payload: ProviderGenerationRequest) -> None:
         raise ValueError("frames_and_references_are_exclusive")
     if payload.end_image and (not seedance or not payload.start_image):
         raise ValueError("unsupported_end_image")
-    if seedance and payload.start_image and payload.aspect_ratio:
-        raise ValueError("frame_aspect_ratio_is_derived_from_input")
     if not seedance and payload.reference_images and payload.resolution == "1080p":
         raise ValueError("reference_resolution_not_supported")
     modes = {"default", "text_to_video", "image_to_video", "reference", "first_frame", "first_last_frame"}
