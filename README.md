@@ -592,7 +592,9 @@ Production-like test contour через Docker Compose:
 docker compose up --build
 ```
 
-После старта API доступен на `http://localhost:8000`, Nginx proxy — на `http://localhost:8080`. Публичный `/docs` — это только минимальная инструкция подключения моделей и base URL; полный OpenAPI/Swagger публично не публикуется.
+После старта API доступен на `http://localhost:8000`, Nginx proxy — на `http://localhost:8080`.
+Публичный `/docs` — самостоятельный RU/EN справочник inference API с параметрами, ограничениями,
+ответами и примерами; полный OpenAPI/Swagger публично не публикуется.
 
 Миграции:
 
@@ -720,11 +722,19 @@ Implementation epics и README не должны самовольно менят
 
 ### Public documentation boundary
 
-Открытый `/docs` намеренно минимален. Без авторизации он содержит только:
+Открытый `/docs` (alias `/guide`) содержит самостоятельную документацию клиентских генераций:
 
 - production API base URL;
 - partner authentication header;
 - список/ID включённых production-моделей;
-- endpoint family для подключения каждой модели.
+- endpoint family, типы/обязательность параметров, ограничения моделей;
+- примеры текста, изображений, видео, SSE, загрузки референса и получения результата;
+- собственные форматы ответов, ошибки и правила повторной отправки.
+
+Текст справочника живёт в `app/api/partner_reference.py` и `app/api/text_reference.py`.
+Исполняемый пример `app/api/examples/seedance_reference.py` включается в страницу напрямую
+и проверяется с изолированным HTTP transport. Изменения native contracts должны обновлять
+справочник и его проверки в том же PR. Статическая таблица лимитов не является списком
+включённых моделей: для доступности используется `GET /v1/models`.
 
 Полный OpenAPI, Swagger/ReDoc, billing/admin/provider internals, webhook/retry/reconciliation детали публично не выдаются. Это отдельная граница безопасности продукта, а не отсутствие документации в коде.
