@@ -294,7 +294,8 @@ async def test_truncated_stream_retains_reserve(client, db_session, monkeypatch)
 
 
 @pytest.mark.parametrize("reference_count", [1, 16])
-async def test_image_actual_dimensions_count_and_multipart(client, db_session, monkeypatch, reference_count):
+@pytest.mark.parametrize("model", ["gpt-image-2", "gpt-image-2.5-sunburst"])
+async def test_image_actual_dimensions_count_and_multipart(client, db_session, monkeypatch, reference_count, model):
     def encoded(w):
         buf = io.BytesIO()
         Image.new("RGB", (w, 1)).save(buf, format="PNG")
@@ -311,12 +312,12 @@ async def test_image_actual_dimensions_count_and_multipart(client, db_session, m
         for tier, price in [("1K", "10"), ("2K", "20"), ("4K", "30")]
     ]
     partner, headers, upstream = await setup(
-        db_session, monkeypatch, handler, model="gpt-image-2", category="image", rates=rates
+        db_session, monkeypatch, handler, model=model, category="image", rates=rates
     )
     r = await client.post(
         "/v1/images/edits",
         headers=headers,
-        data={"model": "gpt-image-2", "prompt": "edit", "n": "2"},
+        data={"model": model, "prompt": "edit", "n": "2"},
         files=[("image[]", (f"x{i}.png", b"input-image", "image/png")) for i in range(reference_count)]
         + [("mask", ("mask.png", b"input-mask", "image/png"))],
     )
@@ -326,6 +327,81 @@ async def test_image_actual_dimensions_count_and_multipart(client, db_session, m
     assert g.usage_snapshot == {"1K": 1, "2K": 1}
     assert "input-image" not in json.dumps(g.request_payload)
     assert "b64_json" not in json.dumps(g.request_payload)
+    await upstream.aclose()
+
+
+@pytest.mark.parametrize("multipart", [False, True])
+async def test_nano_pro_fourteen_references_and_4k_settle_once(client, db_session, monkeypatch, multipart):
+    image = io.BytesIO()
+    Image.new("RGB", (4096, 1)).save(image, format="JPEG")
+    output = base64.b64encode(image.getvalue()).decode()
+    submitted = []
+
+    def handler(request):
+        submitted.append(request.content)
+        if multipart:
+            assert request.content.count(b'name="image[]"') == 14
+            assert b'name="resolution"\r\n\r\n4k' in request.content
+            assert b'name="aspect_ratio"\r\n\r\n21:9' in request.content
+        else:
+            assert json.loads(request.content) == body
+        return httpx.Response(200, json={"data": [{"b64_json": output}]})
+
+    rates = [("default", tier, "generation", Decimal("10"), Decimal(".03")) for tier in ("1K", "2K", "4K")]
+    partner, headers, upstream = await setup(
+        db_session, monkeypatch, handler, model="nano-banana-pro", category="image", rates=rates
+    )
+    body = {
+        "model": "nano-banana-pro",
+        "prompt": "Combine the objects",
+        "resolution": "4k",
+        "aspect_ratio": "21:9",
+        "n": 1,
+        "response_format": "b64_json",
+    }
+    if multipart:
+        payload = {
+            "data": body,
+            "files": [("image[]", (f"ref-{i}.jpg", b"reference-image", "image/jpeg")) for i in range(14)],
+        }
+    else:
+        body["images"] = [{"image_url": f"https://example.org/ref-{i}.jpg"} for i in range(14)]
+        payload = {"json": body}
+    response = await client.post("/v1/images/edits", headers=headers, **payload)
+    assert response.status_code == 200
+    generation = (await db_session.execute(select(Generation))).scalar_one()
+    assert (generation.status, generation.usage_snapshot, generation.actual_charge_rub) == (
+        "completed",
+        {"4K": 1},
+        Decimal("10.00"),
+    )
+    duplicate = await client.post("/v1/images/edits", headers=headers, **payload)
+    assert duplicate.status_code == 409 and len(submitted) == 1
+    await upstream.aclose()
+
+
+@pytest.mark.parametrize("multipart", [False, True])
+async def test_nano_pro_fifteenth_reference_fails_before_reservation(client, db_session, monkeypatch, multipart):
+    def handler(request):
+        raise AssertionError("Invalid references must not reach the provider")
+
+    partner, headers, upstream = await setup(
+        db_session, monkeypatch, handler, model="nano-banana-pro", category="image", rates=[]
+    )
+    body = {"model": "nano-banana-pro", "prompt": "Combine the objects"}
+    if multipart:
+        payload = {
+            "data": body,
+            "files": [("image[]", (f"ref-{i}.jpg", b"reference-image", "image/jpeg")) for i in range(15)],
+        }
+    else:
+        payload = {"json": {**body, "images": [{"image_url": "https://example.org/ref.jpg"}] * 15}}
+    response = await client.post("/v1/images/edits", headers=headers, **payload)
+    assert response.status_code == 422
+    await db_session.refresh(partner)
+    assert partner.balance_rub == Decimal("1000000")
+    assert (await db_session.execute(select(Generation))).scalars().all() == []
+    assert (await db_session.execute(select(LedgerEntry))).scalars().all() == []
     await upstream.aclose()
 
 

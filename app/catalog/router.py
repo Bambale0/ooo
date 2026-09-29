@@ -5,6 +5,7 @@ from sqlalchemy import select
 
 from app.api.dependencies import DbSession, require_admin
 from app.catalog.models import Model, PartnerPrice, PartnerPriceHistory
+from app.catalog.procurement import supports_free_rate
 from app.catalog.schemas import ModelCreate, ModelEnableGateUpdate, ModelRead, PartnerPriceUpsert, PricingRead
 from app.contracts.registry import MODELS
 
@@ -183,7 +184,18 @@ async def ensure_model_can_be_enabled(db: DbSession, model: Model | ModelCreate)
         from app.billing.fx import current_fx
 
         fx = (await current_fx(db))["rate"]
-        if any(p.provider_cost_usdt <= 0 or p.price_rub < p.provider_cost_usdt * fx for p in prices):
+        if any(
+            not p.price_rub.is_finite()
+            or not p.provider_cost_usdt.is_finite()
+            or p.price_rub < 0
+            or p.provider_cost_usdt < 0
+            or (
+                (p.price_rub == 0 or p.provider_cost_usdt == 0)
+                and not supports_free_rate(model.slug, p.mode, p.resolution, p.billing_unit)
+            )
+            or p.price_rub < p.provider_cost_usdt * fx
+            for p in prices
+        ):
             raise HTTPException(409, "economic_gate_missing")
         if model.modality in {"llm", "image"}:
             from app.catalog.sync import variants

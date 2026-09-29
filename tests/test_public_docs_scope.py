@@ -66,6 +66,10 @@ async def test_public_docs_are_self_contained_without_private_surface(client, la
         "text/event-stream",
         "invalid_request_contract",
         "request_already_submitted",
+        'id="text-luna"',
+        'id="text-glm-flash"',
+        "service_tier",
+        "priority",
     ):
         assert term in body
     for value in (
@@ -98,6 +102,17 @@ async def test_public_docs_are_self_contained_without_private_surface(client, la
             if "model" in value and "size_bytes" not in value:
                 rendered_requests.append(value)
     assert all(body in rendered_requests for _, body in EXAMPLES.values())
+
+
+@pytest.mark.parametrize("lang", ["ru", "en"])
+async def test_docs_explain_luna_fast_cost_and_glm_conversion_limits(client, lang):
+    response = await client.get("/docs", params={"lang": lang})
+    body = response.text
+    luna = body.split('id="text-luna"', 1)[1].split('id="text-glm-flash"', 1)[0]
+    glm = body.split('id="text-glm-flash"', 1)[1].split("REQUEST_KEY=", 1)[0]
+    assert all(word in luna for word in ("gpt-5.6-luna", "priority", "fast", "input_image", "reasoning.effort"))
+    assert ("умножаются на 2" if lang == "ru" else "multiplied by 2") in luna
+    assert all(word in glm for word in ("glm-5.3-flash", "input_file", "base64", "output_config.effort"))
 
 
 @pytest.mark.parametrize(

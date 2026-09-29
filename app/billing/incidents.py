@@ -9,6 +9,7 @@ from app.billing.capital import capital_state
 from app.billing.fx import current_fx
 from app.billing.models import FinancialIncident
 from app.catalog.models import Model, PartnerPrice
+from app.catalog.procurement import supports_free_rate
 from app.infrastructure.config import get_settings
 from app.infrastructure.retry import utc_now
 from app.telegram.service import notify
@@ -70,11 +71,16 @@ async def financial_tick(db) -> None:
     for model, price in rows:
         negative = price.price_rub < price.provider_cost_usdt * fx
         margin = (price.price_rub - price.provider_cost_usdt * fx) / price.price_rub * 100 if price.price_rub > 0 else 0
+        free_rate = (
+            price.price_rub == 0
+            and price.provider_cost_usdt == 0
+            and supports_free_rate(model.slug, price.mode, price.resolution, price.billing_unit)
+        )
         limit = threshold(thresholds, model.id, price.id)
         await observe_incident(
             db,
             kind=f"margin:{price.id}",
-            negative=not negative and margin < limit,
+            negative=not negative and not free_rate and margin < limit,
             repeating=False,
             detail=f"Низкая маржа {model.slug} / {price.mode} / {price.resolution}: "
             f"{margin:.2f}% при пороге {limit}%. Проверьте цену; положительная экономика не блокируется.",
