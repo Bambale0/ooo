@@ -1,4 +1,6 @@
+import json
 import re
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import httpx
@@ -59,6 +61,34 @@ class ArgoLinkAdapter:
         response.raise_for_status()
         data = response.json()
         return {key: data[key] for key in ("isValid", "mode", "status", "quota", "remaining", "unit") if key in data}
+
+    async def prepaid_balance_usdt(self) -> Decimal:
+        """Only an explicit cash wallet proves funding; a key quota does not."""
+        try:
+            response = await self._client.get(
+                "/v1/usage", headers=self._auth_headers(), timeout=httpx.Timeout(10, connect=5, pool=5)
+            )
+            response.raise_for_status()
+            data = json.loads(response.content, parse_float=Decimal)
+            if (
+                not isinstance(data, dict)
+                or data.get("isValid") is not True
+                or data.get("mode") != "unrestricted"
+                or data.get("unit") not in ("USD", "USDT")
+                or data.get("quota") is not None
+                or data.get("subscription") is not None
+                or data.get("status", "active") != "active"
+            ):
+                raise ValueError("unconfirmed_prepaid_wallet")
+            value = data.get("balance")
+            if isinstance(value, bool) or not isinstance(value, (str, int, Decimal)):
+                raise ValueError("missing_wallet_balance")
+            balance = Decimal(value)
+            if not balance.is_finite() or balance < 0:
+                raise ValueError("invalid_wallet_balance")
+            return balance
+        except (httpx.HTTPError, ValueError, InvalidOperation) as exc:
+            raise ProviderAdapterError("provider_temporarily_unavailable") from exc
 
     async def health_check(self) -> bool:
         async with self._http_client() as client:

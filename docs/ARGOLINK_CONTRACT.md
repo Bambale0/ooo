@@ -154,6 +154,16 @@ account/tier-specific procurement before enabling these variants for customers.
 quota counters converged with actual usage after asynchronous settlement; an
 in-flight quota read is not a reservation or a hard concurrency guarantee.
 
+Generation admission queries `GET /v1/usage` with the selected partner credential.
+The prepaid-funding contract accepts only `isValid: true`, `mode: unrestricted`,
+unit USD/USDT and an explicit finite nonnegative `balance`, with no quota/subscription
+payload. Money is parsed as Decimal. Quota-only, subscription, malformed, unavailable
+and unsupported responses fail closed; Crypto Pay cash is not a fallback funding
+source for this route. Active generation reserves, pending credits and required float
+are subtracted under the global database admission lock. This balance does not enlarge
+safe-to-withdraw or create partner credits. Quota-managed keys require a separate
+verified account-balance contract before they can use this guard.
+
 See [the live verification matrix](LIVE_VERIFICATION_2026-09-23.md). Adapter
 coverage and a passing isolated contract test do not imply every upstream model
 or protocol is currently operational.

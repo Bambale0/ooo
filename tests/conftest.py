@@ -71,12 +71,16 @@ def admin_headers() -> dict[str, str]:
 
 @pytest.fixture(autouse=True)
 def funded_test_treasury(monkeypatch):
-    """Tests use an explicit fake wallet; they never contact Crypto Pay for cash."""
+    """Isolated cash/prepaid wallets; tests never query live financial balances."""
     from decimal import Decimal
 
     async def available_wallet(db):
         return Decimal("1000000"), 0, "fresh"
 
+    async def prepaid_wallet(self):
+        return Decimal("1000000")
+
+    monkeypatch.setattr("app.providers.argolink.ArgoLinkAdapter.prepaid_balance_usdt", prepaid_wallet)
     monkeypatch.setattr("app.billing.capital.wallet_balance", available_wallet)
     monkeypatch.setattr(get_settings(), "opening_working_capital_usdt", Decimal("1000000"))
 

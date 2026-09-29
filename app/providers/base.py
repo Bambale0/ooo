@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Protocol
 
 
@@ -61,6 +62,8 @@ class ProviderAdapterError(Exception):
 
 class ProviderAdapter(Protocol):
     provider_name: str
+
+    async def prepaid_balance_usdt(self) -> Decimal: ...
 
     async def health_check(self) -> bool: ...
 
