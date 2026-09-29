@@ -1,5 +1,7 @@
 # Нейроныч
 
+[Публичный прайс в рублях](https://api.xn--e1aikcel5c5a.online/prices) · [Документация API](https://api.xn--e1aikcel5c5a.online/docs)
+
 Закрытый B2B SaaS/API-сервис для партнёров, которые встраивают AI-генерацию в свои продукты и боты. Партнёр получает единый API Нейроныча, пополняет общий RUB-баланс, запускает генерации и сам определяет цену для своего конечного пользователя.
 
 Первый upstream provider — ArgoLink, но ядро проектируется provider-agnostic: provider-specific ключи, task IDs, routing, закупочная стоимость и raw errors остаются внутренними.
@@ -136,7 +138,7 @@ Redis используется для очередей, coordination, locks и �
 Enable должен атомарно публиковать:
 
 - API availability;
-- `/pricing`;
+- `/prices`;
 - public price/docs;
 - changelog.
 
