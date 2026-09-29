@@ -103,8 +103,16 @@ async def video_content(
 
 @router.post("/media/uploads")
 async def media_upload(request: Request, db: DbSession, auth: PartnerAuth = Depends(get_partner_auth)):
-    body = await request.json()
-    if not isinstance(body, dict) or body.get("model") not in MODELS:
+    content_type = request.headers.get("content-type", "").partition(";")[0].strip().lower()
+    if content_type and content_type != "application/json":
+        raise HTTPException(415, "media_upload_requires_json")
+    try:
+        body = await request.json()
+    except ValueError:
+        # JSONDecodeError and UnicodeDecodeError are both ValueError subclasses.
+        # File bytes belong in the later PUT to upload_url, not this ticket request.
+        raise HTTPException(422, "invalid_request_contract") from None
+    if not isinstance(body, dict) or not isinstance(body.get("model"), str) or body["model"] not in MODELS:
         raise HTTPException(422, "unknown_model_contract")
     adapter = await get_partner_provider_adapter(db, auth.partner.id, "argolink")
     try:

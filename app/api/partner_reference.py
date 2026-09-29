@@ -598,14 +598,24 @@ def render_uploads(lang):
         "<p>"
         + (
             "Для локального файла сначала создайте загрузку, затем отправьте байты по upload_url. "
-            "media_url вставьте в запрос генерации. Генерация и загрузка — разные операции."
+            "media_url вставьте в запрос генерации. Генерация и загрузка — разные операции. "
+            "POST /v1/media/uploads принимает только JSON с описанием файла, а не сам файл. "
+            "Не отправляйте сюда multipart/form-data, байты JPEG/PNG или base64 вместо JSON. "
+            "Такой Content-Type возвращает 415 media_upload_requires_json; повреждённый JSON — "
+            "422 invalid_request_contract."
             if ru
             else "For a local file, create an upload ticket, then send bytes to upload_url. "
-            "Use media_url in the generation request. Upload and generation are separate operations."
+            "Use media_url in the generation request. Upload and generation are separate operations. "
+            "POST /v1/media/uploads accepts JSON file metadata, not the file itself. "
+            "Do not send multipart/form-data, raw JPEG/PNG bytes or base64 instead of JSON. "
+            "An unsupported Content-Type returns 415 media_upload_requires_json; malformed JSON returns "
+            "422 invalid_request_contract."
         )
         + "</p>"
     )
-    body += code("POST /v1/media/uploads") + code(
+    body += code(
+        "POST /v1/media/uploads\nContent-Type: application/json\nAuthorization: Bearer <PARTNER_API_KEY>"
+    ) + code(
         {"model": "seedance-2.5", "type": "image", "content_type": "image/jpeg", "size_bytes": 123456}
     )
     body += table(
@@ -768,11 +778,21 @@ def render_errors(lang):
             t("Multipart доступен только для images/edits.", "Multipart is supported only for images/edits."),
         ),
         (
+            "415",
+            "media_upload_requires_json",
+            t(
+                "Создайте upload ticket через application/json с описанием файла. "
+                "Затем отправьте байты отдельным PUT по upload_url.",
+                "Create an upload ticket using application/json file metadata. "
+                "Then send the bytes with a separate PUT to upload_url.",
+            ),
+        ),
+        (
             "422",
             "invalid_request_contract / invalid_idempotency_key / invalid_previous_response",
             t(
-                "Исправьте параметры, сочетания полей или длину ключа.",
-                "Correct parameters, field combinations or key length.",
+                "Проверьте корректность JSON, параметры, сочетания полей или длину ключа.",
+                "Check JSON syntax, parameters, field combinations or key length.",
             ),
         ),
         (
