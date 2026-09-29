@@ -437,7 +437,11 @@ async def admin_callback(event, db, dialog, data: str) -> None:
     elif data.startswith("admin_form:"):
         from app.telegram.admin_forms import start
 
-        await start(event, dialog, data.split(":", 1)[1])
+        await start(event, db, dialog, data.split(":", 1)[1])
+    elif data.startswith("admin_partner_"):
+        from app.telegram.admin_partners import handle_picker_callback
+
+        await handle_picker_callback(event, db, dialog, data)
     elif data == "admin_catalog_import":
         await ask_confirmation(
             event,
@@ -665,7 +669,11 @@ async def handle_message(event, db, dialog) -> None:
     if not partner and not state.startswith("admin_"):
         await home(event, db, dialog)
         return
-    if state == "admin_form_input":
+    if state == "admin_partner_pick":
+        from app.telegram.admin_partners import search_partners
+
+        await search_partners(event, db, dialog, value)
+    elif state == "admin_form_input":
         from app.telegram.admin_forms import input_value
 
         await input_value(event, db, dialog, value)
