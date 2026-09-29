@@ -527,6 +527,57 @@ def render_text_reference(lang: str) -> str:
         "Claude and compatible models. Vision, tools, JSON Schema and reasoning capabilities depend on the "
         "selected model; changing the protocol does not add capabilities.",
     )
+    result += '<h3 id="text-luna">GPT-5.6 Luna</h3>'
+    result += paragraph(
+        "gpt-5.6-luna принимает текст и изображения, возвращает текст. Используйте POST /v1/responses "
+        "с input либо POST /v1/chat/completions с messages; /v1/messages для этой модели не поддерживается. "
+        "Изображения: input_image в Responses, image_url в Chat; подходят публичные HTTPS URL и data URL.",
+        "gpt-5.6-luna accepts text and images and returns text. Use POST /v1/responses with input or "
+        "POST /v1/chat/completions with messages; /v1/messages is not supported for this model. "
+        "Images use input_image in Responses or image_url in Chat, with public HTTPS URLs or data URLs.",
+    )
+    result += paragraph(
+        "reasoning.effort в Responses или reasoning_effort в Chat: low, medium, high, xhigh, max; "
+        "по умолчанию medium. Контекст 1 050 000 токенов, вход до 922 000, вывод до 128 000. "
+        "Reasoning-токены входят в лимит вывода и оплачиваются как выходные.",
+        "Use reasoning.effort in Responses or reasoning_effort in Chat: low, medium, high, xhigh, max; "
+        "the default is medium. Context is 1,050,000 tokens, input up to 922,000, output up to 128,000. "
+        "Reasoning tokens count toward the output cap and are billed as output tokens.",
+    )
+    result += paragraph(
+        "service_tier — необязательная строка. Опустите её для стандартного режима. Значения priority "
+        "или fast включают Fast: все опубликованные рублёвые тарифы этой модели умножаются на 2, "
+        "включая вход, выход, чтение и запись кэша. Это правило относится к Luna; наличие Fast у другой "
+        "модели проверяйте отдельно.",
+        "service_tier is an optional string. Omit it for the standard tier. priority or fast selects "
+        "Fast: every published RUB rate for this model is multiplied by 2, including input, output, "
+        "cache reads and cache writes. This rule is for Luna; check other models separately for Fast support.",
+    )
+    result += '<h3 id="text-glm-flash">GLM-5.3 Flash</h3>'
+    result += paragraph(
+        "Для glm-5.3-flash используйте POST /v1/chat/completions. Модель принимает текст и изображения "
+        "image_url с публичными HTTPS URL или data URL и возвращает текст. Контекст 1 000 000 токенов, "
+        "вывод до 128 000. Thinking всегда включён; reasoning_effort: high или max, по умолчанию max. "
+        "low и medium выполняются как high, xhigh — как max. service_tier не поддерживается: опустите его.",
+        "For glm-5.3-flash, use POST /v1/chat/completions. The model accepts text and image_url inputs "
+        "with public HTTPS URLs or data URLs and returns text. Context is 1,000,000 tokens, output up to "
+        "128,000. Thinking is always enabled; reasoning_effort accepts high or max, default max. "
+        "low and medium run as high; xhigh runs as max. service_tier is not supported: omit it.",
+    )
+    result += paragraph(
+        "Responses и Messages доступны через преобразование в Chat Completions с ограничениями. "
+        "В Responses передавайте текст или input_image; input_file не переносится. В Messages "
+        "поддерживаются текст, tool-блоки и изображения только в base64; изображения по URL не переносятся. "
+        "Web search и другие серверные инструменты при обоих преобразованиях не поддерживаются. "
+        "reasoning.effort в Responses использует те же уровни. В Messages явно задавайте "
+        "output_config.effort: без него передаётся medium, который модель выполняет как high.",
+        "Responses and Messages are available through conversion to Chat Completions with limitations. "
+        "Responses accepts text or input_image; input_file is not carried over. Messages supports text, "
+        "tool blocks and base64 images only; URL images are not carried over. Web search and other "
+        "server-side tools are unsupported in both conversions. reasoning.effort in Responses uses the "
+        "same levels. Set output_config.effort explicitly in Messages: when omitted, medium is sent, "
+        "which this model runs as high.",
+    )
     result += paragraph(
         "Все три метода принимают JSON и требуют Authorization: Bearer, Content-Type: application/json "
         "и уникальный Idempotency-Key для каждой новой операции. В примерах API_BASE — указанный выше адрес "
@@ -975,10 +1026,10 @@ def render_text_reference(lang: str) -> str:
             (
                 "glm-5.3-flash",
                 "reasoning_effort",
-                "low / high / max",
+                "high / max",
                 choose(
-                    "По умолчанию max; low выполняется как high; всегда включено.",
-                    "Default max; low runs as high; always enabled.",
+                    "По умолчанию max; low/medium → high, xhigh → max; всегда включено.",
+                    "Default max; low/medium → high, xhigh → max; always enabled.",
                 ),
             ),
             (

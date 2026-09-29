@@ -15,7 +15,15 @@ from app.billing.service import (
     require_sufficient_balance,
 )
 from app.catalog.models import Model, PartnerPrice
-from app.contracts.registry import OBSERVATIONS, TEXT_PROTOCOLS, image_tier, normalized_video, video_reserve_seconds
+from app.catalog.procurement import supports_free_rate
+from app.contracts.registry import (
+    MODELS,
+    OBSERVATIONS,
+    TEXT_PROTOCOLS,
+    image_tier,
+    normalized_video,
+    video_reserve_seconds,
+)
 from app.generations.models import Generation
 from app.inference.accounting import MILLION, TOKEN_MODES, charges
 from app.infrastructure.config import get_settings
@@ -168,7 +176,13 @@ def quote(protocol, body, prices, *, fx=None, trial=False):
             raise HTTPException(503, "provider_temporarily_unavailable")
         # Check every rate individually; expensive cached/written tokens cannot
         # silently be sold below procurement just because the whole quote is positive.
-        if price.provider_cost_usdt <= 0 or (not trial and price.price_rub < price.provider_cost_usdt * fx):
+        free_rate = supports_free_rate(body["model"], mode, resolution, unit)
+        if (
+            price.provider_cost_usdt < 0
+            or price.price_rub < 0
+            or (not free_rate and (price.provider_cost_usdt == 0 or price.price_rub == 0))
+            or (not trial and price.price_rub < price.provider_cost_usdt * fx)
+        ):
             raise HTTPException(503, "provider_temporarily_unavailable")
         observed = OBSERVATIONS["manual_procurement_review"].get(body["model"])
         if (
@@ -192,6 +206,12 @@ def quote(protocol, body, prices, *, fx=None, trial=False):
             add("cache_write_1h_tokens", "cache_write_1h_tokens", "default", "million_tokens")
         for mode in TOKEN_MODES:
             add(mode, mode, "default", "million_tokens")
+        if body.get("service_tier") in ("priority", "fast"):
+            multiplier = Decimal(str(MODELS[body["model"]].get("fast_multiplier", 1)))
+            rates = {
+                key: {kind: str(Decimal(value) * multiplier) for kind, value in rate.items()}
+                for key, rate in rates.items()
+            }
         # Reserve a conservative context allowance for opaque multimodal/tool inputs.
         # This is a financial hold, not a cap or a modification of the native body.
         maximum = max(
@@ -222,13 +242,13 @@ def quote(protocol, body, prices, *, fx=None, trial=False):
         units = {"input_reserve": input_bound, "output_tokens": maximum}
         return rates, units, "default"
     if protocol.startswith("images/"):
-        tiers = ("1K", "2K", "4K") if body["model"].startswith("gpt-image") else ("1K", "2K")
+        tiers = tuple(tier["label"] for tier in MODELS[body["model"]]["procurement"]["tiers"])
         for tier in tiers:
             add(tier, "default", tier, "generation")
-        # GPT can choose output dimensions. Reserve the most expensive possible tier;
-        # actual bytes determine the final tier for every returned image.
+        # GPT can choose output dimensions. Equal partner prices still need the
+        # highest procurement reserve; actual bytes determine the final tier.
         tier = (
-            max(tiers, key=lambda t: Decimal(rates[t]["retail"]))
+            max(tiers, key=lambda t: (Decimal(rates[t]["retail"]), Decimal(rates[t]["cost"])))
             if body["model"].startswith("gpt-image")
             else image_tier(body)
         )

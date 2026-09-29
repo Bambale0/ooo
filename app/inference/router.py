@@ -11,7 +11,7 @@ from starlette.datastructures import UploadFile
 from app.api.dependencies import DbSession, PartnerAuth, get_partner_auth
 from app.billing.service import release_generation_reserves
 from app.catalog.models import Model
-from app.contracts.registry import MODELS, PROTOCOLS, TEXT_PROTOCOLS, validate_request
+from app.contracts.registry import MODELS, PROTOCOLS, TEXT_PROTOCOLS, image_reference_limit, validate_request
 from app.generations.models import Generation
 from app.inference.accounting import settle_actual, token_usage
 from app.inference.images import image_usage, inspect_url_images
@@ -169,7 +169,7 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
         body = validate_request(protocol, body)
         if files:
             image_count = sum(name in {"image", "image[]", "images", "images[]"} for name, _ in files)
-            maximum = 16 if body["model"].startswith("gpt-image") else 3 if body["model"].startswith("nano") else 1
+            maximum = image_reference_limit(body["model"], multipart=True)
             if sum(name == "mask" for name, _ in files) > 1:
                 raise ValueError("invalid_mask_count")
             if not 1 <= image_count <= maximum:

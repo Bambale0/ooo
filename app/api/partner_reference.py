@@ -28,6 +28,28 @@ EXAMPLES = {
             "response_format": "b64_json",
         },
     ),
+    "image-nano-pro": (
+        "images/generations",
+        {
+            "model": "nano-banana-pro",
+            "prompt": "A cinematic mountain panorama",
+            "resolution": "4k",
+            "aspect_ratio": "21:9",
+            "n": 1,
+            "response_format": "b64_json",
+        },
+    ),
+    "image-sunburst": (
+        "images/generations",
+        {
+            "model": "gpt-image-2.5-sunburst",
+            "prompt": "A cinematic mountain panorama",
+            "size": "3840x2160",
+            "quality": "high",
+            "n": 1,
+            "response_format": "b64_json",
+        },
+    ),
     "video-reference": (
         "videos/generations",
         {
@@ -214,20 +236,20 @@ def render_reference(base_url: str, lang: str) -> str:
                 "images",
                 "array<object> · edits",
                 t(
-                    "JSON: [{\"image_url\":\"https://…\"}] или image_url с data:image/…;base64,…; GPT до 16, "
-                    "остальные до 3.",
-                    "JSON: [{\"image_url\":\"https://…\"}] or a data:image/…;base64,… image_url; GPT up to "
-                    "16, others up to 3.",
+                    'JSON: [{"image_url":"https://…"}] или image_url с data:image/…;base64,…; '
+                    "GPT до 16, Nano Banana Pro до 14, остальные до 3.",
+                    'JSON: [{"image_url":"https://…"}] or a data:image/…;base64,… image_url; '
+                    "GPT up to 16, Nano Banana Pro up to 14, others up to 3.",
                 ),
             ),
             (
                 "mask",
                 "object | file · optional",
                 t(
-                    "GPT edits: {\"image_url\":\"https://…/mask.png\"} или файл PNG с альфа-каналом; "
+                    'GPT edits: {"image_url":"https://…/mask.png"} или файл PNG с альфа-каналом; '
                     "прозрачная область меняется. "
                     "Размер совпадает с первым изображением; не более одной маски.",
-                    "GPT edits: {\"image_url\":\"https://…/mask.png\"} or a PNG file with alpha; transparent "
+                    'GPT edits: {"image_url":"https://…/mask.png"} or a PNG file with alpha; transparent '
                     "areas are edited. "
                     "Match the first image dimensions; at most one mask.",
                 ),
@@ -247,20 +269,24 @@ def render_reference(base_url: str, lang: str) -> str:
                 "resolution",
                 "string · optional",
                 t(
-                    "Nano/Grok: 1k (по умолчанию) или 2k в контракте API; доступность зависит от модели/режима. "
-                    "Для Nano Banana 2 Lite используйте 1k. GPT: размер задаётся через size.",
-                    "Nano/Grok: API contract accepts 1k (default) or 2k; availability depends on model/mode. "
-                    "Use 1k for Nano Banana 2 Lite. GPT: set dimensions using size.",
+                    "Nano Banana Pro: 1k (по умолчанию), 2k или 4k. Другие Nano/Grok: 1k или 2k; "
+                    "доступность зависит от модели/режима. Для Nano Banana 2 Lite используйте 1k. "
+                    "GPT, включая Sunburst: размер задаётся через size, например 3840x2160 для 4K.",
+                    "Nano Banana Pro: 1k (default), 2k or 4k. Other Nano/Grok: 1k or 2k; availability depends "
+                    "on model/mode. Use 1k for Nano Banana 2 Lite. GPT, including Sunburst: set dimensions "
+                    "using size, e.g. 3840x2160 for 4K.",
                 ),
             ),
             (
                 "aspect_ratio",
                 "string · optional",
                 t(
-                    "Nano: 1:1 (по умолчанию), 16:9, 9:16, 4:3, 3:4. У GPT желаемую композицию также "
-                    "задавайте в prompt.",
-                    "Nano: 1:1 (default), 16:9, 9:16, 4:3, 3:4. For GPT, also describe the desired "
-                    "composition in prompt.",
+                    "Nano: 1:1 (по умолчанию), 16:9, 9:16, 4:3, 3:4. Nano Banana Pro также принимает "
+                    "3:2, 2:3, 5:4, 4:5, 21:9; при edits без aspect_ratio результат тоже 1:1, "
+                    "соотношение референса не наследуется. У GPT желаемую композицию также задавайте в prompt.",
+                    "Nano: 1:1 (default), 16:9, 9:16, 4:3, 3:4. Nano Banana Pro also accepts 3:2, 2:3, "
+                    "5:4, 4:5, 21:9; edits without aspect_ratio also default to 1:1 rather than following "
+                    "the reference frame. For GPT, also describe the desired composition in prompt.",
                 ),
             ),
             (
@@ -268,20 +294,25 @@ def render_reference(base_url: str, lang: str) -> str:
                 "string · optional",
                 t(
                     "b64_json или url для GPT/Grok; Nano поддерживает только b64_json. "
+                    "Nano Banana Pro возвращает JPEG в data[].b64_json. "
                     "Для воспроизводимости задавайте формат явно.",
-                    "b64_json or url for GPT/Grok; Nano supports only b64_json. Set the format explicitly "
-                    "for predictable output.",
+                    "b64_json or url for GPT/Grok; Nano supports only b64_json. Nano Banana Pro returns "
+                    "JPEG in data[].b64_json. Set the format explicitly for predictable output.",
                 ),
             ),
         ]
     )
     body += example("image") + example("image-edit")
+    body += "<h3>Nano Banana Pro · 4K</h3>" + example("image-nano-pro")
+    body += "<h3>GPT Image 2.5 Sunburst · 4K</h3>" + example("image-sunburst")
     body += p(
         "В multipart передавайте model, prompt, n как поля формы; файлы — повторяющимся image[] "
-        "(также принимаются image, images, images[]). Лимиты файлов: GPT 16, Nano 3, Grok 1; "
+        "(также принимаются image, images, images[]). Лимиты файлов: GPT 16, Nano Banana Pro 14, "
+        "другие Nano 3, Grok 1; "
         "плюс одна mask у GPT. Не задавайте Content-Type вручную: клиент добавит boundary.",
         "For multipart, send model, prompt and n as form fields; repeat image[] for files "
-        "(image, images and images[] are also accepted). File limits: GPT 16, Nano 3, Grok 1; "
+        "(image, images and images[] are also accepted). File limits: GPT 16, Nano Banana Pro 14, "
+        "other Nano 3, Grok 1; "
         "plus one GPT mask. Do not set Content-Type manually: the client supplies the boundary.",
     )
     body += code(
@@ -370,9 +401,9 @@ def render_reference(base_url: str, lang: str) -> str:
                 "object · optional",
                 t(
                     'Seedance/MiniMax/Wan: {"url":"https://…"}. end_image требует start_image. '
-                    'Кадры нельзя смешивать с reference_*.',
+                    "Кадры нельзя смешивать с reference_*.",
                     'Seedance/MiniMax/Wan: {"url":"https://…"}. end_image requires start_image. '
-                    'Frames cannot be combined with reference_*.',
+                    "Frames cannot be combined with reference_*.",
                 ),
             ),
             (
@@ -450,7 +481,7 @@ def render_reference(base_url: str, lang: str) -> str:
         "do not generate a new key when repeating the same operation.",
     )
     body += code(
-        'REQUEST_KEY="$(python3 -c \'import uuid; print(uuid.uuid4())\')"\n'
+        "REQUEST_KEY=\"$(python3 -c 'import uuid; print(uuid.uuid4())')\"\n"
         'curl --fail-with-body "$API_BASE/v1/videos/generations" \\\n'
         '  -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" \\\n'
         '  -H "Idempotency-Key: $REQUEST_KEY" --data-binary @request.json'
@@ -615,9 +646,7 @@ def render_uploads(lang):
     )
     body += code(
         "POST /v1/media/uploads\nContent-Type: application/json\nAuthorization: Bearer <PARTNER_API_KEY>"
-    ) + code(
-        {"model": "seedance-2.5", "type": "image", "content_type": "image/jpeg", "size_bytes": 123456}
-    )
+    ) + code({"model": "seedance-2.5", "type": "image", "content_type": "image/jpeg", "size_bytes": 123456})
     body += table(
         ("Field", "Type", "Required"),
         [
@@ -674,7 +703,7 @@ def render_uploads(lang):
             "HTTPS URL. Таблица ниже — более строгие требования именно Seedance."
             if ru
             else "A successful upload does not establish model compatibility. Seedance/MiniMax require "
-                 "HTTPS URLs without "
+            "HTTPS URLs without "
             "embedded credentials, accessible throughout execution; do not embed base64 in their JSON. "
             "Their JSON body must be smaller than 1 MiB. For your own storage, use a publicly reachable HTTPS URL. "
             "The following stricter requirements apply specifically to Seedance."

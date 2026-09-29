@@ -1,6 +1,8 @@
 from decimal import Decimal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from app.catalog.procurement import supports_free_rate
 
 
 class ModelCreate(BaseModel):
@@ -30,9 +32,17 @@ class PartnerPriceUpsert(BaseModel):
     model_slug: str
     mode: str = "default"
     resolution: str = "default"
-    price_rub: Decimal = Field(gt=0)
-    provider_cost_usdt: Decimal = Field(gt=0)
+    price_rub: Decimal = Field(ge=0, allow_inf_nan=False)
+    provider_cost_usdt: Decimal = Field(ge=0, allow_inf_nan=False)
     billing_unit: str = Field(default="generation", pattern="^(generation|second|million_tokens)$")
+
+    @model_validator(mode="after")
+    def require_reviewed_zero_rate(self) -> "PartnerPriceUpsert":
+        if (self.price_rub == 0 or self.provider_cost_usdt == 0) and not supports_free_rate(
+            self.model_slug, self.mode, self.resolution, self.billing_unit
+        ):
+            raise ValueError("zero_price_requires_reviewed_free_token_rate")
+        return self
 
 
 class PricingRead(BaseModel):

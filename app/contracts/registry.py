@@ -36,6 +36,14 @@ def integer(value: Any, name: str, minimum: int, maximum: int) -> int:
     return value
 
 
+def image_reference_limit(model: str, *, multipart: bool = False) -> int:
+    if model.startswith("gpt-image"):
+        return 16
+    if model == "nano-banana-pro":
+        return 14
+    return 1 if multipart and not model.startswith("nano-") else 3
+
+
 def validate_request(protocol: str, original: dict[str, Any]) -> dict[str, Any]:
     """Return a copy without dropping or injecting provider request controls."""
     body = copy.deepcopy(original)
@@ -64,14 +72,18 @@ def validate_request(protocol: str, original: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("prompt_required")
         if "images" in body:
             refs = body["images"]
-            if not isinstance(refs, list) or not 1 <= len(refs) <= (16 if model.startswith("gpt-image") else 3):
+            if not isinstance(refs, list) or not 1 <= len(refs) <= image_reference_limit(model):
                 raise ValueError("invalid_reference_images")
         if model.startswith("nano-"):
             if body.get("response_format", "b64_json") != "b64_json":
                 raise ValueError("unsupported_response_format")
-            if body.get("aspect_ratio", "1:1") not in {"1:1", "16:9", "9:16", "4:3", "3:4"}:
+            ratios = {"1:1", "16:9", "9:16", "4:3", "3:4"}
+            if model == "nano-banana-pro":
+                ratios |= {"3:2", "2:3", "5:4", "4:5", "21:9"}
+            if body.get("aspect_ratio", "1:1") not in ratios:
                 raise ValueError("unsupported_aspect_ratio")
-        if not model.startswith("gpt-image") and str(body.get("resolution", "1k")).lower() not in {"1k", "2k"}:
+        resolutions = {"1k", "2k", "4k"} if model == "nano-banana-pro" else {"1k", "2k"}
+        if not model.startswith("gpt-image") and str(body.get("resolution", "1k")).lower() not in resolutions:
             raise ValueError("unsupported_resolution")
         image_tier(body)
         return body
