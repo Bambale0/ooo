@@ -86,9 +86,9 @@ async def reserve(
     if trial_telegram_id is None and charge < coverage:
         raise HTTPException(503, "provider_temporarily_unavailable")
     await require_sufficient_balance(partner, charge)
-    from app.billing.capital import require_current_capital
+    from app.billing.capital import require_provider_capital
 
-    await require_current_capital(db, cost)
+    await require_provider_capital(db, cost, partner_id=partner.id)
     # Native video requests are durable queue work. Sync inference has a durable
     # submission intent; workers must not turn a disconnected call into a second job.
     video = protocol == "videos/generations"

@@ -23,6 +23,9 @@ class FakeArgoLinkAdapter:
     async def health_check(self) -> bool:
         return True
 
+    async def prepaid_balance_usdt(self) -> Decimal:
+        return Decimal("100")
+
     async def validate_key(self, api_key: str) -> bool:
         return not api_key.startswith("invalid")
 

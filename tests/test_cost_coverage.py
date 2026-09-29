@@ -92,6 +92,11 @@ async def test_generation_checks_real_capital_not_historical_coverage(
         return Decimal("0"), 0, "fresh"
 
     monkeypatch.setattr("app.billing.capital.wallet_balance", empty_wallet)
+
+    async def empty_provider(self):
+        return Decimal("0")
+
+    monkeypatch.setattr("app.providers.argolink.ArgoLinkAdapter.prepaid_balance_usdt", empty_provider, raising=False)
     partner_id, token = await _seed_generation_preflight(db_session)
     headers = {"Authorization": f"Bearer {token}"}
     payload = {
@@ -122,10 +127,10 @@ async def test_generation_checks_real_capital_not_historical_coverage(
     )
     assert coverage_entries.scalars().first() is None
 
-    async def funded_wallet(db):
-        return Decimal("100"), 0, "fresh"
+    async def funded_provider(self):
+        return Decimal("100")
 
-    monkeypatch.setattr("app.billing.capital.wallet_balance", funded_wallet)
+    monkeypatch.setattr("app.providers.argolink.ArgoLinkAdapter.prepaid_balance_usdt", funded_provider)
     # No coverage adjustment: exhausted historical coverage must not block a
     # partner when real working capital exists (brief section 89).
     accepted = await client.post("/api/v1/generations", headers=headers, json=payload)

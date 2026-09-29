@@ -106,9 +106,9 @@ async def create_generation(
 
     # Both funding gates happen before a generation UUID/row or either reserve is created.
     await require_sufficient_balance(locked_partner, price_rub)
-    from app.billing.capital import require_current_capital
+    from app.billing.capital import require_provider_capital
 
-    await require_current_capital(db, provider_cost_usdt)
+    await require_provider_capital(db, provider_cost_usdt, partner_id=locked_partner.id)
 
     generation = Generation(
         partner_id=locked_partner.id,

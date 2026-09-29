@@ -14,6 +14,8 @@ from app.infrastructure.config import get_settings
 from app.infrastructure.retry import utc_now
 from app.payments.crypto_pay import CryptoPayError, get_crypto_pay_client
 from app.payments.models import PaymentInvoice
+from app.providers.base import ProviderAdapterError
+from app.providers.service import get_partner_provider_adapter
 
 ACTIVE = ("queued", "sent_to_provider", "processing", "timeout", "submitting", "reconciliation_required")
 
@@ -162,4 +164,51 @@ async def require_current_capital(db, cost_usdt):
     await lock_capital(db)
     state = await capital_state(db)
     if state["available"] is None or state["available"] < cost_usdt or state["freshness"] != "fresh":
+        raise HTTPException(503, "provider_temporarily_unavailable")
+
+
+async def provider_capital_state(db, partner_id, provider="argolink"):
+    """Spendable prepaid funds, never added to withdrawable cash or partner credit.
+
+    Global reservations deliberately over-reserve when keys use separate wallets:
+    the provider does not expose a reliable account identifier for pooling keys.
+    Callers admitting new work must hold lock_capital through reservation commit.
+    """
+    adapter = await get_partner_provider_adapter(db, partner_id, provider)
+    try:
+        balance = await adapter.prepaid_balance_usdt()
+    except ProviderAdapterError as exc:
+        raise HTTPException(503, "provider_temporarily_unavailable") from exc
+    active = Decimal(
+        (
+            await db.execute(
+                select(func.coalesce(func.sum(Generation.provider_cost_usdt_snapshot), 0)).where(
+                    Generation.status.in_(ACTIVE)
+                )
+            )
+        ).scalar()
+    )
+    invoices = (
+        await db.execute(select(PaymentInvoice).where(PaymentInvoice.status == "paid_waiting_credit"))
+    ).scalars()
+    pending = Decimal(0)
+    for invoice in invoices:
+        amount = paid_usdt(invoice)
+        if amount is None:
+            raise HTTPException(503, "provider_temporarily_unavailable")
+        pending += amount
+    required_float = get_settings().required_provider_float_usdt
+    return {
+        "balance": balance,
+        "active": active,
+        "pending": pending,
+        "float": required_float,
+        "available": balance - active - pending - required_float,
+    }
+
+
+async def require_provider_capital(db, cost_usdt, *, partner_id, provider="argolink"):
+    await lock_capital(db)
+    state = await provider_capital_state(db, partner_id, provider)
+    if state["available"] < cost_usdt:
         raise HTTPException(503, "provider_temporarily_unavailable")

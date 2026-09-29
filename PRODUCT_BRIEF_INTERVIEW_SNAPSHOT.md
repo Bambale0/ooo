@@ -1962,6 +1962,18 @@ Partner changelog notification:
 - historical cost coverage используется для учёта и сверки, current required reserve — для текущего risk/safe-withdraw контроля
 
 
+Реализация проверки текущего капитала уточнена 2026-09-29 после production-инцидента:
+деньги, уже внесённые на upstream wallet, допускают генерации независимо от нулевого
+Crypto Bot wallet. Для выбранного credential запрашивается свежий подтверждённый
+денежный balance; из него консервативно вычитаются глобальные active reserves,
+paid-but-not-credited obligations и required float. Quota/remaining без доказанного
+денежного wallet не считаются капиталом. Недоступный или неподтверждённый balance
+даёт прежний нейтральный 503 до создания заявки и списаний. Проверки partner RUB balance
+и экономики сохраняются. Prepaid balance не прибавляется к safe-to-withdraw и не создаёт
+учётных поступлений/пополнений партнёра. Глобальные резервы могут консервативно ограничивать
+независимые upstream accounts, пока нет надёжного идентификатора общего кошелька.
+
+
 ## 90. Neutral error for economically unavailable generation
 
 Подтверждено:
