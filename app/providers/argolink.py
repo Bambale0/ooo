@@ -2,6 +2,7 @@ import json
 import re
 from decimal import Decimal, InvalidOperation
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -254,8 +255,37 @@ class ArgoLinkAdapter:
 
         response: httpx.Response | None = None
         try:
-            request = client.build_request("GET", provider_content_url, headers=headers)
-            response = await client.send(request, stream=True, follow_redirects=False)
+            # The protected content proxy can stall mid-file even when its CDN
+            # object is complete. Resolve a fresh signed object URL server-side;
+            # keep provider identifiers and credentials out of the public API.
+            metadata = await client.get(
+                provider_content_url.removesuffix("/content"),
+                headers=self._auth_headers(),
+                follow_redirects=False,
+                auth=None,
+            )
+            metadata.raise_for_status()
+            try:
+                data = metadata.json()
+            except ValueError:
+                data = None
+            video = data.get("video") if isinstance(data, dict) and data.get("status") == "done" else None
+            cdn_url = video.get("url") if isinstance(video, dict) else None
+            if self._is_result_cdn_url(cdn_url):
+                # Raw Request bypasses shared-client default headers/cookies.
+                # auth=None also bypasses any default client auth handler.
+                download_headers = {"Accept-Encoding": "identity"}
+                if range_header:
+                    download_headers["Range"] = range_header
+                request = httpx.Request(
+                    "GET",
+                    cdn_url,
+                    headers=download_headers,
+                    extensions={"timeout": httpx.Timeout(self.timeout_seconds, connect=5, pool=5).as_dict()},
+                )
+            else:
+                request = client.build_request("GET", provider_content_url, headers=headers)
+            response = await client.send(request, stream=True, follow_redirects=False, auth=None)
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
             if response is not None:
@@ -298,6 +328,24 @@ class ArgoLinkAdapter:
             content_range=response.headers.get("content-range"),
             accept_ranges=response.headers.get("accept-ranges"),
         )
+
+    @staticmethod
+    def _is_result_cdn_url(value: object) -> bool:
+        if not isinstance(value, str):
+            return False
+        try:
+            url = urlsplit(value)
+            return (
+                url.scheme == "https"
+                and url.hostname == "ark-acg-ap-southeast-1.tos-ap-southeast-1.volces.com"
+                and url.port in (None, 443)
+                and url.username is None
+                and url.password is None
+                and not url.fragment
+                and url.path.startswith("/")
+            )
+        except ValueError:
+            return False
 
     def normalize_error(self, error: Exception) -> ProviderAdapterError:
         if isinstance(error, ProviderAdapterError):
