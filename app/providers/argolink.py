@@ -225,12 +225,31 @@ class ArgoLinkAdapter:
         result_url = f"{self.base_url}/v1/videos/{provider_task_id}/content" if status == "completed" else None
         raw_error = self._extract_error(data) if status == "failed" else None
         usage = data.get("usage")
+        error = data.get("error")
+        error_code = error.get("code") if isinstance(error, dict) else None
+        # Only an explicitly closed, retryable internal failure permits a new
+        # paid job. Empty usage is not evidence that the failed job was free.
+        retryable_failure = (
+            data.get("status") == "failed"
+            and isinstance(error, dict)
+            and error_code == "internal_error"
+            and error.get("retryable") is True
+            and data.get("video") in (None, {})
+            and usage in (None, {})
+        )
         # Grok's live response reports duration in video, unlike Seedance/Wan.
         if status == "completed" and data.get("model") == "grok-imagine-video-1.5":
             duration = (data.get("video") or {}).get("duration")
             if isinstance(duration, int) and not isinstance(duration, bool) and duration > 0:
                 usage = {"billed_seconds": duration, "output_seconds": duration, "reference_video_seconds": 0}
-        return ProviderPollResult(status=status, result_url=result_url, raw_error=raw_error, usage=usage)
+        return ProviderPollResult(
+            status=status,
+            result_url=result_url,
+            raw_error=raw_error,
+            usage=usage,
+            error_code=error_code if isinstance(error_code, str) else None,
+            retryable_failure=retryable_failure,
+        )
 
     async def open_result_stream(
         self,

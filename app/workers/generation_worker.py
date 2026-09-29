@@ -188,6 +188,7 @@ def _fair_due_active_candidate_ids_query(*, provider: str, limit: int):
         .where(
             Generation.status.in_(("sent_to_provider", "processing", "timeout")),
             ProviderAttempt.status.in_(("accepted", "processing", "retry_pending", "timeout")),
+            ProviderAttempt.provider_task_id.is_not(None),
             (due_at.is_(None)) | (due_at <= now),
         )
         .subquery()
@@ -309,6 +310,7 @@ async def _poll_active_generations(
         .where(
             Generation.status.in_(("sent_to_provider", "processing", "timeout")),
             ProviderAttempt.status.in_(("accepted", "processing", "retry_pending", "timeout")),
+            ProviderAttempt.provider_task_id.is_not(None),
         )
         .order_by(Generation.created_at)
         .with_for_update(skip_locked=True)
