@@ -168,6 +168,21 @@ See [the live verification matrix](LIVE_VERIFICATION_2026-09-23.md). Adapter
 coverage and a passing isolated contract test do not imply every upstream model
 or protocol is currently operational.
 
+## Completed video delivery (2026-09-29)
+
+A live completed Seedance 2.5 object was 11,386,099 bytes. The protected content
+proxy repeatedly stalled after about 24 KiB, while the signed object CDN completed
+an exact 64 KiB Range read. The gateway resolves the current task metadata before
+opening content and reads the signed object directly only for the reviewed exact
+HTTPS CDN host `ark-acg-ap-southeast-1.tos-ap-southeast-1.volces.com`.
+
+Partner URLs, authentication, status and Range response headers stay unchanged;
+there is no local/S3 result retention. CDN requests use a raw request without
+shared-client headers/cookies or default auth, and never follow redirects. Unknown
+hosts continue through the fixed protected provider content route. No provider URL
+or credential is exposed in the partner response; retrieval retries never submit
+another generation or alter billing.
+
 ## Reconciliation
 
 `GET /api/v1/providers/reconciliation` lists uncertain requests. POST to

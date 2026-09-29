@@ -99,6 +99,7 @@ async def test_argolink_adapter_submits_polls_and_streams_with_configured_key():
     assert [request.url.path for request in requests] == [
         "/v1/videos/generations",
         "/v1/videos/video_task_123",
+        "/v1/videos/video_task_123",
         "/v1/videos/video_task_123/content",
     ]
 
