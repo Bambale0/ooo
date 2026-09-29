@@ -43,6 +43,7 @@ class CabinetSessionMiddleware(BaseMiddleware):
         async with SessionLocal() as db:
             try:
                 dialog = await lock_dialog(db, str(event.from_user.id))
+                dialog.telegram_username = (event.from_user.username or "").lower() or None
                 data.update(db=db, dialog=dialog)
                 result = await handler(event, data)
                 await db.commit()

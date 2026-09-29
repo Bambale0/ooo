@@ -29,10 +29,12 @@ async def cabinet(db_session, monkeypatch):
     bot.session = AsyncMock()
     counter = 0
 
-    async def feed(*, user=123, text=None, callback=None, document=None):
+    async def feed(*, user=123, username=None, text=None, callback=None, document=None):
         nonlocal counter
         counter += 1
         sender = {"id": user, "is_bot": False, "first_name": "Test"}
+        if username is not None:
+            sender["username"] = username
         message = {
             "message_id": counter,
             "date": int(datetime.now(UTC).timestamp()),

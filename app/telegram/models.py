@@ -12,6 +12,8 @@ from app.infrastructure.types import utc_created_at, uuid_pk
 class BotDialog(Base):
     __tablename__ = "bot_dialogs"
     telegram_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    # Last observed Telegram username, normalized for exact case-insensitive search.
+    telegram_username: Mapped[str | None] = mapped_column(String(32), index=True)
     state: Mapped[str] = mapped_column(String(80), default="menu", nullable=False)
     data: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
 

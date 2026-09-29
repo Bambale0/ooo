@@ -128,9 +128,14 @@ async def menu(event):
     )
 
 
-async def start(event, dialog, name):
+async def start(event, db, dialog, name):
     if name not in FORMS:
         raise HTTPException(404, "unknown_form")
+    if name == "adjustment":
+        from app.telegram.admin_partners import start_picker
+
+        await start_picker(event, db, dialog)
+        return
     dialog.state, dialog.data = "admin_form_input", {"form": name, "values": {}, "index": 0}
     await show(event, FORMS[name][1][0][1])
 
@@ -159,13 +164,18 @@ async def input_value(event, db, dialog, value):
             await event.delete()
         except TelegramBadRequest:
             pass
-    action = await new_action(db, str(event.from_user.id), "admin_form", {"form": name, "values": values})
-    dialog.state, dialog.data = "menu", {}
-    await db.commit()
     detail = "\n".join(
         f"{prompt.split(';')[0]}: {'[скрыт]' if key == 'api_key' else values[key] if values[key] is not None else '—'}"
         for key, prompt in fields
     )
+    if name == "adjustment":
+        from app.telegram.admin_partners import recipient_details
+
+        recipient = await recipient_details(db, values["partner_id"])
+        detail = f"{recipient}\nСумма RUB со знаком: {values['amount_rub']}\nПричина: {values['description']}"
+    action = await new_action(db, str(event.from_user.id), "admin_form", {"form": name, "values": values})
+    dialog.state, dialog.data = "menu", {}
+    await db.commit()
     await show(
         event, f"{FORMS[name][0]}\n\n{detail}\n\nПодтвердить?", keyboard(("Подтвердить", f"confirm:{action.id}"))
     )
