@@ -32,6 +32,8 @@ class ProviderPollResult:
     result_url: str | None = None
     raw_error: str | None = None
     usage: dict[str, object] | None = None
+    error_code: str | None = None
+    retryable_failure: bool = False
 
 
 @dataclass(frozen=True)

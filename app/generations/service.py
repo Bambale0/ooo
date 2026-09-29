@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -5,10 +7,10 @@ from app.billing.service import release_generation_reserves, settle_generation_r
 from app.generations.models import Generation
 from app.infrastructure.config import get_settings
 from app.infrastructure.metrics import monotonic_seconds, observe_provider_request
-from app.infrastructure.retry import is_due, is_older_than, next_poll_at, next_retry_at
+from app.infrastructure.retry import is_due, is_older_than, next_poll_at, next_retry_at, utc_now
 from app.media.service import create_provider_ready_asset
-from app.providers.base import ProviderAdapterError, ProviderGenerationRequest
-from app.providers.models import ProviderAttempt, ProviderModelCapability
+from app.providers.base import ProviderAdapterError, ProviderGenerationRequest, ProviderPollResult
+from app.providers.models import ProviderAttempt, ProviderCredential, ProviderModelCapability
 from app.providers.rate_limit import get_provider_rate_limiter
 from app.providers.service import get_active_provider_credential, get_partner_provider_adapter
 from app.webhooks.service import ensure_terminal_webhook_event
@@ -64,6 +66,11 @@ async def dispatch_generation_to_provider(
     else:
         attempt = None
 
+    failed_tasks = (generation.request_payload or {}).get("provider_failed_tasks", [])
+    retrying_failed_task = any(item.get("provider") == provider for item in failed_tasks)
+    if retrying_failed_task and attempt and await _expire_generation_retry(db, generation, attempt):
+        return attempt
+
     from app.billing.service import lock_partner_for_update
 
     owner = await lock_partner_for_update(db, generation.partner_id)
@@ -73,7 +80,28 @@ async def dispatch_generation_to_provider(
 
     if not await admit(db, generation.id, provider=provider):
         return None
-    adapter = await get_partner_provider_adapter(db, generation.partner_id, provider)
+    if retrying_failed_task:
+        # Retrying on another account could orphan billing/reconciliation. A
+        # revoked original credential must not silently switch to a newer key.
+        credential = (
+            await db.execute(
+                select(ProviderCredential)
+                .where(
+                    ProviderCredential.id == attempt.credential_id,
+                    ProviderCredential.partner_id == generation.partner_id,
+                    ProviderCredential.provider == provider,
+                    ProviderCredential.is_active.is_(True),
+                    ProviderCredential.encrypted_api_key.is_not(None),
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if credential is None:
+            return await cancel_before_submit(db, generation, provider=provider)
+        adapter = await get_partner_provider_adapter(db, generation.partner_id, provider, credential_id=credential.id)
+    else:
+        adapter = await get_partner_provider_adapter(db, generation.partner_id, provider)
+        credential = await get_active_provider_credential(db, generation.partner_id, provider)
     request = ProviderGenerationRequest(
         generation_id=generation.id,
         native_body=(generation.request_payload or {}).get("native_body"),
@@ -93,13 +121,14 @@ async def dispatch_generation_to_provider(
     )
     try:
         await get_provider_rate_limiter(provider, "submit").acquire()
+        if retrying_failed_task and attempt and await _expire_generation_retry(db, generation, attempt):
+            return attempt
         # Persist the submit intent BEFORE the external side effect. If the process
         # dies after acceptance, a restart must not blindly create a second paid job.
         # A submitting attempt without an ID requires operator reconciliation.
         if attempt is None:
             attempt = ProviderAttempt(generation_id=generation.id, provider=provider, status="submitting")
             db.add(attempt)
-        credential = await get_active_provider_credential(db, generation.partner_id, provider)
         if credential is not None:
             attempt.credential_id = credential.id
         attempt.status = "submitting"
@@ -311,6 +340,8 @@ async def poll_generation_provider(
         if reconciling_late_success:
             generation.status = "timeout"
             generation.public_error_code = "generation_timeout"
+        elif result.retryable_failure and _schedule_generation_retry(generation, attempt, result):
+            pass
         else:
             generation.status = "failed"
             generation.public_error_code = "provider_generation_failed"
@@ -338,6 +369,55 @@ async def poll_generation_provider(
     await db.flush()
     await db.refresh(generation)
     return generation
+
+
+def _schedule_generation_retry(generation: Generation, attempt: ProviderAttempt, result: ProviderPollResult) -> bool:
+    payload = generation.request_payload or {}
+    history = payload.get("provider_failed_tasks", [])
+    retry_count = sum(item.get("provider") == attempt.provider for item in history)
+    if retry_count >= get_settings().worker_generation_max_retries:
+        return False
+    failed_at = utc_now()
+    generation.request_payload = {
+        **payload,
+        "provider_failed_tasks": [
+            *history,
+            {
+                "provider": attempt.provider,
+                "provider_task_id": attempt.provider_task_id,
+                "credential_id": attempt.credential_id,
+                "error_code": result.error_code,
+                "error": result.raw_error,
+                "usage": result.usage,
+                "failed_at": failed_at.isoformat(),
+                "cost_status": "unknown",
+            },
+        ],
+    }
+    # The worker holds the generation row lock. History and the new submit
+    # eligibility commit together; restart cannot forget an already-paid task.
+    attempt.provider_task_id = None
+    attempt.status = "retry_pending"
+    attempt.next_attempt_at = failed_at + timedelta(seconds=(5, 15)[retry_count])
+    attempt.next_poll_at = None
+    attempt.last_error = result.raw_error
+    attempt.public_error_code = None
+    generation.status = "queued"
+    generation.public_error_code = None
+    return True
+
+
+async def _expire_generation_retry(db: AsyncSession, generation: Generation, attempt: ProviderAttempt) -> bool:
+    if not is_older_than(attempt.created_at, get_settings().worker_provider_processing_timeout_seconds):
+        return False
+    generation.status = attempt.status = "timeout"
+    generation.public_error_code = attempt.public_error_code = "generation_timeout"
+    attempt.last_error = "provider_processing_timeout"
+    attempt.next_attempt_at = attempt.next_poll_at = None
+    await release_generation_reserves(db, generation, reason="Released partner reserve after retry deadline")
+    await ensure_terminal_webhook_event(db, generation)
+    await db.flush()
+    return True
 
 
 def _mark_attempt_error(
@@ -401,7 +481,9 @@ async def cancel_before_submit(
 
     generation.status = attempt.status = "cancelled"
     generation.actual_charge_rub = Decimal("0")
-    generation.actual_provider_cost_usdt = Decimal("0")
+    generation.actual_provider_cost_usdt = (
+        None if (generation.request_payload or {}).get("provider_failed_tasks") else Decimal("0")
+    )
     attempt.next_attempt_at = attempt.next_poll_at = None
     await release_generation_reserves(db, generation, reason="Cancelled before provider submission")
     await ensure_terminal_webhook_event(db, generation)

@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     worker_poll_backoff_base_seconds: float = Field(default=5.0, gt=0)
     worker_poll_backoff_max_seconds: float = Field(default=30.0, gt=0)
     worker_max_retries: int = 3
+    worker_generation_max_retries: int = Field(default=2, ge=0, le=2)
     worker_retry_base_seconds: float = 5.0
     worker_retry_max_seconds: float = 300.0
     worker_provider_processing_timeout_seconds: float = 30 * 60
