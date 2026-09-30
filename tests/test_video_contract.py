@@ -47,6 +47,44 @@ def test_invalid_model_combinations_are_rejected(changes):
         validate_video_request(replace(BASE, **changes))
 
 
+@pytest.mark.parametrize("model", ["seedance-2.5", "seedance-2.5-self-developed-nsfw"])
+def test_seedance_25_family_shares_its_limit_profile(model):
+    """Both 2.5 variants accept 4-30s, 30 references and 1080p.
+
+    Guards the family-based limits: an exact-slug comparison would silently give a
+    new variant the 2.0 profile (15s, 9 references) and reject valid paid requests.
+    """
+    validate_video_request(replace(BASE, model_slug=model, duration_seconds=30, resolution="1080p"))
+    validate_video_request(
+        replace(
+            BASE,
+            model_slug=model,
+            mode="reference",
+            resolution="1080p",
+            reference_images=("https://example.com/a.jpg",) * 30,
+        )
+    )
+    # 4k and 31 seconds belong to the 2.0 family only, never to 2.5.
+    with pytest.raises(ValueError, match="unsupported_resolution"):
+        validate_video_request(replace(BASE, model_slug=model, resolution="4k"))
+    with pytest.raises(ValueError, match="unsupported_duration"):
+        validate_video_request(replace(BASE, model_slug=model, duration_seconds=31))
+    # start_image restricts the aspect ratio to adaptive in the 2.5 family.
+    validate_video_request(
+        replace(BASE, model_slug=model, mode="first_frame", start_image="https://example.com/a.jpg")
+    )
+    with pytest.raises(ValueError, match="unsupported_aspect_ratio"):
+        validate_video_request(
+            replace(
+                BASE,
+                model_slug=model,
+                mode="first_frame",
+                start_image="https://example.com/a.jpg",
+                aspect_ratio="16:9",
+            )
+        )
+
+
 @pytest.mark.parametrize("model,first_field", [("seedance-2.5", "start_image"), ("grok-imagine-video-1.5", "image")])
 def test_first_frame_uses_model_specific_wire_field(model, first_field):
     body = video_request_body(

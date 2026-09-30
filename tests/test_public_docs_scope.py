@@ -10,7 +10,7 @@ from app.api.partner_reference import EXAMPLES, VIDEO_LIMITS
 from app.api.text_reference import EXAMPLES as TEXT_EXAMPLES
 from app.api.text_reference import PUBLIC_TEXT_MODELS
 from app.catalog.models import Model
-from app.contracts.registry import MODELS, validate_request
+from app.contracts.registry import MODELS, RESTRICTED_MODELS, validate_request
 from app.infrastructure.config import get_settings
 
 
@@ -146,8 +146,18 @@ def test_published_video_duration_and_resolution_limits_match_contract(model, se
             validate_request("videos/generations", {"model": model, "prompt": "A camera move", "duration": duration})
 
 
-def test_video_table_covers_every_supported_video_model():
-    assert {row[0] for row in VIDEO_LIMITS} == {name for name, item in MODELS.items() if item["category"] == "video"}
+def test_video_table_covers_every_published_video_model():
+    """Every publicly published video model needs a documented limits row.
+
+    A contracted `restricted` model is intentionally absent here: it is granted
+    per partner and must not appear in the public reference or price table.
+    """
+    published = {name for name, item in MODELS.items() if item["category"] == "video"}
+    documented = {row[0] for row in VIDEO_LIMITS}
+    restricted = RESTRICTED_MODELS
+    assert restricted, "Expected at least one restricted model kept out of public docs"
+    assert documented | restricted == published
+    assert not documented & restricted
 
 
 def test_text_metadata_is_explicitly_public_and_covers_supported_ids():

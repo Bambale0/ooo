@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from sqlalchemy import JSON, Numeric, String, UniqueConstraint
+from sqlalchemy import JSON, DateTime, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.database import Base
@@ -19,6 +19,26 @@ class Model(Base):
     has_provider_integration: Mapped[bool] = mapped_column(default=False, nullable=False)
     has_public_docs: Mapped[bool] = mapped_column(default=False, nullable=False)
     has_successful_smoke: Mapped[bool] = mapped_column(default=False, nullable=False)
+    created_at: Mapped[object] = utc_created_at()
+
+
+class PartnerModelGrant(Base):
+    """Per-partner access to a model that is deliberately absent from the public catalog.
+
+    A `restricted` model is never listed in /models, /pricing or the public docs.
+    It becomes usable only for partners holding a non-revoked row here, so access
+    is granted explicitly per partner instead of being published to everyone.
+    """
+
+    __tablename__ = "partner_model_grants"
+    __table_args__ = (UniqueConstraint("model_id", "partner_id", name="uq_partner_model_grant"),)
+
+    id: Mapped[str] = uuid_pk()
+    model_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    partner_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    granted_by: Mapped[str] = mapped_column(String(120), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    revoked_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), index=True)
     created_at: Mapped[object] = utc_created_at()
 
 

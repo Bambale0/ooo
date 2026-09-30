@@ -88,7 +88,23 @@ FORMS = {
         "Доступность модели",
         [
             ("model", "Код модели"),
-            ("status", "production для включения или disabled для отключения"),
+            ("status", "production для включения, restricted для скрытой или disabled для отключения"),
+        ],
+    ),
+    "model_grant": (
+        "Выдать restricted-модель партнёру",
+        [
+            ("model", "Код restricted-модели"),
+            ("partner_id", "UUID партнёра, которому выдаётся доступ"),
+            ("reason", "Основание выдачи (от 10 символов)"),
+        ],
+    ),
+    "model_revoke": (
+        "Отозвать restricted-модель",
+        [
+            ("model", "Код restricted-модели"),
+            ("partner_id", "UUID партнёра, у которого отзывается доступ"),
+            ("reason", "Основание отзыва (от 10 символов)"),
         ],
     ),
     "invoice_reconcile": (
@@ -230,7 +246,13 @@ def validate(name, values, idem):
         data = {k: v for k, v in values.items() if k != "generation_id"}
         data["units"] = json.loads(data["units"]) if data["units"] else None
         return Reconciliation(**data)
-    if name == "model_status" and values.get("model") and values["status"] in {"production", "disabled"}:
+    if name in {"model_grant", "model_revoke"} and values.get("model") and values.get("partner_id"):
+        # A tracked reason is mandatory: access to a restricted model must never
+        # be switched on by a bare toggle with no accountable justification.
+        if len(values.get("reason") or "") < 10:
+            raise ValueError("reason_required")
+        return values
+    if name == "model_status" and values.get("model") and values["status"] in {"production", "restricted", "disabled"}:
         return values
     raise ValueError("invalid_form")
 
@@ -294,15 +316,28 @@ async def execute(db, action, actor):
         await reconcile(values["generation_id"], payload, db)
     elif name == "model_status":
         from app.catalog.models import Model
-        from app.catalog.router import enable_model
+        from app.catalog.router import enable_model, enable_restricted_model
 
         if values["status"] == "production":
             await enable_model(values["model"], db)
+        elif values["status"] == "restricted":
+            await enable_restricted_model(values["model"], db)
         else:
             model = (await db.execute(select(Model).where(Model.slug == values["model"]))).scalar_one_or_none()
             if not model:
                 raise HTTPException(404, "model_not_found")
             model.status = "disabled"
+    elif name in {"model_grant", "model_revoke"}:
+        from app.catalog.access import grant_model_access, revoke_model_access
+
+        action = grant_model_access if name == "model_grant" else revoke_model_access
+        await action(
+            db,
+            model_slug=values["model"],
+            partner_id=values["partner_id"],
+            reason=values["reason"],
+            actor=actor,
+        )
 
 
 async def history(event, db, data):

@@ -11,6 +11,7 @@ from app.billing.service import (
     lock_partner_for_update,
     require_sufficient_balance,
 )
+from app.catalog.access import RESTRICTED_STATUS, has_model_grant
 from app.catalog.models import Model, PartnerPrice
 from app.generations.models import Generation
 from app.generations.schemas import (
@@ -49,7 +50,7 @@ async def create_generation(
         .join(PartnerPrice, PartnerPrice.model_id == Model.id)
         .where(
             Model.slug == payload.model_slug,
-            Model.status == "production",
+            Model.status.in_(["production", RESTRICTED_STATUS]),
             PartnerPrice.mode == payload.mode,
             PartnerPrice.resolution == payload.resolution,
         )
@@ -58,6 +59,8 @@ async def create_generation(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="model_or_price_not_available")
     model, price = row
+    if model.status == RESTRICTED_STATUS and not await has_model_grant(db, model.id, partner.id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="model_or_price_not_available")
     try:
         validate_video_request(
             ProviderGenerationRequest(
