@@ -70,7 +70,7 @@ GENERATIONS_TOTAL = Counter(
 )
 PAYMENTS_PENDING_CREDIT = Gauge(
     "neironych_payments_pending_credit_count",
-    "Number of paid invoices awaiting manual credit.",
+    "Number of paid invoices awaiting credit recovery.",
 )
 SAFE_TO_WITHDRAW_USDT = Gauge(
     "neironych_safe_to_withdraw_usdt",

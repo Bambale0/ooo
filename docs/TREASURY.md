@@ -50,7 +50,7 @@ order is manual fallback, then last automatic rate. `RUB_PER_USDT` supplies the
 initial operator-configured manual fallback; an explicit disabled DB setting
 supersedes it. Telegram admin → Казначейство → Курс configures or disables fallback.
 Automatic data takes precedence as soon as it recovers. Every accepted generation,
-manual payment credit and retail price change records rate/source/automatic timestamp.
+automatic or manual payment credit and retail price change records rate/source/automatic timestamp.
 
 The Telegram process evaluates treasury/economic incidents once per minute.
 Deficit notifications repeat every 15 minutes until manually acknowledged; recovery

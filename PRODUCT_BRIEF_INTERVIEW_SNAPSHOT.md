@@ -1027,55 +1027,34 @@ Invoice TTL:
 
 Если expired invoice всё же фактически оплачен:
 
-- платёж не теряется
-- помечается как «invoice expired»
-- проходит обычный ручной admin flow
+- платёж не теряется;
+- сохраняется признак «invoice expired»;
+- после проверки Crypto Pay зачисляется исходная requested RUB amount.
 
-### Главное правило
+### Главное правило — решение от 2026-09-30
 
-Crypto Bot никогда сам не зачисляет partner balance.
+Подтверждённая Crypto Pay оплата автоматически пополняет partner RUB balance.
+Это решение заменяет прежний обязательный ручной admin flow.
 
 Flow:
 
-1. Crypto Bot подтверждает, что crypto пришла.
-2. Система фиксирует payment.
-3. Фиксируются:
-   - crypto amount
-   - asset
-   - payment-time rate
-   - requested RUB amount
-   - payment id
-4. Partner видит:
-   - «Оплачено, ожидает зачисления администратором»
-5. Admin получает alert.
-6. Admin идёт в ArgoLink и пополняет рабочий provider float, если требуется.
-7. Admin возвращается в Telegram.
-8. Backend проверяет реальный ArgoLink balance.
-9. Admin нажимает «Зачислить баланс».
-10. partner RUB balance и cost coverage увеличиваются.
-11. Payment status → credited.
+1. Backend проверяет подпись webhook и запрашивает счёт у Crypto Pay.
+2. Проверяются paid status, provider invoice id, payload и requested RUB amount.
+3. Сохраняются crypto amount, asset, payment-time rate и исходная RUB сумма.
+4. В одной транзакции создаются retail и cost coverage ledger entries,
+   фиксируются FX/coverage snapshot, credited status и уведомления партнёру/админу.
+5. Партнёр получает ровно запрошенную сумму в рублях, независимо от USDT/TON.
+6. Повторное подтверждение или одновременная сверка не увеличивают баланс повторно.
 
-Повторное confirmation не может double-credit.
+Фоновая сверка проверяет неоплаченные локальные счета, включая expired и
+creation_unknown, даже если webhook потерян. Она только читает Crypto Pay:
+не создаёт повторные счета и не отправляет криптовалюту. Ошибка откатывает всё
+начисление; следующая сверка повторяет попытку. Старые paid_waiting_credit тоже
+проверяются у провайдера и зачисляются. Ручное зачисление остаётся резервным
+административным действием для подтверждённых платежей.
 
-### Recommendation in payment card
-
-В paid top-up card система должна показывать:
-
-- partner
-- Telegram ID
-- crypto amount
-- currency
-- payment id
-- requested RUB
-- current Argo float
-- calculated target float
-- recommended amount to deposit into ArgoLink
-
-Если recommended deposit = $0:
-
-- admin может сразу credit partner
-
-Кнопка «Зачислить баланс» должна учитывать проверку, что достаточный working float реально присутствует.
+Реальный provider float пополняется отдельно. Автоматическое начисление RUB
+не отменяет проверку реальных средств и provider balance перед генерациями.
 
 ### FX difference
 
@@ -1945,11 +1924,11 @@ Partner changelog notification:
 - изменение текущих цен влияет на новые операции и новые snapshots, но не должно автоматически переписывать ранее зафиксированное покрытие по уже зачисленному балансу
 
 
-## 87. Cost coverage snapshot at manual top-up credit
+## 87. Cost coverage snapshot at confirmed top-up credit
 
 Подтверждено:
 
-- покрытие будущей upstream-себестоимости фиксируется в момент, когда администратор вручную зачисляет оплаченное пополнение партнёру
+- покрытие будущей upstream-себестоимости фиксируется при зачислении подтверждённого пополнения партнёру — автоматически или резервным admin credit
 - для этого snapshot используются действующие на тот момент:
   - partner prices
   - procurement/provider costs

@@ -132,15 +132,17 @@
 - [ ] supported crypto asset реально принимается
 - [ ] payment webhook проверяется
 - [ ] duplicate webhook не создаёт duplicate credit
-- [ ] paid не зачисляет баланс автоматически
-- [ ] партнёр видит «Оплачено, ожидает зачисления администратором»
+- [ ] подтверждённый paid автоматически зачисляет исходную RUB сумму
+- [ ] партнёр получает уведомление о зачислении
 - [ ] admin получает alert
-- [ ] manual credit работает
+- [ ] резервный manual credit работает без повторного начисления
 - [ ] credit action идемпотентна
 - [ ] exact requested RUB зачисляется
 - [ ] FX difference логируется
 - [ ] >1% показывает warning
-- [ ] expired-but-paid попадает в manual flow
+- [ ] expired-but-paid зачисляется после проверки Crypto Pay
+- [ ] потерянный webhook восстанавливается фоновой сверкой
+- [ ] одновременные webhook и сверка не создают double credit
 - [ ] full refund протестирован
 - [ ] partial refund протестирован
 - [ ] refund после уже потраченного баланса может сделать balance negative без поломки ledger
