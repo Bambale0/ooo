@@ -4,9 +4,18 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 
 from app.api.dependencies import DbSession, require_admin
-from app.catalog.models import Model, PartnerPrice, PartnerPriceHistory
+from app.catalog.access import grant_model_access, revoke_model_access
+from app.catalog.models import Model, PartnerModelGrant, PartnerPrice, PartnerPriceHistory
 from app.catalog.procurement import supports_free_rate
-from app.catalog.schemas import ModelCreate, ModelEnableGateUpdate, ModelRead, PartnerPriceUpsert, PricingRead
+from app.catalog.schemas import (
+    ModelCreate,
+    ModelEnableGateUpdate,
+    ModelGrantCreate,
+    ModelGrantRead,
+    ModelRead,
+    PartnerPriceUpsert,
+    PricingRead,
+)
 from app.contracts.registry import MODELS
 
 router = APIRouter()
@@ -76,6 +85,115 @@ async def enable_model(model_slug: str, db: DbSession) -> Model:
     await db.flush()
     await db.refresh(model)
     return model
+
+
+@router.post(
+    "/models/{model_slug}/enable-restricted",
+    response_model=ModelRead,
+    dependencies=[Depends(require_admin)],
+)
+async def enable_restricted_model(model_slug: str, db: DbSession) -> Model:
+    """Move a model into `restricted` status: runnable only for granted partners.
+
+    Public documentation is deliberately skipped, because a restricted model must
+    not appear in /models, /pricing or the public reference. Provider integration
+    and a confirmed smoke are still required; a 409 is returned otherwise.
+    """
+    model = (await db.execute(select(Model).where(Model.slug == model_slug))).scalar_one_or_none()
+    if model is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="model_not_found")
+    if (
+        model.slug not in MODELS
+        or model.modality != {"chat": "llm", "image": "image", "video": "video"}[MODELS[model.slug]["category"]]
+    ):
+        raise HTTPException(status_code=409, detail="model_contract_not_supported")
+    from app.billing.fx import current_fx
+
+    fx = (await current_fx(db))["rate"]
+    prices = list((await db.execute(select(PartnerPrice).where(PartnerPrice.model_id == model.id))).scalars())
+    if not prices:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="price_gate_missing")
+    if any(p.price_rub < p.provider_cost_usdt * fx for p in prices):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="economic_gate_missing")
+    if not model.has_provider_integration:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="provider_integration_gate_missing")
+    if not model.has_successful_smoke:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="smoke_gate_missing")
+    model.status = "restricted"
+    await db.flush()
+    await db.refresh(model)
+    return model
+
+
+@router.post(
+    "/models/{model_slug}/grants",
+    response_model=ModelGrantRead,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin)],
+)
+async def create_model_grant(model_slug: str, payload: ModelGrantCreate, db: DbSession) -> dict:
+    grant = await grant_model_access(
+        db, model_slug=model_slug, partner_id=payload.partner_id, reason=payload.reason, actor="admin_api"
+    )
+    return {
+        "id": grant.id,
+        "model_slug": model_slug,
+        "partner_id": grant.partner_id,
+        "granted_by": grant.granted_by,
+        "reason": grant.reason,
+        "revoked_at": grant.revoked_at,
+        "created_at": grant.created_at,
+    }
+
+
+@router.delete(
+    "/models/{model_slug}/grants/{partner_id}",
+    response_model=ModelGrantRead,
+    dependencies=[Depends(require_admin)],
+)
+async def delete_model_grant(model_slug: str, partner_id: str, db: DbSession) -> dict:
+    grant = await revoke_model_access(
+        db, model_slug=model_slug, partner_id=partner_id, reason="revoked", actor="admin_api"
+    )
+    return {
+        "id": grant.id,
+        "model_slug": model_slug,
+        "partner_id": grant.partner_id,
+        "granted_by": grant.granted_by,
+        "reason": grant.reason,
+        "revoked_at": grant.revoked_at,
+        "created_at": grant.created_at,
+    }
+
+
+@router.get(
+    "/models/{model_slug}/grants",
+    response_model=list[ModelGrantRead],
+    dependencies=[Depends(require_admin)],
+)
+async def list_model_grants(model_slug: str, db: DbSession) -> list[dict]:
+    model = (await db.execute(select(Model).where(Model.slug == model_slug))).scalar_one_or_none()
+    if model is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="model_not_found")
+    grants = (
+        await db.execute(
+            select(PartnerModelGrant)
+            .where(PartnerModelGrant.model_id == model.id, PartnerModelGrant.revoked_at.is_(None))
+            .order_by(PartnerModelGrant.created_at)
+        )
+    ).scalars()
+    return [
+        {
+            "id": g.id,
+            "model_slug": model_slug,
+            "partner_id": g.partner_id,
+            "granted_by": g.granted_by,
+            "reason": g.reason,
+            "revoked_at": g.revoked_at,
+            "created_at": g.created_at,
+        }
+        for g in grants
+    ]
 
 
 @router.put("/pricing", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_admin)])

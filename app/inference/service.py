@@ -90,10 +90,19 @@ async def reserve(
         if (existing.request_payload or {}).get("request_hash") != request_hash:
             raise HTTPException(409, "idempotency_conflict")
         return existing, None
+    from app.catalog.access import RESTRICTED_STATUS, has_model_grant
+
     model = (
-        await db.execute(select(Model).where(Model.slug == body["model"], Model.status == "production"))
+        await db.execute(
+            select(Model).where(
+                Model.slug == body["model"],
+                Model.status.in_(["production", RESTRICTED_STATUS]),
+            )
+        )
     ).scalar_one_or_none()
     if model is None:
+        raise HTTPException(404, "model_not_available")
+    if model.status == RESTRICTED_STATUS and not await has_model_grant(db, model.id, partner.id):
         raise HTTPException(404, "model_not_available")
     credential = await get_active_provider_credential(db, partner.id, "argolink")
     if credential is None:

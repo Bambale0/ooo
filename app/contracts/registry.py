@@ -18,6 +18,14 @@ VIDEO_PROTOCOL = "videos/generations"
 PROTOCOLS = TEXT_PROTOCOLS | IMAGE_PROTOCOLS | {VIDEO_PROTOCOL}
 MODELS = CATALOG["models"]
 SEEDANCE = {name for name in MODELS if name.startswith("seedance-")}
+# Limit profile shared by Seedance 2.5 and its self-developed variants. Compared by
+# family membership so a newly contracted variant cannot silently inherit the 2.0
+# limits (15s, 9 references, audio-needs-visual) that differ from the provider card.
+SEEDANCE_25_FAMILY = {"seedance-2.5", "seedance-2.5-self-developed-nsfw"}
+# Contracted but never published: validated for granted partners only, and kept out
+# of the public reference, /v1/models, /price and the documented limits table.
+RESTRICTED_MODELS = {"seedance-2.5-self-developed-nsfw"}
+assert RESTRICTED_MODELS <= set(MODELS), "restricted model missing from the reviewed contract"
 
 
 def contract(model: str, protocol: str) -> dict[str, Any]:
@@ -187,11 +195,11 @@ def validate_video(original: dict[str, Any]) -> None:
     minimax = model == "minimax-h3"
     url_video = seedance or minimax
     wan = model == "wan-3"
-    maximum = 30 if model in {"seedance-2.5", "wan-3"} else 15
+    maximum = 30 if model in SEEDANCE_25_FAMILY | {"wan-3"} else 15
     minimum = 4 if url_video else 2 if wan else 1
     edit = body.get("omni_reference_task_type") == "edit"
     if edit and (
-        model != "seedance-2.5"
+        model not in SEEDANCE_25_FAMILY
         or not isinstance(body.get("duration", -1), int)
         or body.get("duration", -1) != -1
         or body.get("aspect_ratio", "adaptive") != "adaptive"
@@ -207,7 +215,7 @@ def validate_video(original: dict[str, Any]) -> None:
     counts = []
     limits = (
         (30, 10, 10, 50)
-        if model == "seedance-2.5"
+        if model in SEEDANCE_25_FAMILY
         else (9, 3, 3, 15)
         if minimax
         else (9, 3, 3, 12)
@@ -225,7 +233,7 @@ def validate_video(original: dict[str, Any]) -> None:
         refs.extend(items)
     if sum(counts) > limits[3]:
         raise ValueError("reference_limit_exceeded")
-    if url_video and model != "seedance-2.5" and counts[2] and not (counts[0] or counts[1]):
+    if url_video and model not in SEEDANCE_25_FAMILY and counts[2] and not (counts[0] or counts[1]):
         raise ValueError("audio_requires_visual_reference")
     start = body.get("start_image", body.get("image"))
     end = body.get("end_image")
@@ -238,7 +246,7 @@ def validate_video(original: dict[str, Any]) -> None:
     ratios = {"1:1", "16:9", "9:16", "4:3", "3:4"}
     ratios |= {"21:9"} if url_video else set() if wan else {"3:2", "2:3"}
     if seedance and start:
-        ratios = {"adaptive"} if model == "seedance-2.5" else ratios | {"adaptive"}
+        ratios = {"adaptive"} if model in SEEDANCE_25_FAMILY else ratios | {"adaptive"}
     if edit:
         ratios = {"adaptive"}
     if minimax and refs and not start:
@@ -272,5 +280,5 @@ def video_reserve_seconds(original: dict[str, Any]) -> int:
     output = 30 if body.get("omni_reference_task_type") == "edit" else int(body.get("duration", 5))
     # Provider validates actual media lengths. Reserve the documented upper bound,
     # never trust a client-supplied duration for billable input media.
-    ref_bound = 30 if model == "seedance-2.5" else 15
+    ref_bound = 30 if model in SEEDANCE_25_FAMILY else 15
     return min(30, output + ref_bound) if model == "wan-3" and refs else output + (ref_bound if refs else 0)

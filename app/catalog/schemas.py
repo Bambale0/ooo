@@ -1,3 +1,4 @@
+from datetime import datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, Field, model_validator
@@ -9,7 +10,7 @@ class ModelCreate(BaseModel):
     slug: str = Field(min_length=2, max_length=80)
     name: str = Field(min_length=2, max_length=160)
     modality: str = Field(pattern="^(video|image|llm)$")
-    status: str = Field(default="draft", pattern="^(draft|admin_only|production|disabled)$")
+    status: str = Field(default="draft", pattern="^(draft|admin_only|restricted|production|disabled)$")
     has_provider_integration: bool = False
     has_public_docs: bool = False
     has_successful_smoke: bool = False
@@ -59,3 +60,20 @@ class ModelEnableGateUpdate(BaseModel):
     has_provider_integration: bool
     has_public_docs: bool
     has_successful_smoke: bool
+
+
+class ModelGrantCreate(BaseModel):
+    partner_id: str = Field(min_length=1, max_length=36)
+    reason: str = Field(min_length=10, max_length=2000)
+
+
+class ModelGrantRead(BaseModel):
+    id: str
+    model_slug: str
+    partner_id: str
+    granted_by: str
+    reason: str
+    revoked_at: datetime | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}

@@ -222,6 +222,30 @@
         ]
       }
     },
+    "seedance-2.5-self-developed-nsfw": {
+      "category": "video",
+      "endpoint": "/v1/videos/generations",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "video",
+        "unit": "second",
+        "generation_per_unit": 0.078,
+        "tiers": [
+          {
+            "label": "480p",
+            "price": 0.078
+          },
+          {
+            "label": "720p",
+            "price": 0.17
+          },
+          {
+            "label": "1080p",
+            "price": 0.43
+          }
+        ]
+      }
+    },
     "grok-imagine-video-1.5": {
       "category": "video",
       "endpoint": "/v1/videos/generations",
