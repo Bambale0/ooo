@@ -3,7 +3,6 @@
 from fastapi import HTTPException
 
 from app.accounts.router import (
-    approve_application,
     change_partner_status,
     create_partner_api_key,
     delete_partner,
@@ -28,7 +27,12 @@ from app.telegram.ui import keyboard, show, status_label
 async def confirm_action(event, db, telegram_id: str, action_id: str) -> None:
     action = await pending_action(db, action_id, telegram_id)
     if action.status != "pending":
-        await show(event, "Действие уже выполнено. Новая операция не создавалась.")
+        await show(
+            event,
+            "Подтверждение отменено. Откройте действие заново."
+            if action.status == "cancelled"
+            else "Действие уже выполнено. Новая операция не создавалась.",
+        )
         return
     kind, payload = action.kind, action.payload
     partner = await partner_for(db, telegram_id)
@@ -91,7 +95,12 @@ async def confirm_action(event, db, telegram_id: str, action_id: str) -> None:
         )
         result = "Счёт отменён."
     elif kind == "admin_approve":
-        approved = await approve_application(payload["application_id"], db)
+        from app.telegram.admin_applications import approve_with_key
+
+        approved = await approve_with_key(event, db, action, telegram_id)
+        if approved is None:
+            return
+        result = "Ключ поставщика привязан. Заявка одобрена."
         await notify(
             db,
             approved.telegram_id,
