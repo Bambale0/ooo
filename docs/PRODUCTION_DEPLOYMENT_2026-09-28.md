@@ -1,5 +1,10 @@
 # Production deployment — 2026-09-28
 
+> Historical deployment record. Revision, balances, catalog state and remaining
+> actions below describe 28 September 2026, not the current production state.
+> Later releases include the branded API pages (#57) and provider-key binding
+> correction (#58). Use runtime readiness and current release notes for operations.
+
 The owner requested deployment into the existing production stack, without a
 separate preproduction environment or synthetic customer/payment records. Manual
 business-flow testing is performed by the owner.
