@@ -205,6 +205,51 @@ async def test_native_actual_usage_and_duplicate_never_resubmits(client, db_sess
     await upstream.aclose()
 
 
+async def test_grok_local_tool_small_balance_and_separate_reasoning_settle_once(client, db_session, monkeypatch):
+    calls = []
+
+    def handler(request):
+        calls.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "id": "upstream-tool-id",
+                "choices": [{"message": {"content": "OK"}}],
+                "usage": {
+                    "prompt_tokens": 314,
+                    "completion_tokens": 11,
+                    "total_tokens": 459,
+                    "completion_tokens_details": {"reasoning_tokens": 134},
+                },
+            },
+        )
+
+    partner, headers, upstream = await setup(db_session, monkeypatch, handler, model="grok-4.5")
+    partner.balance_rub = Decimal("100")
+    await db_session.commit()
+    body = {
+        "model": "grok-4.5",
+        "max_tokens": 8192,
+        "messages": [{"role": "user", "content": "Search with web_search"}],
+        "tools": [{"type": "function", "function": {"name": "web_search", "parameters": {"type": "object"}}}],
+    }
+    response = await client.post("/v1/chat/completions", json=body, headers=headers)
+    assert response.status_code == 200
+    assert calls == [body]
+    generation = await db_session.get(Generation, response.json()["id"])
+    assert generation.actual_charge_rub == Decimal("0.46")
+    assert generation.usage_snapshot["output_tokens"] == 145
+    assert response.json()["usage"]["completion_tokens"] == 145
+    await db_session.refresh(partner)
+    assert partner.balance_rub == Decimal("99.54")
+    duplicate = await client.post("/v1/chat/completions", json=body, headers=headers)
+    assert duplicate.status_code == 409
+    assert len(calls) == 1
+    await db_session.refresh(partner)
+    assert partner.balance_rub == Decimal("99.54")
+    await upstream.aclose()
+
+
 @pytest.mark.parametrize("status,held", [(402, False), (429, False), (408, True), (500, True)])
 async def test_native_rejections_and_ambiguous_outcomes(client, db_session, monkeypatch, status, held):
     def handler(request):

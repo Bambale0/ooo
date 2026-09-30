@@ -44,6 +44,16 @@ def token_usage(protocol: str, usage: dict) -> dict[str, int]:
         written = 0
     if cached + written > total:
         raise ValueError("invalid_usage")
+    if protocol != "messages" and "total_tokens" in usage:
+        reported_total = count("total_tokens")
+        details_key = "completion_tokens_details" if protocol == "chat/completions" else "output_tokens_details"
+        reasoning = count("reasoning_tokens", usage.get(details_key) or {}, 0)
+        # Some converted tool responses exclude reasoning from completion_tokens.
+        # Add it only when the independently reported total proves exclusion.
+        if reported_total == total + output + reasoning:
+            output += reasoning
+        elif reported_total != total + output:
+            raise ValueError("invalid_usage")
     hourly = count("ephemeral_1h_input_tokens", usage.get("cache_creation") or {}, 0)
     if hourly > written:
         raise ValueError("invalid_cache_creation_usage")
