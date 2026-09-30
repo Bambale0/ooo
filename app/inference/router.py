@@ -46,6 +46,20 @@ def scrub(data, generation_id):
         result["id"] = generation_id
     if isinstance(result.get("usage"), dict):
         result["usage"] = {k: v for k, v in result["usage"].items() if "cost" not in k and "price" not in k}
+        usage = result["usage"]
+        # Expose the same inclusive output count we settle, so downstream
+        # consumers do not undercount converted tool-call reasoning.
+        if "total_tokens" in usage:
+            protocol = "chat/completions" if "prompt_tokens" in usage else "responses"
+            try:
+                units = token_usage(protocol, usage)
+            except (ValueError, AttributeError):
+                # Streaming events can carry partial usage; settlement validates
+                # the complete collected usage before releasing the reserve.
+                pass
+            else:
+                output_key = "completion_tokens" if protocol == "chat/completions" else "output_tokens"
+                usage[output_key] = units["output_tokens"]
     if isinstance(result.get("response"), dict):
         result["response"] = scrub(result["response"], generation_id)
     if isinstance(result.get("message"), dict) and result.get("type") == "message_start":

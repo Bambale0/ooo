@@ -37,6 +37,40 @@ def fingerprint(protocol: str, body: dict, files_digest: str = "") -> str:
     ).hexdigest()
 
 
+def has_opaque_input(value) -> bool:
+    """Inspect request structure, not words in prompts or local function schemas."""
+    if isinstance(value, list):
+        return any(has_opaque_input(item) for item in value)
+    if not isinstance(value, dict):
+        return False
+    if any(
+        key in value
+        for key in ("image_url", "input_image", "input_audio", "file_id", "previous_response_id", "container")
+    ):
+        return True
+    kind = value.get("type", "")
+    if isinstance(kind, str) and (
+        kind in {"image", "document", "input_file", "audio", "file"}
+        or kind.startswith(("web_search", "computer", "mcp", "file_search", "code_interpreter"))
+    ):
+        return True
+    for key, child in value.items():
+        if key == "tools" and isinstance(child, list):
+            # These tools execute in the caller, not inside the provider context.
+            if any(
+                not (
+                    isinstance(tool, dict)
+                    and (tool.get("type") == "function" or ("input_schema" in tool and "type" not in tool))
+                )
+                for tool in child
+            ):
+                return True
+            continue
+        if has_opaque_input(child):
+            return True
+    return False
+
+
 async def reserve(
     db, auth: PartnerAuth, protocol: str, body: dict, idempotency_key: str, *, files_digest="", trial_telegram_id=None
 ):
@@ -219,21 +253,7 @@ def quote(protocol, body, prices, *, fx=None, trial=False):
             default=2_097_152,
         )
         serialized = json.dumps(body)
-        opaque = any(
-            marker in serialized
-            for marker in (
-                "image_url",
-                "input_image",
-                "input_audio",
-                "file_id",
-                "previous_response_id",
-                "web_search",
-                "computer_use",
-                "mcp",
-                "container",
-                "file_search",
-            )
-        )
+        opaque = has_opaque_input(body)
         input_bound = max(2_097_152, len(serialized.encode())) if opaque else len(serialized.encode()) + 4096
         input_modes = [key for key in rates if key != "output_tokens"]
         most_expensive = max(input_modes, key=lambda k: Decimal(rates[k]["retail"]))
