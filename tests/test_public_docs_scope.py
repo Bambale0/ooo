@@ -91,7 +91,7 @@ async def test_public_docs_are_self_contained_without_private_surface(client, la
     assert all(link[1:] in parsed.ids for link in parsed.links if link.startswith("#"))
     # The pricing link deliberately targets the configured API host: the docs
     # host must not proxy pricing or other account/internal endpoints.
-    pricing_url = get_settings().public_api_base_url.rstrip("/") + "/prices"
+    pricing_url = get_settings().public_api_base_url.rstrip("/") + "/price"
     assert all(not link.startswith("http") or link == pricing_url for link in parsed.links)
 
     # Test the exact executable source customers copy, including HTML round-trip.

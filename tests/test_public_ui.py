@@ -9,7 +9,11 @@ async def test_root_is_a_working_public_entry(client):
     root = await client.get("/")
     docs = await client.get("/docs")
     assert root.status_code == 200
-    assert root.text == docs.text
+    assert "В вашем продукте." in root.text
+    assert 'href="/guide?lang=ru#connect"' in root.text
+    assert 'href="/price"' in root.text
+    assert root.text != docs.text
+    assert (await client.get("/price")).text == (await client.get("/prices")).text
 
 
 @pytest.mark.parametrize(

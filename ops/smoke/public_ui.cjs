@@ -25,7 +25,7 @@ fs.mkdirSync(output, {recursive: true});
     page.on('response', response => { if (response.status() >= 400) failures.push([response.status(), response.url()]); });
     const checks = [];
     const a11y = [];
-    for (const route of ['/', '/docs?lang=ru', '/docs?lang=en', '/guide', '/prices']) {
+    for (const route of ['/', '/docs?lang=ru', '/docs?lang=en', '/guide', '/price', '/prices']) {
       assert.equal((await page.goto(base + route)).status(), 200);
       await page.addScriptTag({path: require.resolve('axe-core/axe.min.js')});
       const result = await page.evaluate(async () => {
@@ -41,6 +41,17 @@ fs.mkdirSync(output, {recursive: true});
       checks.push(`responsive ${route}: 10 widths`);
     }
     await page.setViewportSize({width: 1440, height: 1000});
+    await page.goto(base + '/');
+    await page.screenshot({path: path.join(output, `${browserName}-home.png`), fullPage: true});
+    const promoLinks = await page.locator('.hero-actions a, .capability-card, .integration-section a, .marketing-cta a').evaluateAll(links => links.map(a => a.getAttribute('href')));
+    for (const href of promoLinks) {
+      await page.goto(base + '/');
+      await page.locator(`main a[href="${href}"]`).first().click();
+      const expectedURL = new URL(href, base);
+      assert.equal(new URL(page.url()).pathname, expectedURL.pathname);
+      if (expectedURL.hash) assert.equal(new URL(page.url()).hash, expectedURL.hash);
+    }
+    checks.push('all promotional CTA and capability links reach guide/price sections');
     await page.goto(base + '/docs');
     await page.screenshot({path: path.join(output, `${browserName}-docs.png`)});
     await page.keyboard.press('Tab');
@@ -78,8 +89,8 @@ fs.mkdirSync(output, {recursive: true});
     assert.equal(await page.evaluate(() => getSelection().toString()), expected);
     assert.equal(await page.locator('.copy-button').first().isEnabled(), true);
     checks.push('clipboard permission failure: selected text + recoverable action');
-    await page.locator('.primary-nav a').nth(1).click();
-    assert.equal(new URL(page.url()).pathname, '/prices');
+    await page.locator('.primary-nav a').last().click();
+    assert.equal(new URL(page.url()).pathname, '/price');
     const total = await page.locator('#price-table tbody tr').count();
     assert(total > 0, 'Seed the isolated database with public catalog prices');
     await page.locator('#price-search').fill('seedance');
@@ -92,7 +103,7 @@ fs.mkdirSync(output, {recursive: true});
     assert.equal(await page.locator('#price-search').inputValue(), '');
     await page.screenshot({path: path.join(output, `${browserName}-prices.png`), fullPage: true});
     await page.locator('.hero-actions a').click();
-    assert.equal(new URL(page.url()).pathname, '/docs');
+    assert.equal(new URL(page.url()).pathname, '/guide');
     checks.push('pricing navigation, real catalog filter, no results, reset, return to docs');
     await page.setViewportSize({width: 390, height: 844});
     await page.goto(base + '/docs');

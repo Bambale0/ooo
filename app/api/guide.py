@@ -8,6 +8,7 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 
 from app.api.dependencies import DbSession
+from app.api.marketing import marketing_page
 from app.api.partner_reference import render_reference, table
 from app.api.public_ui import page
 from app.catalog.models import Model, PartnerPrice
@@ -62,6 +63,10 @@ async def _public_connection_guide(db: DbSession, lang: str) -> HTMLResponse:
 
 
 @router.get("/", response_class=HTMLResponse, include_in_schema=False)
+async def home(lang: str = Query(default="ru", pattern="^(ru|en)$")):
+    return marketing_page(lang)
+
+
 @router.get("/docs", response_class=HTMLResponse, include_in_schema=False)
 async def docs(db: DbSession, lang: str = Query(default="ru", pattern="^(ru|en)$")):
     return await _public_connection_guide(db, lang)
@@ -72,6 +77,7 @@ async def guide(db: DbSession, lang: str = Query(default="ru", pattern="^(ru|en)
     return await _public_connection_guide(db, lang)
 
 
+@router.get("/price", response_class=HTMLResponse, include_in_schema=False)
 @router.get("/prices", response_class=HTMLResponse, include_in_schema=False)
 async def prices(db: DbSession):
     rows = (

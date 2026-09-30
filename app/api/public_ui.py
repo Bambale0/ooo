@@ -7,21 +7,33 @@ from fastapi.responses import HTMLResponse
 from app.infrastructure.config import get_settings
 
 
-def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False) -> HTMLResponse:
+def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, landing: bool = False) -> HTMLResponse:
     ru = lang == "ru"
 
     def t(russian, english):
         return russian if ru else english
 
-    price_url = escape(get_settings().public_api_base_url.rstrip("/") + "/prices", quote=True)
-    docs_url = f"/docs?lang={lang}"
+    price_url = escape(get_settings().public_api_base_url.rstrip("/") + "/price", quote=True)
+    docs_url = f"/guide?lang={lang}"
     contents = ""
     introduction = ""
     if '<nav class="contents">' in body:
         introduction, _, rest = body.partition('<nav class="contents">')
         contents, _, body = rest.partition("</nav>")
         contents = contents.replace(" · ", "")
-    if pricing:
+    if landing:
+        headline = t("Нейросети.<br><span>В вашем продукте.</span>", "AI models.<br><span>In your product.</span>")
+        description = t(
+            "Создавайте сервисы с генерацией текста, изображений и видео. "
+            "Единый API, понятные контракты и расчёты в рублях.",
+            "Build products with text, image and video generation. One API, clear contracts and billing in rubles.",
+        )
+        action = (
+            f'<a class="button primary" href="{docs_url}#connect">{t("Начать интеграцию", "Start integrating")} ↗</a>'
+            f'<a class="button" href="{price_url}">{t("Посмотреть цены", "View prices")}</a>'
+        )
+        side = ""
+    elif pricing:
         headline = "Прозрачно.<br><span>В рублях.</span>"
         description = "Актуальные цены для партнёров. Выберите модель и конфигурацию под свою задачу."
         action = (
@@ -54,11 +66,13 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False) -> H
             "</div></aside>"
         )
     language = ""
+    language_path = "/" if landing else "/guide"
     if not pricing:
         language = (
             f'<nav class="language" aria-label="{t("Язык", "Language")}">'
-            f'<a data-language href="/docs?lang=ru" lang="ru" {"aria-current=page" if ru else ""}>RU</a>'
-            f'<a data-language href="/docs?lang=en" lang="en" {"aria-current=page" if not ru else ""}>EN</a></nav>'
+            f'<a data-language href="{language_path}?lang=ru" lang="ru" {"aria-current=page" if ru else ""}>RU</a>'
+            f'<a data-language href="{language_path}?lang=en" lang="en" {"aria-current=page" if not ru else ""}>EN</a>'
+            '</nav>'
         )
     return HTMLResponse(
         f'<!doctype html><html lang="{lang}"><head><meta charset="utf-8">'
@@ -70,11 +84,13 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False) -> H
         f'</head><body class="{"pricing-page" if pricing else "reference-page"}">'
         f'<a class="skip-link" href="#main">{t("К содержимому", "Skip to content")}</a>'
         '<header class="site-header"><div class="header-inner">'
-        f'<a class="brand" href="{docs_url}" aria-label="{t("Нейроныч API — главная", "Neironych API — home")}">'
+        f'<a class="brand" href="/" aria-label="{t("Нейроныч API — главная", "Neironych API — home")}">'
         '<img src="/ui/logo-mark.svg" width="44" height="44" alt="">'
         f"<span>{t('Нейроныч', 'Neironych')}<small>API PLATFORM</small></span></a>"
         f'<nav class="primary-nav" aria-label="{t("Основная навигация", "Main navigation")}">'
-        f'<a href="{docs_url}" {"" if pricing else "aria-current=page"}>{t("Документация", "Documentation")}</a>'
+        f'<a href="/" {"aria-current=page" if landing else ""}>{t("Обзор", "Overview")}</a>'
+        f'<a href="{docs_url}" {"aria-current=page" if not pricing and not landing else ""}>'
+        f"{t('Документация', 'Documentation')}</a>"
         f'<a href="{price_url}" {"aria-current=page" if pricing else ""}>{t("Цены", "Pricing")}</a></nav>'
         f'{language}</div></header><main id="main" tabindex="-1" class="container">'
         '<section class="hero" aria-labelledby="page-title"><div class="hero-copy">'
@@ -86,7 +102,8 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False) -> H
         '<span class="orbit orbit-one"></span><span class="orbit orbit-two"></span>'
         '<span class="art-code">{ }</span><img src="/ui/neuronych.webp" width="473" height="1000" alt="">'
         f'<span class="art-note">{t("Умно. Просто. По делу.", "Smart. Simple. To the point.")}</span></div></section>'
-        f'<div class="document-layout">{side}<article class="document" aria-label="{escape(title, quote=True)}">'
+        f'<div class="{"landing-layout" if landing else "document-layout"}">{side}'
+        f'<article class="document" aria-label="{escape(title, quote=True)}">'
         f"{'<div class=reference-intro>' + introduction + '</div>' if introduction else ''}{body}</article></div>"
         '</main><footer class="site-footer container"><span>Нейроныч · API</span>'
         f'<a href="#main">{t("Наверх", "Back to top")} ↑</a></footer>'

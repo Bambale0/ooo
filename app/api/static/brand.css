@@ -163,3 +163,41 @@ input::placeholder { color: var(--muted); }
   pre { white-space: pre-wrap; color: black; }
   .table-scroll { overflow: visible; }
 }
+.landing-layout { display: block; }
+.marketing-section { margin: 70px 0; }
+.marketing-section h2,.integration-section h2,.marketing-cta h2 { border: 0; margin: 0 0 18px; padding: 0; font-size: clamp(26px,3vw,38px); letter-spacing: -.035em; }
+.capability-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 18px; margin-top: 30px; }
+.capability-card { display: flex; flex-direction: column; align-items: start; padding: 28px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); text-decoration: none; }
+.capability-card:hover { border-color: var(--purple-soft); }
+.card-number { color: var(--purple-soft); font: 13px ui-monospace,monospace; }
+.capability-card h3 { color: var(--text); font-size: 27px; margin: 22px 0 0; }
+.capability-card p { font-size: 15px; }
+.capability-card code { color: var(--muted); font-size: 11px; margin-top: auto; padding-top: 16px; }
+.card-link { display: block; margin-top: 24px; color: var(--purple-soft); font-size: 13px; }
+.integration-section { display: grid; grid-template-columns: 1fr 1fr; align-items: center; gap: 70px; padding-block: 55px; border-block: 1px solid var(--line); }
+.integration-section .code-frame { margin-top: 0; }
+.integration-note { padding: 22px; border-left: 2px solid var(--purple); font-size: 14px; }
+.integration-note p { margin-bottom: 0; }
+.onboarding-steps { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 36px; counter-reset: step; padding: 0; list-style: none; margin-top: 30px; }
+.onboarding-steps li { counter-increment: step; }
+.onboarding-steps li::before { content: "0" counter(step); color: var(--purple-soft); font: 14px ui-monospace,monospace; }
+.onboarding-steps h3 { margin-top: 12px; font-size: 20px; color: var(--text); }
+.onboarding-steps p { font-size: 15px; }
+.marketing-cta { display: flex; align-items: center; justify-content: space-between; gap: 40px; padding: 36px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--panel); }
+.marketing-cta p { max-width: 650px; }
+.marketing-cta .button { flex-shrink: 0; }
+.button:disabled { opacity: .55; cursor: not-allowed; }
+@media (max-width: 900px) {
+  .capability-grid,.onboarding-steps { gap: 16px; }
+  .capability-card { padding: 20px; }
+  .integration-section { gap: 30px; }
+}
+@media (max-width: 760px) {
+  .capability-grid,.onboarding-steps,.integration-section { grid-template-columns: 1fr; }
+  .marketing-section { margin-block: 40px; }
+  .marketing-cta { display: block; padding: 24px; }
+  .integration-section { padding-block: 30px; }
+  .capability-card p { margin-block: 12px; }
+  .onboarding-steps { gap: 20px; }
+}
+.integration-section > div { min-width: 0; }
