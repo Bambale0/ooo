@@ -1,13 +1,16 @@
 """Self-contained public inference documentation, without internal API exposure."""
 
 from html import escape
+from importlib.resources import files
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 
 from app.api.dependencies import DbSession
+from app.api.marketing import marketing_page
 from app.api.partner_reference import render_reference, table
+from app.api.public_ui import page
 from app.catalog.models import Model, PartnerPrice
 from app.contracts.registry import MODELS
 from app.infrastructure.config import get_settings
@@ -15,19 +18,22 @@ from app.infrastructure.config import get_settings
 router = APIRouter()
 
 
-def page(title: str, body: str, lang: str = "ru") -> HTMLResponse:
-    language_nav = '<nav><a href="/docs?lang=ru">Русский</a> · <a href="/docs?lang=en">English</a></nav>'
-    return HTMLResponse(
-        f'<!doctype html><html lang="{lang}"><meta charset="utf-8">'
-        '<meta name="viewport" content="width=device-width,initial-scale=1">'
-        f"<title>{escape(title)}</title><style>body{{font:17px/1.6 system-ui;max-width:1100px;"
-        "margin:40px auto;padding:0 20px;color:#182536}pre{overflow:auto;padding:16px;background:#f1f5f9}"
-        "table{border-collapse:collapse;width:100%}td,th{padding:10px;border-bottom:1px solid #ddd;text-align:left}"
-        "a{color:#1545ab}h1,h2{line-height:1.2}h2{margin-top:2.5em;scroll-margin-top:20px}"
-        ".table-scroll{overflow-x:auto}td{vertical-align:top;min-width:100px}"
-        "summary{cursor:pointer;padding:12px;background:#f1f5f9}.contents{padding:15px;background:#edf3fa}"
-        "code{font-size:.9em}pre code{font-size:14px}nav{margin-bottom:24px}</style>"
-        f"{language_nav}<h1>{escape(title)}</h1>{body}</html>"
+_ASSETS = {
+    "brand.css": "text/css",
+    "brand.js": "text/javascript",
+    "logo-mark.svg": "image/svg+xml",
+    "neuronych.webp": "image/webp",
+}
+
+
+@router.get("/ui/{asset}", include_in_schema=False)
+async def public_asset(asset: str):
+    if asset not in _ASSETS:
+        raise HTTPException(status_code=404)
+    return Response(
+        files("app.api").joinpath("static", asset).read_bytes(),
+        media_type=_ASSETS[asset],
+        headers={"Cache-Control": "public, max-age=3600", "X-Content-Type-Options": "nosniff"},
     )
 
 
@@ -56,6 +62,11 @@ async def _public_connection_guide(db: DbSession, lang: str) -> HTMLResponse:
     return page(title, body, lang)
 
 
+@router.get("/", response_class=HTMLResponse, include_in_schema=False)
+async def home(lang: str = Query(default="ru", pattern="^(ru|en)$")):
+    return marketing_page(lang)
+
+
 @router.get("/docs", response_class=HTMLResponse, include_in_schema=False)
 async def docs(db: DbSession, lang: str = Query(default="ru", pattern="^(ru|en)$")):
     return await _public_connection_guide(db, lang)
@@ -66,6 +77,7 @@ async def guide(db: DbSession, lang: str = Query(default="ru", pattern="^(ru|en)
     return await _public_connection_guide(db, lang)
 
 
+@router.get("/price", response_class=HTMLResponse, include_in_schema=False)
 @router.get("/prices", response_class=HTMLResponse, include_in_schema=False)
 async def prices(db: DbSession):
     rows = (
@@ -77,14 +89,34 @@ async def prices(db: DbSession):
         )
     ).all()
     units = {"million_tokens": "млн токенов", "second": "секунда", "generation": "изображение"}
-    body = "<p>Цены списания с партнёрского баланса. Цена вашей перепродажи определяется вами.</p>"
-    body += "<table><tr><th>Модель</th><th>Режим / размер</th><th>Цена, ₽</th><th>Единица</th></tr>"
+    body = '<h2 class="price-heading">Модели и цены</h2>'
+    body += "<p>Цены списания с партнёрского баланса. Цена вашей перепродажи определяется вами.</p>"
+    if not rows:
+        body += (
+            '<div class="empty-state"><h3>Приём заказов ещё не открыт.</h3>'
+            "<p>Публичных цен пока нет. Изучите документацию, чтобы подготовить интеграцию.</p>"
+            '<a class="button" href="/docs">Открыть документацию</a></div>'
+        )
+        return page("Цены для партнёров", body, pricing=True)
+    body += (
+        '<div class="price-tools" hidden><label for="price-search">Поиск по модели, режиму или размеру'
+        '<input id="price-search" type="search" placeholder="Название модели или 1080p" '
+        'autocomplete="off" aria-controls="price-table" aria-describedby="price-count"></label>'
+        '<button id="clear-search" type="button" class="button">Сбросить</button></div>'
+        f'<p class="price-count" id="price-count" role="status">Конфигураций: {len(rows)}</p>'
+        '<div id="price-table" class="table-scroll" tabindex="0" role="region" aria-label="Цены моделей">'
+        '<table><thead><tr><th scope="col">Модель</th><th scope="col">Режим / размер</th>'
+        '<th scope="col">Цена, ₽</th><th scope="col">Единица</th></tr></thead><tbody>'
+    )
     for model, price in rows:
         body += (
             f"<tr><td>{escape(model.name)}</td><td>{escape(price.mode)} / {escape(price.resolution)}</td>"
-            f"<td>{price.price_rub:.2f}</td><td>{escape(units.get(price.billing_unit, price.billing_unit))}</td></tr>"
+            f'<td class="price-number">{price.price_rub:.2f}</td>'
+            f"<td>{escape(units.get(price.billing_unit, price.billing_unit))}</td></tr>"
         )
-    body += "</table>"
-    if not rows:
-        body += "<p>Приём заказов ещё не открыт.</p>"
-    return page("Цены для партнёров", body)
+    body += (
+        '</tbody></table></div><div id="no-results" class="empty-state" hidden>'
+        "<h3>Совпадений нет</h3><p>Попробуйте другое название, режим или размер. "
+        "Кнопка «Сбросить» вернёт все цены.</p></div>"
+    )
+    return page("Цены для партнёров", body, pricing=True)
