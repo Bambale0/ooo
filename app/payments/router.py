@@ -1,7 +1,7 @@
 import json
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app.accounts.models import Partner
 from app.api.dependencies import DbSession, get_current_partner, require_admin
@@ -134,6 +134,13 @@ async def crypto_pay_webhook(
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid_crypto_pay_webhook") from exc
 
+    # Serialize duplicate deliveries before recording the unique provider event.
+    # The invoice lock separately protects different update IDs for one payment.
+    if db.bind.dialect.name == "postgresql":
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": f"crypto-pay-update:{update_id}"},
+        )
     existing_result = await db.execute(
         select(CryptoPayWebhookEvent).where(CryptoPayWebhookEvent.update_id == update_id)
     )

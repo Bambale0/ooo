@@ -146,11 +146,15 @@ async def apply_paid_provider_invoice(
         select(PaymentInvoice)
         .where(PaymentInvoice.provider_invoice_id == provider_invoice.invoice_id)
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     payment = payment_result.scalar_one_or_none()
     if payment is None and provider_invoice.payload:
         payment_result = await db.execute(
-            select(PaymentInvoice).where(PaymentInvoice.id == provider_invoice.payload).with_for_update()
+            select(PaymentInvoice)
+            .where(PaymentInvoice.id == provider_invoice.payload)
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
         payment = payment_result.scalar_one_or_none()
     if payment is None:
@@ -180,20 +184,10 @@ async def apply_paid_provider_invoice(
 
     _apply_provider_invoice(payment, provider_invoice)
     payment.status = "paid_waiting_credit"
-    from app.infrastructure.config import get_settings
-    from app.telegram.service import notify
-
-    await notify(
-        db,
-        get_settings().admin_telegram_id,
-        f"Оплачен счёт {payment.id}. Проверьте раздел «Платежи».",
-        f"payment-paid:{payment.id}",
-    )
     payment.was_expired_when_paid = was_expired
     payment.creation_claimed_until = None
     await db.flush()
-    await db.refresh(payment)
-    return payment
+    return await credit_paid_invoice(db, payment_id=payment.id)
 
 
 async def credit_paid_invoice(db: AsyncSession, *, payment_id: str) -> PaymentInvoice:
@@ -214,7 +208,7 @@ async def credit_paid_invoice(db: AsyncSession, *, payment_id: str) -> PaymentIn
         amount_rub=amount,
         operation_type="payment_credit",
         idempotency_key=f"payment-credit-retail:{payment.id}",
-        description="Crypto Pay payment manually credited",
+        description="Confirmed Crypto Pay payment credited",
         allow_negative=True,
     )
     from app.catalog.models import Model, PartnerPrice
@@ -254,6 +248,21 @@ async def credit_paid_invoice(db: AsyncSession, *, payment_id: str) -> PaymentIn
     )
     payment.status = "credited"
     payment.credited_at = utc_now()
+    from app.infrastructure.config import get_settings
+    from app.telegram.service import notify
+
+    await notify(
+        db,
+        partner.telegram_id,
+        f"На баланс зачислено {payment.requested_rub:.2f} ₽. Платёж {payment.id}.",
+        f"payment-credited:{payment.id}",
+    )
+    await notify(
+        db,
+        get_settings().admin_telegram_id,
+        f"Оплачен счёт {payment.id}. Партнёру зачислено {payment.requested_rub:.2f} ₽.",
+        f"payment-paid:{payment.id}",
+    )
     await db.flush()
     await db.refresh(payment)
     return payment

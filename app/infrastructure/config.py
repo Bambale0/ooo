@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     crypto_pay_api_token: str | None = None
     crypto_pay_base_url: str = "https://pay.crypt.bot"
     crypto_pay_timeout_seconds: float = Field(default=10.0, gt=0)
+    payment_reconciliation_interval_seconds: float = Field(default=60.0, ge=5)
+    payment_reconciliation_batch_size: int = Field(default=20, ge=1, le=100)
     public_api_base_url: str = "http://localhost:8000"
     public_media_base_url: str | None = None
     media_storage_backend: str = "local"

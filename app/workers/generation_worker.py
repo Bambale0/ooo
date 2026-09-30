@@ -20,6 +20,8 @@ from app.infrastructure.logging import configure_logging
 from app.infrastructure.metrics import update_generation_queue_metrics
 from app.infrastructure.production_check import require_production_config
 from app.infrastructure.retry import utc_now
+from app.payments.crypto_pay import close_crypto_pay_client
+from app.payments.reconciliation import payment_reconciliation_loop
 from app.providers.http_client import close_provider_http_clients
 from app.providers.models import ProviderAttempt
 
@@ -97,6 +99,7 @@ async def run_generation_worker_forever() -> None:
     stop_event = asyncio.Event()
     _install_signal_handlers(stop_event)
     logger.info("generation_worker_started")
+    payment_task = asyncio.create_task(payment_reconciliation_loop(stop_event))
     try:
         while not stop_event.is_set():
             result = await process_generation_work_concurrently_once(
@@ -117,6 +120,10 @@ async def run_generation_worker_forever() -> None:
                 with suppress(asyncio.TimeoutError):
                     await asyncio.wait_for(stop_event.wait(), timeout=settings.worker_poll_interval_seconds)
     finally:
+        payment_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await payment_task
+        await close_crypto_pay_client()
         await close_provider_http_clients()
     logger.info("generation_worker_stopped")
 

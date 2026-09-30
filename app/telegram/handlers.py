@@ -186,7 +186,7 @@ async def handle_callback(event, db, dialog) -> None:
         await show(
             event,
             f"Баланс: {partner.balance_rub:.2f} ₽\nПополнение: от 1 000 ₽, USDT или TON. "
-            "Зачисление после проверки оплаты администратором.",
+            "Рубли зачисляются автоматически после подтверждения оплаты Crypto Pay.",
             keyboard(("Пополнить", "topup"), ("Мои счета", "payments:0")),
         )
     elif data == "topup":
@@ -224,12 +224,6 @@ async def handle_callback(event, db, dialog) -> None:
             provider = await get_crypto_pay_client().get_invoice(payment.provider_invoice_id)
             if provider and provider.status == "paid":
                 payment = await apply_paid_provider_invoice(db, provider_invoice=provider)
-                await notify(
-                    db,
-                    get_settings().admin_telegram_id,
-                    f"Оплачен счёт {payment.id}. Проверьте раздел «Платежи».",
-                    f"payment-paid:{payment.id}",
-                )
         buttons = [("Обновить", f"payment:{payment.id}")]
         if payment.status == "active":
             if payment.invoice_url:

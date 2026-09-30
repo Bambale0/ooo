@@ -178,3 +178,27 @@ The check uses GitHub's commit-to-pull-request API with the workflow's read-only
 
 If GitHub plan/settings later allow mandatory branch protection, enable it as well; keep this
 check as defense in depth for release provenance.
+
+
+## Автоматическое зачисление Crypto Pay
+
+С 2026-09-30 подтверждённая оплата счёта автоматически зачисляет его
+`requested_rub` в баланс партнёра. Проверка Crypto Pay, retail/coverage ledger,
+снимок курса и уведомления завершаются одной транзакцией. Повторы безопасны.
+Ручной credit endpoint и Telegram-кнопка остаются резервными действиями.
+
+Generation worker запускает независимую фоновую сверку при заданном
+`CRYPTO_PAY_API_TOKEN`. Параметры: `PAYMENT_RECONCILIATION_INTERVAL_SECONDS=60`
+и `PAYMENT_RECONCILIATION_BATCH_SIZE=20`. Один проход обрабатывает не более
+20 счетов; курсор циклически проходит все незачисленные счета. При большом
+backlog подтверждение может занять несколько проходов. Сверка не создаёт
+счета и не делает платежи. Восстановление потерянного ответа создания через
+payload ограничено последними 1000 счетами, доступными существующему поиску
+Crypto Pay; для более старых неизвестных invoice id доступна admin reconcile.
+
+`payment_reconciliation_started` подтверждает запуск сверки.
+`payment_reconciliation_failed` содержит локальный payment id и тип ошибки;
+такие счета повторно проверяются при следующем обходе. Не проверяйте выпуск
+созданием фиктивной оплаты в production: используйте изолированные тесты и
+наблюдайте следующий настоящий платёж. Provider float и ограничения treasury
+продолжают проверяться отдельно при генерациях.

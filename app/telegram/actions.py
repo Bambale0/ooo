@@ -113,16 +113,7 @@ async def confirm_action(event, db, telegram_id: str, action_id: str) -> None:
             db, app.telegram_id, f"Заявка отклонена. Причина: {payload['reason']}", f"application-rejected:{app.id}"
         )
     elif kind == "admin_credit":
-        payment = await credit_paid_invoice(db, payment_id=payload["payment_id"])
-        from app.accounts.models import Partner
-
-        owner = await db.get(Partner, payment.partner_id)
-        await notify(
-            db,
-            owner.telegram_id,
-            f"На баланс зачислено {payment.requested_rub:.2f} ₽. Платёж {payment.id}.",
-            f"payment-credited:{payment.id}",
-        )
+        await credit_paid_invoice(db, payment_id=payload["payment_id"])
     elif kind == "admin_transfer":
         await transfer_telegram(
             payload["partner_id"],

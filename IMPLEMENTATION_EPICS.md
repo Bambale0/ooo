@@ -500,7 +500,7 @@ EPIC 03, EPIC 04, EPIC 05, EPIC 06, EPIC 08.
 
 ### Historical cost coverage
 
-- snapshot при manual credit top-up;
+- snapshot при confirmed top-up credit (automatic или резервный manual);
 - не переоценивается;
 - используется для audit/reconciliation;
 - не является единственным runtime gate.
@@ -524,11 +524,11 @@ EPIC 01, EPIC 04.
 
 ---
 
-# EPIC 09. Crypto Bot payments и ручное зачисление
+# EPIC 09. Crypto Bot payments и автоматическое зачисление
 
 ## Цель
 
-Принимать криптоплатёж как транспорт денег, но управлять partner balance вручную и предсказуемо.
+Автоматически зачислять исходную RUB сумму после подтверждённой Crypto Pay оплаты (решение 2026-09-30).
 
 ## Scope
 
@@ -554,12 +554,12 @@ EPIC 01, EPIC 04.
 
 ### Rules
 
-- auto-credit запрещён;
-- после provider payment confirmation партнёр видит “Оплачено, ожидает зачисления администратором”;
+- подтверждённый paid автоматически зачисляет retail и coverage в одной транзакции;
+- после provider payment confirmation партнёр получает уведомление о зачислении;
 - paid amount immediately становится obligation для safe-to-withdraw;
-- expired-but-paid позднее тоже попадает в manual credit flow;
+- expired-but-paid зачисляется автоматически после сверки;
 - duplicate provider webhook не double-credit;
-- technical failure после admin credit action retry до success;
+- technical failure откатывает транзакцию; фоновая сверка повторяет подтверждение и начисление;
 - requested RUB amount зачисляется exactly;
 - FX difference <=1% просто лог;
 - >1% prominent admin warning, но credit разрешён.
@@ -576,7 +576,7 @@ EPIC 01, EPIC 04.
 
 ## Acceptance criteria
 
-- paid invoice сам balance не увеличивает;
+- проверенный paid invoice автоматически увеличивает balance ровно один раз;
 - admin credit идемпотентен;
 - duplicate callbacks безопасны;
 - partial refund корректно пересчитывает связанный historical coverage;
@@ -1003,7 +1003,7 @@ EPIC 04, EPIC 08, EPIC 09.
 
 - low partner balance;
 - provider float low;
-- payment awaiting manual credit;
+- payment awaiting credit recovery;
 - provider/API changes;
 - low margin;
 - negative economics;
@@ -1409,7 +1409,7 @@ EPIC 01, EPIC 23.
 - charged provider incident;
 - queue restart;
 - late success;
-- top-up paid/manual credit;
+- top-up paid/automatic credit и резервный manual credit;
 - duplicate payment callback;
 - refund full/partial;
 - webhook retry/manual resend;

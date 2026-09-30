@@ -1,9 +1,11 @@
 import hashlib
 import hmac
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+import pytest
 from sqlalchemy import func, select
 
 from app.accounts.models import ApiKey, Partner
@@ -79,16 +81,78 @@ def _crypto_pay_signature(raw_body: bytes, token: str = "test-crypto-pay-token")
     return hmac.new(secret, raw_body, hashlib.sha256).hexdigest()
 
 
-async def test_crypto_pay_paid_invoice_requires_manual_credit_and_credits_both_ledgers(
+async def _unpaid_invoice(db_session):
+    partner, _ = await _partner_with_api_key(db_session, telegram_id="555123")
+    fake = FakeCryptoPayClient()
+    payment = PaymentInvoice(
+        partner_id=partner.id, requested_rub=Decimal("1500"),
+        status="active", idempotency_key="automatic-credit-test",
+    )
+    db_session.add(payment)
+    await db_session.flush()
+    invoice = await fake.create_rub_invoice(amount_rub="1500", payload=payment.id)
+    payment.provider_invoice_id = invoice.invoice_id
+    await db_session.commit()
+    return partner.id, payment.id, replace(invoice, status="paid", paid_asset="USDT", paid_amount="15")
+
+
+@pytest.mark.parametrize("change", [
+    {"amount": "1600"}, {"payload": "another-partner-invoice"},
+    {"invoice_id": 99999}, {"status": "active"},
+])
+async def test_invalid_confirmation_never_credits(db_session, change):
+    from fastapi import HTTPException
+
+    from app.payments.service import apply_paid_provider_invoice
+
+    partner_id, payment_id, invoice = await _unpaid_invoice(db_session)
+    with pytest.raises(HTTPException):
+        await apply_paid_provider_invoice(db_session, provider_invoice=replace(invoice, **change))
+    await db_session.rollback()
+    assert (await db_session.get(Partner, partner_id)).balance_rub == 0
+    assert (await db_session.get(PaymentInvoice, payment_id)).status == "active"
+    assert await db_session.scalar(select(func.count()).select_from(LedgerEntry)) == 0
+
+
+async def test_credit_failure_rolls_back_everything_and_retry_succeeds(db_session, monkeypatch):
+    from app.payments import service
+    from app.telegram.models import BotNotification
+
+    partner_id, payment_id, invoice = await _unpaid_invoice(db_session)
+    original = service.apply_cost_coverage_change
+
+    async def fail_coverage(**kwargs):
+        raise RuntimeError("injected coverage failure")
+
+    monkeypatch.setattr(service, "apply_cost_coverage_change", fail_coverage)
+    with pytest.raises(RuntimeError, match="injected"):
+        await service.apply_paid_provider_invoice(db_session, provider_invoice=invoice)
+    await db_session.rollback()
+    assert (await db_session.get(Partner, partner_id)).balance_rub == 0
+    assert (await db_session.get(PaymentInvoice, payment_id)).status == "active"
+    assert await db_session.scalar(select(func.count()).select_from(LedgerEntry)) == 0
+    assert await db_session.scalar(select(func.count()).select_from(BotNotification)) == 0
+    monkeypatch.setattr(service, "apply_cost_coverage_change", original)
+    await service.apply_paid_provider_invoice(db_session, provider_invoice=invoice)
+    await db_session.commit()
+    assert (await db_session.get(Partner, partner_id)).balance_rub == Decimal("1500")
+    assert await db_session.scalar(select(func.count()).select_from(LedgerEntry)) == 1
+    assert await db_session.scalar(select(func.count()).select_from(CoverageLedgerEntry)) == 1
+
+
+@pytest.mark.parametrize("asset,paid_amount", [("USDT", "17.250000"), ("TON", "3.125000")])
+async def test_crypto_pay_paid_invoice_automatically_credits_both_ledgers(
     client,
     db_session,
     admin_headers,
     monkeypatch,
+    asset,
+    paid_amount,
 ):
     fake = FakeCryptoPayClient()
     monkeypatch.setattr("app.payments.router.get_crypto_pay_client", lambda: fake)
 
-    partner, token = await _partner_with_api_key(db_session, telegram_id="payment-flow")
+    partner, token = await _partner_with_api_key(db_session, telegram_id="123456789")
     partner_id = partner.id
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -125,8 +189,8 @@ async def test_crypto_pay_paid_invoice_requires_manual_credit_and_credits_both_l
         payload=payment.id,
         expiration_date=payment.expires_at.isoformat() if payment.expires_at else None,
         paid_at=datetime.now(UTC).isoformat(),
-        paid_asset="USDT",
-        paid_amount="17.250000",
+        paid_asset=asset,
+        paid_amount=paid_amount,
         paid_fiat_rate="86.956521739130434783",
         paid_usd_rate="1.000000",
     )
@@ -153,11 +217,11 @@ async def test_crypto_pay_paid_invoice_requires_manual_credit_and_credits_both_l
 
     await db_session.refresh(partner)
     await db_session.refresh(payment)
-    assert payment.status == "paid_waiting_credit"
-    assert payment.paid_asset == "USDT"
-    assert Decimal(payment.paid_amount) == Decimal("17.250000")
-    assert Decimal(partner.balance_rub) == Decimal("0.00")
-    assert Decimal(partner.cost_coverage_rub) == Decimal("0.00")
+    assert payment.status == "credited"
+    assert payment.paid_asset == asset
+    assert Decimal(payment.paid_amount) == Decimal(paid_amount)
+    assert Decimal(partner.balance_rub) == Decimal("1500.00")
+    assert Decimal(partner.cost_coverage_rub) == Decimal("1500.00")
 
     duplicate_webhook = await client.post(
         "/api/v1/payments/crypto-pay/webhook",
@@ -167,6 +231,20 @@ async def test_crypto_pay_paid_invoice_requires_manual_credit_and_credits_both_l
     assert duplicate_webhook.status_code == 200
     events = await db_session.execute(select(CryptoPayWebhookEvent))
     assert len(list(events.scalars().all())) == 1
+
+    other_body = webhook_body.replace(b"90001", b"90002")
+    replay = await client.post(
+        "/api/v1/payments/crypto-pay/webhook", content=other_body,
+        headers={"crypto-pay-api-signature": _crypto_pay_signature(other_body)},
+    )
+    assert replay.status_code == 200
+    from app.telegram.models import BotNotification
+
+    notifications = (await db_session.execute(select(BotNotification).where(
+        BotNotification.dedupe_key == f"payment-credited:{payment_id}",
+    ))).scalars().all()
+    assert len(notifications) == 1
+    assert "1500.00 ₽" in notifications[0].text
 
     credited = await client.post(
         f"/api/v1/payments/invoices/{payment_id}/credit",
@@ -264,7 +342,8 @@ async def test_crypto_pay_webhook_rejects_invalid_signature(client, monkeypatch)
     assert response.json()["detail"] == "invalid_crypto_pay_signature"
 
 
-async def test_repeated_provider_confirmation_preserves_credited_status(db_session):
+@pytest.mark.parametrize("payment_status", ["credited", "partially_refunded", "refunded"])
+async def test_repeated_provider_confirmation_preserves_credited_status(db_session, payment_status):
     from app.payments.service import apply_paid_provider_invoice
 
     partner, _ = await _partner_with_api_key(db_session, telegram_id="payment-replay")
@@ -273,7 +352,7 @@ async def test_repeated_provider_confirmation_preserves_credited_status(db_sessi
         provider_invoice_id=9999,
         idempotency_key="already-credited",
         requested_rub=Decimal("1500"),
-        status="credited",
+        status=payment_status,
         credited_at=datetime.now(UTC),
     )
     db_session.add(payment)
@@ -292,7 +371,7 @@ async def test_repeated_provider_confirmation_preserves_credited_status(db_sessi
         paid_usd_rate="1",
     )
     result = await apply_paid_provider_invoice(db_session, provider_invoice=provider)
-    assert result.status == "credited"
+    assert result.status == payment_status
     assert (await db_session.execute(select(func.count()).select_from(LedgerEntry))).scalar() == 0
 
 
