@@ -53,3 +53,5 @@ ignore = ["B008"]
 
 [tool.setuptools.package-data]
 "app.contracts" = ["*.json"]
+
+"app.api" = ["static/*.css", "static/*.js", "static/*.svg", "static/*.webp"]
