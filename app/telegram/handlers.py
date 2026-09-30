@@ -38,6 +38,10 @@ async def ask_confirmation(event, db, kind: str, payload: dict, label: str) -> N
 
 
 async def home(event, db, dialog) -> None:
+    if dialog.state == "admin_application_key":
+        from app.telegram.admin_applications import cancel_approvals
+
+        await cancel_approvals(db, actor(event), dialog.data["application_id"])
     reset(dialog)
     partner = await partner_for(db, actor(event))
     if partner:
@@ -82,6 +86,11 @@ async def handle_callback(event, db, dialog) -> None:
     user = actor(event)
     if data.startswith("admin_") and not is_admin(user):
         raise HTTPException(403, "admin_required")
+    if dialog.state == "admin_application_key" and not data.startswith("confirm:"):
+        from app.telegram.admin_applications import cancel_approvals
+
+        await cancel_approvals(db, user, dialog.data["application_id"])
+        reset(dialog)
     if data == "main_menu":
         await home(event, db, dialog)
         return
@@ -490,30 +499,42 @@ async def admin_callback(event, db, dialog, data: str) -> None:
         await show(
             event, "Заявки на подключение" if rows else "Новых заявок нет.", keyboard(*buttons, back="admin_menu")
         )
-    elif data.startswith(("admin_app:", "admin_approve:", "admin_reject:")):
+    elif data.startswith(("admin_app:", "admin_approve:", "admin_reject:", "admin_app_key:")):
+        from app.telegram.admin_applications import (
+            begin_approval,
+            cancel_approvals,
+            credential_for,
+            key_dialog,
+            request_key,
+        )
+
         app = await db.get(PartnerApplication, str(UUID(data.split(":")[1])))
         if not app or app.status != "pending":
             raise HTTPException(404, "application_not_found")
         if data.startswith("admin_approve:"):
-            await ask_confirmation(
-                event,
-                db,
-                "admin_approve",
-                {"application_id": app.id},
-                f"Подключить {app.company_name}? Ключ поставщика должен быть заранее привязан к заявке.",
-            )
+            await begin_approval(event, db, dialog, app)
+        elif data.startswith("admin_app_key:"):
+            await request_key(event, db, dialog, app)
         elif data.startswith("admin_reject:"):
             dialog.state, dialog.data = "admin_reject", {"application_id": app.id}
             await show(event, "Введите причину отказа — она будет отправлена заявителю.")
         else:
+            await cancel_approvals(db, actor(event), app.id)
+            key_dialog(dialog, app.id)
+            credential = await credential_for(db, app.id)
+            key_status = "Ключ поставщика привязан. Для замены пришлите другой ключ." if credential else (
+                "Пришлите ключ поставщика сообщением — он будет проверен для этой заявки."
+            )
+            buttons = [("Одобрить", f"admin_approve:{app.id}")] if credential else []
+            buttons += [
+                ("Заменить ключ" if credential else "Добавить ключ", f"admin_app_key:{app.id}"),
+                ("Отклонить", f"admin_reject:{app.id}"),
+            ]
             await show(
                 event,
-                f"Заявка {app.id}\n{app.company_name}\n{app.project_name}\nTelegram ID: {app.telegram_id}",
-                keyboard(
-                    ("Одобрить", f"admin_approve:{app.id}"),
-                    ("Отклонить", f"admin_reject:{app.id}"),
-                    back="admin_apps:0",
-                ),
+                f"Заявка {app.id}\n{app.company_name}\n{app.project_name}\n"
+                f"Telegram ID: {app.telegram_id}\n\n{key_status}",
+                keyboard(*buttons, back="admin_apps:0"),
             )
     elif data.startswith("admin_payments:"):
         page = page_number(data)
@@ -669,7 +690,11 @@ async def handle_message(event, db, dialog) -> None:
     if not partner and not state.startswith("admin_"):
         await home(event, db, dialog)
         return
-    if state == "admin_partner_pick":
+    if state == "admin_application_key":
+        from app.telegram.admin_applications import receive_key
+
+        await receive_key(event, db, dialog, value)
+    elif state == "admin_partner_pick":
         from app.telegram.admin_partners import search_partners
 
         await search_partners(event, db, dialog, value)
