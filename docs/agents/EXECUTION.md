@@ -68,16 +68,20 @@ Public model and pricing endpoints must reflect the enabled database state.
 2. [x] Confirm public availability scope with the owner.
 3. [x] Add missing contract and behavioral tests; document both public variants.
 4. [x] Run local checks and independent review; submit PR and verify CI for its SHA.
-5. [ ] Verify actual smoke/price prerequisites, release and enable through admin
-   operations, then check live availability and pricing.
+5. [x] Release the verified main commit, provision catalog/pricing through admin
+   operations and verify readiness, public visibility and actual enable responses.
+6. [ ] Obtain successful upstream smoke evidence, then enable both models for all
+   partners. Both actual enable requests currently return `409 smoke_gate_missing`.
 
 ## Verification and follow-up
 
 Implementation and automated code verification are complete. [PR #65](https://github.com/Bambale0/ooo/pull/65)
-CI for `eec66274f213574d75c0311288eb04df86b97e2a` passed: **676 tests**, PostgreSQL
+was merged and released as `630ce82633819ac923f4eb6c1035e72afb888e38`.
+[CI for that exact main SHA](https://github.com/Bambale0/ooo/actions/runs/36912610432)
+passed: **676 tests**, PostgreSQL
 migrations/schema comparison, dependency audit, SAST, secret scan, backup/restore,
 PITR, Nginx validation and image build. Runtime release/catalog provisioning is
-being prepared; public enablement remains blocked by actual upstream capacity
+complete; public enablement remains blocked by actual upstream capacity
 failures. Do not mark `has_successful_smoke` true without a successful live run.
 
 Local environment setup: Python 3.14 virtual environment on drive D. The Linux
@@ -105,6 +109,37 @@ previous release and existing host-specific configuration, readiness verificatio
 and rollback on failure. The first isolated Docker build could not resolve PyPI
 on its default build network; only that build container was stopped, and the build
 was retried with host networking. Existing application containers were unchanged.
+
+## Runtime verification
+
+- Released the exact green main SHA above after PR merge. Verified API readiness,
+  database and Redis through the container and the configured public HTTPS API.
+- App, worker, webhook worker and Telegram all run the release image/revision.
+  Seven checks over 30 seconds verified running state, exact image IDs, unchanged
+  container IDs and restart counts. Previous image and host configuration were
+  preserved for rollback. No PostgreSQL/Redis restart or migration was required;
+  schema remains `20260930_0022`.
+- Authenticated admin API created the 2.0 variant as `draft`, installed its
+  720p/1080p prices and provider capabilities, and marked the released documentation
+  available for 2.5. Existing 2.5 restricted status, prices and grants were preserved.
+  Both integration/docs flags are true; both smoke-success flags remain false.
+- Read-only post-write verification caught a response/commit visibility delay
+  after the first price update. Provisioning stopped, verified committed state,
+  then resumed only missing operations; no successful write was repeated.
+- Final dry-run has an empty change plan. Prices are database-managed through the
+  existing admin API, with the existing price-history audit records.
+- Actual authenticated public-enable attempts for both models returned HTTP 409
+  with `smoke_gate_missing`. Neither model appears in public model/pricing APIs,
+  either language of the public docs, or the public price page.
+
+| Model | 720p, RUB/second | 1080p, RUB/second | Public status |
+| --- | --- | --- | --- |
+| 2.0 self-developed | 14.11 | 35.90 | Draft, smoke blocked |
+| 2.5 self-developed | 21.80 | 55.13 | Restricted, smoke blocked |
+
+The 2.0 4k tariff was not created while the operator decision is pending. Private
+live-smoke evidence was retained with restricted permissions outside the app
+container before recreation; no credentials or provider task IDs are in Git.
 
 ## Live matrix (2026-10-01)
 
