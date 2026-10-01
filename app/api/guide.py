@@ -58,7 +58,9 @@ async def _public_connection_guide(db: DbSession, lang: str) -> HTMLResponse:
             if ru
             else "<p>No models are currently enabled for public partner use.</p>"
         )
-    body = render_reference(base_url, lang).replace("<!-- enabled-models -->", enabled)
+    body = render_reference(base_url, lang, video_models={model.slug for model in model_rows}).replace(
+        "<!-- enabled-models -->", enabled
+    )
     return page(title, body, lang)
 
 

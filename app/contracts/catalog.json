@@ -632,6 +632,39 @@
         ]
       }
     },
+    "seedance-2.0-self-developed-nsfw": {
+      "category": "video",
+      "endpoint": "/v1/videos/generations",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "video",
+        "unit": "second",
+        "generation_per_unit": 0.053,
+        "tiers": [
+          {
+            "label": "720p",
+            "price": 0.11
+          },
+          {
+            "label": "1080p",
+            "price": 0.28
+          },
+          {
+            "label": "4k",
+            "price": 0.58
+          }
+        ]
+      },
+      "source": "https://argolink.io/api/catalog/v1/models?category=video&sort=provider&page_size=100",
+      "checked_at": "2026-10-01",
+      "observations": {
+        "reviewed_at": "2026-10-01",
+        "rejected_by_provider": {
+          "480p": "seedance-2.0-self-developed-nsfw accepts resolution 1080p, 4k or 720p."
+        },
+        "note": "480p is advertised at https://argolink.io/en/models/seedance-2.0-self-developed-nsfw and in the catalog but rejected by the API."
+      }
+    },
     "seedance-2.0-fast": {
       "category": "video",
       "endpoint": "/v1/videos/generations",

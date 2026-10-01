@@ -56,6 +56,29 @@ def test_new_reviewed_seedance_480p_tiers(model):
     assert any(r == "480p" and c > 0 for _, r, _, c in variants(MODELS[model]))
 
 
+@pytest.mark.parametrize(
+    "resolution,cost",
+    [("720p", "0.11"), ("1080p", "0.28"), ("4k", "0.58")],
+)
+def test_seedance_20_nsfw_reviewed_tiers_validate_and_preserve_billable_references(resolution, cost):
+    model = "seedance-2.0-self-developed-nsfw"
+    assert model in MODELS
+    body = {"model": model, "prompt": "Animate", "duration": 15, "resolution": resolution}
+    assert validate_request("videos/generations", body) == body
+    assert ("default", resolution, "second", Decimal(cost)) in list(variants(MODELS[model]))
+    body["reference_videos"] = [{"url": "https://example.org/clip.mp4"}]
+    assert validate_request("videos/generations", body) == body
+    assert video_reserve_seconds(body) == 30
+
+
+def test_seedance_20_nsfw_rejects_provider_rejected_480p_before_charge():
+    model = "seedance-2.0-self-developed-nsfw"
+    assert model in MODELS
+    assert "480p" not in {resolution for _, resolution, _, _ in variants(MODELS[model])}
+    with pytest.raises(ValueError, match="unsupported_resolution"):
+        validate_request("videos/generations", {"model": model, "prompt": "Animate", "resolution": "480p"})
+
+
 @pytest.mark.parametrize("model", list(MODELS))
 def test_every_catalog_model_has_valid_native_request_and_decimal_procurement(model):
     entry = MODELS[model]
