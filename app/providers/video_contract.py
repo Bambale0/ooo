@@ -29,12 +29,12 @@ def validate_video_request(payload: ProviderGenerationRequest) -> None:
     minimum, maximum = (4, 30 if payload.model_slug in SEEDANCE_25_FAMILY else 15) if seedance else (1, 15)
     if not minimum <= payload.duration_seconds <= maximum:
         raise ValueError("unsupported_duration")
-    resolutions = {"480p", "720p", "1080p"}
-    if payload.model_slug in SEEDANCE_20_4K_FAMILY:
-        resolutions = {"480p", "720p", "1080p", "4k"}
-    elif payload.model_slug in {"seedance-2.0-mini", "seedance-2.0-fast"}:
-        resolutions = {"480p", "720p"}
-    if payload.resolution not in resolutions:
+    # Resolutions come from the reviewed contract tiers. A provider-advertised tier
+    # the API rejects must fail here, before funds are reserved or a task is created.
+    from app.contracts.registry import MODELS
+
+    resolutions = {tier["label"].lower() for tier in MODELS[payload.model_slug]["procurement"]["tiers"]}
+    if payload.resolution.lower() not in resolutions:
         raise ValueError("unsupported_resolution")
     ratios = SEEDANCE_RATIOS if seedance else GROK_RATIOS
     if seedance and payload.start_image:

@@ -90,7 +90,10 @@ def validate_request(protocol: str, original: dict[str, Any]) -> dict[str, Any]:
                 ratios |= {"3:2", "2:3", "5:4", "4:5", "21:9"}
             if body.get("aspect_ratio", "1:1") not in ratios:
                 raise ValueError("unsupported_aspect_ratio")
-        resolutions = {"1k", "2k", "4k"} if model == "nano-banana-pro" else {"1k", "2k"}
+        # Derived from the reviewed contract tiers rather than a per-model literal,
+        # so a newly contracted model cannot silently lose a resolution the provider
+        # actually serves (or gain one it rejects).
+        resolutions = {tier["label"].lower() for tier in MODELS[model]["procurement"]["tiers"]}
         if not model.startswith("gpt-image") and str(body.get("resolution", "1k")).lower() not in resolutions:
             raise ValueError("unsupported_resolution")
         image_tier(body)

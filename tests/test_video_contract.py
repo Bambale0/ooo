@@ -69,6 +69,11 @@ def test_seedance_25_family_shares_its_limit_profile(model):
         validate_video_request(replace(BASE, model_slug=model, resolution="4k"))
     with pytest.raises(ValueError, match="unsupported_duration"):
         validate_video_request(replace(BASE, model_slug=model, duration_seconds=31))
+    # 480p is advertised for the NSFW variant but rejected by the provider, so the
+    # reviewed contract drops that tier and the request must fail before any charge.
+    if model == "seedance-2.5-self-developed-nsfw":
+        with pytest.raises(ValueError, match="unsupported_resolution"):
+            validate_video_request(replace(BASE, model_slug=model, resolution="480p"))
     # start_image restricts the aspect ratio to adaptive in the 2.5 family.
     validate_video_request(
         replace(BASE, model_slug=model, mode="first_frame", start_image="https://example.com/a.jpg")
