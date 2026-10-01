@@ -28,6 +28,17 @@ EXAMPLES = {
             "response_format": "b64_json",
         },
     ),
+    "image-nano-2": (
+        "images/generations",
+        {
+            "model": "nano-banana-2",
+            "prompt": "A cinematic mountain panorama",
+            "resolution": "4k",
+            "aspect_ratio": "16:9",
+            "n": 1,
+            "response_format": "b64_json",
+        },
+    ),
     "image-nano-pro": (
         "images/generations",
         {
@@ -303,6 +314,7 @@ def render_reference(base_url: str, lang: str) -> str:
         ]
     )
     body += example("image") + example("image-edit")
+    body += "<h3>Nano Banana 2 · 4K</h3>" + example("image-nano-2")
     body += "<h3>Nano Banana Pro · 4K</h3>" + example("image-nano-pro")
     body += "<h3>GPT Image 2.5 Sunburst · 4K</h3>" + example("image-sunburst")
     body += p(
