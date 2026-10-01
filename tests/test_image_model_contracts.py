@@ -47,11 +47,13 @@ def test_nano_pro_rejects_unsupported_controls(controls):
         validate_request("images/edits", {"model": "nano-banana-pro", "prompt": "Edit", **controls})
 
 
-@pytest.mark.parametrize("model", ["nano-banana-2", "nano-banana-2-lite"])
+@pytest.mark.parametrize(
+    "model",
+    ["nano-banana-2", "nano-banana-2-lite"],
+)
 @pytest.mark.parametrize(
     "controls",
     [
-        {"resolution": "4k"},
         {"aspect_ratio": "21:9"},
         {"images": [{"image_url": "https://example.org/reference.jpg"}] * 4},
     ],
@@ -59,6 +61,26 @@ def test_nano_pro_rejects_unsupported_controls(controls):
 def test_nano_pro_expansion_does_not_change_other_nano_contracts(model, controls):
     with pytest.raises(ValueError):
         validate_request("images/edits", {"model": model, "prompt": "Edit", **controls})
+
+
+@pytest.mark.parametrize("resolution", ["1k", "2k", "4k"])
+def test_nano_banana_2_serves_every_reviewed_resolution(resolution):
+    """4K was confirmed against the provider on 2026-09-30; the contract must keep it.
+
+    Resolutions come from the reviewed tiers, so a model advertised without a tier
+    cannot be offered and one advertised with it cannot be silently withheld.
+    """
+    body = validate_request(
+        "images/generations", {"model": "nano-banana-2", "prompt": "A lighthouse", "resolution": resolution}
+    )
+    assert body["resolution"] == resolution
+
+
+def test_nano_banana_2_lite_has_no_4k():
+    with pytest.raises(ValueError, match="unsupported_resolution"):
+        validate_request(
+            "images/generations", {"model": "nano-banana-2-lite", "prompt": "A lighthouse", "resolution": "4k"}
+        )
 
 
 @pytest.mark.parametrize("size", ["1024x1024", "1440x1920", "3840x2160"])

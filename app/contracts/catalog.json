@@ -232,10 +232,6 @@
         "generation_per_unit": 0.078,
         "tiers": [
           {
-            "label": "480p",
-            "price": 0.078
-          },
-          {
             "label": "720p",
             "price": 0.17
           },
@@ -244,6 +240,13 @@
             "price": 0.43
           }
         ]
+      },
+      "observations": {
+        "reviewed_at": "2026-09-30",
+        "rejected_by_provider": {
+          "480p": "seedance-2.5-self-developed-nsfw accepts resolution 1080p or 720p."
+        },
+        "note": "480p is advertised in the ArgoLink catalog and model page but rejected by the API."
       }
     },
     "grok-imagine-video-1.5": {
@@ -549,9 +552,14 @@
           {
             "label": "2K",
             "price": 0.015
+          },
+          {
+            "label": "4K",
+            "price": 0.015
           }
         ]
-      }
+      },
+      "checked_at": "2026-09-30"
     },
     "nano-banana-2-lite": {
       "category": "image",
