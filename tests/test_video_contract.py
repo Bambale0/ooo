@@ -90,7 +90,51 @@ def test_seedance_25_family_shares_its_limit_profile(model):
         )
 
 
-@pytest.mark.parametrize("model,first_field", [("seedance-2.5", "start_image"), ("grok-imagine-video-1.5", "image")])
+@pytest.mark.parametrize("model", ["seedance-2.0", "seedance-2.0-self-developed-nsfw"])
+def test_seedance_20_family_keeps_4k_and_its_shorter_duration_and_reference_limits(model):
+    validate_video_request(replace(BASE, model_slug=model, duration_seconds=15, resolution="4k"))
+    validate_video_request(
+        replace(
+            BASE,
+            model_slug=model,
+            mode="reference",
+            resolution="4k",
+            reference_images=("https://example.com/a.jpg",) * 9,
+        )
+    )
+    with pytest.raises(ValueError, match="unsupported_duration"):
+        validate_video_request(replace(BASE, model_slug=model, duration_seconds=16))
+    with pytest.raises(ValueError, match="too_many_reference_images"):
+        validate_video_request(
+            replace(
+                BASE,
+                model_slug=model,
+                mode="reference",
+                reference_images=("https://example.com/a.jpg",) * 10,
+            )
+        )
+    validate_video_request(
+        replace(
+            BASE,
+            model_slug=model,
+            mode="first_frame",
+            start_image="https://example.com/a.jpg",
+            aspect_ratio="16:9",
+        )
+    )
+    if model == "seedance-2.0-self-developed-nsfw":
+        with pytest.raises(ValueError, match="unsupported_resolution"):
+            validate_video_request(replace(BASE, model_slug=model, resolution="480p"))
+
+
+@pytest.mark.parametrize(
+    "model,first_field",
+    [
+        ("seedance-2.5", "start_image"),
+        ("seedance-2.0-self-developed-nsfw", "start_image"),
+        ("grok-imagine-video-1.5", "image"),
+    ],
+)
 def test_first_frame_uses_model_specific_wire_field(model, first_field):
     body = video_request_body(
         replace(

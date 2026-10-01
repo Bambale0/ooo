@@ -2,9 +2,10 @@
 
 Checked against [official documentation](https://argolink.io/en/docs#/) and the
 [public catalog](https://argolink.io/api/catalog/v1/models?page_size=100), revision
-`5ce662ba88c3d07f`, on 2026-09-23. The reviewed snapshot contains **40 models:
-24 text, 9 image, 7 video**. Procurement data lives in `app/contracts/catalog.json`;
-retail prices are always configured by the operator.
+`5ce662ba88c3d07f`, on 2026-09-23, with the reviewed Self-Developed NSFW additions
+documented below on 2026-10-01. The reviewed contracts contain **42 models:
+24 text, 9 image, 9 video**. Procurement data lives in `app/contracts/catalog.json`;
+retail prices and model availability are configured by the operator in the database.
 
 ## Native routes
 
@@ -16,7 +17,7 @@ retail prices are always configured by the operator.
 | `POST /v1/messages` | Messages JSON/SSE; Bearer or `x-api-key`, forwards Anthropic version/beta headers |
 | `POST /v1/images/generations` | All 9 catalog image models, native JSON |
 | `POST /v1/images/edits` | Native JSON or multipart, including repeated image fields and masks |
-| `POST /v1/videos/generations` | All 7 reviewed catalog video models, asynchronous JSON |
+| `POST /v1/videos/generations` | Reviewed catalog video models, asynchronous JSON |
 | `GET /v1/videos/{id}` | Tenant-isolated status; own request IDs |
 | `GET /v1/videos/{id}/content` | Protected MP4 stream, Range supported |
 | `POST /v1/media/uploads` | Provider upload ticket; client PUTs bytes directly to storage |
@@ -47,8 +48,10 @@ contract does not expose a safe cancellation endpoint.
 | Family | Output seconds | Resolutions | Images / videos / audios / combined |
 | --- | --- | --- | --- |
 | Seedance 2.0 | 4–15 | 480p, 720p, 1080p, 4k | 9 / 3 / 3 / 12 |
+| Seedance 2.0 Self-Developed NSFW | 4–15 | 720p, 1080p, 4k | 9 / 3 / 3 / 12 |
 | Seedance 2.0 Mini, Fast | 4–15 | 480p, 720p | 9 / 3 / 3 / 12 |
 | Seedance 2.5 | 4–30 | 480p, 720p, 1080p | 30 / 10 / 10 / 50 |
+| Seedance 2.5 Self-Developed NSFW | 4–30 | 720p, 1080p | 30 / 10 / 10 / 50 |
 | Wan 3 | 2–30 | 480p, 720p, 1080p | 10 / 5 / 5 / 20 |
 | Grok Video 1.5 | 1–15 | 480p, 720p, 1080p | up to 7 image references; no video/audio references |
 | MiniMax H3 | 4–15 | 768p (default), 2k | 9 / 3 / 3 / 15 |
@@ -59,6 +62,24 @@ validated before reserving funds. The 2.0 family requires visual input alongside
 audio; 2.5 allows audio alone. Wan requires a prompt and supports its audio toggle.
 Grok image references are capped at 720p; its native `image` first-frame input is
 preserved, including data URLs/file IDs supported upstream.
+
+The [Seedance 2.0 Self-Developed NSFW](https://argolink.io/en/models/seedance-2.0-self-developed-nsfw)
+and [Seedance 2.5 Self-Developed NSFW](https://argolink.io/en/models/seedance-2.5-self-developed-nsfw)
+contracts use exact model IDs `seedance-2.0-self-developed-nsfw` and
+`seedance-2.5-self-developed-nsfw`. They retain their respective family reference,
+frame, audio and billing rules; the 2.5 variant also supports video editing.
+Although both NSFW model pages advertise 480p, live API rejections allow only
+720p, 1080p or 4k for 2.0 (2026-10-01), and 720p or 1080p for 2.5 (2026-09-30).
+The gateway therefore rejects 480p for both exact NSFW IDs before reserving funds;
+ordinary Seedance 2.0 and 2.5 still accept it.
+
+Both variants can be published for all partners through the authenticated
+`POST /api/v1/catalog/models/{slug}/enable` workflow after configuration of retail
+prices and successful integration, documentation and smoke gates. Their IDs are
+not assigned a permanent restricted status in code. Availability remains the
+database model status: `production` publishes discovery, pricing and the enabled
+model documentation; `restricted` retains the existing per-partner grant behavior.
+Contract coverage by itself does not confirm a successful live generation.
 
 Rechecked Seedance against the provider documentation on 2026-09-28: frame modes
 accept explicit `adaptive`; the 2.0 family also accepts fixed ratios, while 2.5

@@ -22,10 +22,6 @@ SEEDANCE = {name for name in MODELS if name.startswith("seedance-")}
 # family membership so a newly contracted variant cannot silently inherit the 2.0
 # limits (15s, 9 references, audio-needs-visual) that differ from the provider card.
 SEEDANCE_25_FAMILY = {"seedance-2.5", "seedance-2.5-self-developed-nsfw"}
-# Contracted but never published: validated for granted partners only, and kept out
-# of the public reference, /v1/models, /price and the documented limits table.
-RESTRICTED_MODELS = {"seedance-2.5-self-developed-nsfw"}
-assert RESTRICTED_MODELS <= set(MODELS), "restricted model missing from the reviewed contract"
 
 
 def contract(model: str, protocol: str) -> dict[str, Any]:

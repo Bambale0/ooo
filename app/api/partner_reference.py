@@ -101,7 +101,9 @@ EXAMPLES = {
 # Public contract limits, deliberately independent of procurement/pricing metadata.
 VIDEO_LIMITS = (
     ("seedance-2.5", "4–30", "480p, 720p, 1080p", "30 / 10 / 10 / 50"),
+    ("seedance-2.5-self-developed-nsfw", "4–30", "720p, 1080p", "30 / 10 / 10 / 50"),
     ("seedance-2.0", "4–15", "480p, 720p, 1080p, 4k", "9 / 3 / 3 / 12"),
+    ("seedance-2.0-self-developed-nsfw", "4–15", "720p, 1080p, 4k", "9 / 3 / 3 / 12"),
     ("seedance-2.0-mini", "4–15", "480p, 720p", "9 / 3 / 3 / 12"),
     ("seedance-2.0-fast", "4–15", "480p, 720p", "9 / 3 / 3 / 12"),
     ("minimax-h3", "4–15", "768p, 2k", "9 / 3 / 3 / 15"),
@@ -126,7 +128,7 @@ def table(headers, rows):
     )
 
 
-def render_reference(base_url: str, lang: str) -> str:
+def render_reference(base_url: str, lang: str, *, video_models: set[str] | None = None) -> str:
     def t(ru, en):
         return ru if lang == "ru" else en
 
@@ -463,7 +465,19 @@ def render_reference(base_url: str, lang: str) -> str:
             "resolution",
             t("Фото / видео / аудио / всего", "Images / videos / audio / total"),
         ),
-        VIDEO_LIMITS,
+        (row for row in VIDEO_LIMITS if video_models is None or row[0] in video_models),
+    )
+    body += p(
+        "Self-Developed NSFW: используйте точный Model ID из таблицы. Правила кадров, референсов и аудио "
+        "соответствуют семейству Seedance 2.0 или 2.5; версия 2.5 также поддерживает edit. "
+        "Варианты Self-Developed NSFW не принимают 480p: 2.0 принимает 720p, 1080p и 4k, "
+        "2.5 — 720p и 1080p. Пример 480p ниже относится к обычной seedance-2.5. "
+        "Текущую доступность проверяйте через GET /v1/models.",
+        "Self-Developed NSFW: use the exact Model ID in the table. Frame, reference and audio rules follow "
+        "the Seedance 2.0 or 2.5 family; version 2.5 also supports edit. "
+        "Self-Developed NSFW variants reject 480p: 2.0 supports 720p, 1080p and 4k; "
+        "2.5 supports 720p and 1080p. The 480p example below applies to ordinary seedance-2.5. "
+        "Check GET /v1/models for current availability.",
     )
     body += p(
         "Seedance 2.5: текст и обычные референсы используют фиксированный aspect_ratio; adaptive здесь запрещён. "
