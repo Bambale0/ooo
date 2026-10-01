@@ -38,8 +38,10 @@ Public model and pricing endpoints must reflect the enabled database state.
   configured admin Telegram identity. Six requests have a conservative total cap
   of USD 6.50; submitted requests are persisted privately and are never resubmitted.
 - Live 2.0 variant 480p was rejected with HTTP 400 (`request_unsupported`): only
-  720p, 1080p and 4k are accepted. Other five planned requests were accepted and
-  are being polled; acceptance is not completion. Known 2.5 480p rejection remains.
+  720p, 1080p and 4k are accepted. Other five planned requests were accepted but
+  all finished with `capacity_unavailable`; no video/content was produced.
+  Observed provider usage delta was USD 0. No submit was repeated. Known 2.5
+  480p rejection remains. Public enablement is blocked by the failed smoke gate.
 - The owner was asked to set the missing 2.0 4k price (proposed 74.36 RUB/second)
   or to keep 4k unavailable initially. That tariff decision is pending.
 
@@ -65,15 +67,18 @@ Public model and pricing endpoints must reflect the enabled database state.
    paths, tests and CI; verify official model IDs and procurement tiers.
 2. [x] Confirm public availability scope with the owner.
 3. [x] Add missing contract and behavioral tests; document both public variants.
-4. [ ] Run local checks and independent review; submit PR and verify CI for its SHA.
+4. [x] Run local checks and independent review; submit PR and verify CI for its SHA.
 5. [ ] Verify actual smoke/price prerequisites, release and enable through admin
    operations, then check live availability and pricing.
 
 ## Verification and follow-up
 
-Implementation and verification are in progress. Production database and release
-are unchanged so far. Bounded provider smoke has started; no successful generation,
-deployment or enablement is claimed before its evidence is available.
+Implementation and automated code verification are complete. [PR #65](https://github.com/Bambale0/ooo/pull/65)
+CI for `eec66274f213574d75c0311288eb04df86b97e2a` passed: **676 tests**, PostgreSQL
+migrations/schema comparison, dependency audit, SAST, secret scan, backup/restore,
+PITR, Nginx validation and image build. Runtime release/catalog provisioning is
+being prepared; public enablement remains blocked by actual upstream capacity
+failures. Do not mark `has_successful_smoke` true without a successful live run.
 
 Local environment setup: Python 3.14 virtual environment on drive D. The Linux
 lock file contains uvloop and omits Windows-only colorama; a temporary ignored copy
@@ -94,3 +99,25 @@ Final focused local verification: 228 passed across contract registry, normalize
 video validation, public documentation/enablement, restricted model access,
 provider adapter, native inference and partner generation flows. Ruff and
 `git diff --check` also passed. No schema migration is required.
+
+Release preparation uses local `deployment-procedures`: immutable image, preserved
+previous release and existing host-specific configuration, readiness verification
+and rollback on failure. The first isolated Docker build could not resolve PyPI
+on its default build network; only that build container was stopped, and the build
+was retried with host networking. Existing application containers were unchanged.
+
+## Live matrix (2026-10-01)
+
+| Model | Resolution | Input | Result |
+| --- | --- | --- | --- |
+| 2.0 self-developed | 480p | Neutral text, 4 seconds | HTTP 400, unsupported resolution |
+| 2.0 self-developed | 720p | Synthetic image reference, 4 seconds | `capacity_unavailable` |
+| 2.0 self-developed | 1080p | Neutral text, 4 seconds | `capacity_unavailable` |
+| 2.0 self-developed | 4k | Neutral text, 4 seconds | `capacity_unavailable` |
+| 2.5 self-developed | 720p | Neutral text, 4 seconds | `capacity_unavailable` |
+| 2.5 self-developed | 1080p | Synthetic first frame, 4 seconds | `capacity_unavailable` |
+
+Follow-up: a successful bounded live test is required before setting smoke gates
+and invoking public enable. The pending 4k tariff is a separate operator decision.
+There is no evidence of a working NSFW render in this task; unit/CI success does
+not override this provider failure.
