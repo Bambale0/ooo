@@ -219,13 +219,27 @@ def quote(protocol, body, prices, *, fx=None, trial=False):
     def add(key, mode, resolution, unit):
         # Prefer partner-specific price (partner_id NOT NULL) over global (partner_id IS NULL)
         price = next(
-            (p for p in prices if p.mode == mode and p.resolution == resolution and p.billing_unit == unit and p.partner_id is not None),
-            None
+            (
+                p
+                for p in prices
+                if p.mode == mode
+                and p.resolution == resolution
+                and p.billing_unit == unit
+                and p.partner_id is not None
+            ),
+            None,
         )
         if price is None:
             price = next(
-                (p for p in prices if p.mode == mode and p.resolution == resolution and p.billing_unit == unit and p.partner_id is None),
-                None
+                (
+                    p
+                    for p in prices
+                    if p.mode == mode
+                    and p.resolution == resolution
+                    and p.billing_unit == unit
+                    and p.partner_id is None
+                ),
+                None,
             )
         if price is None:
             raise HTTPException(503, "provider_temporarily_unavailable")
