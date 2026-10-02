@@ -492,11 +492,20 @@ EPIC 03, EPIC 04, EPIC 05, EPIC 06, EPIC 08.
 - margin_usdt;
 - margin_percent.
 
-### FX fallback chain
+### FX policy and fallback chain
 
-1. fresh automatic rate;
-2. manual fallback, если задан;
-3. last known automatic rate.
+Automatic mode:
+1. exchange rate refresh happens only while creating a new top-up invoice;
+2. successful rate is persisted and all other runtime paths are network-free;
+3. if invoice-time refresh fails, use an already persisted valid fallback/rate.
+
+Manual override:
+1. admin sets a RUB/USDT rate and disables automatic mode;
+2. the manual rate remains active until explicitly disabled;
+3. no exchange-rate endpoint is called while manual mode is active.
+
+Every invoice stores the FX snapshot captured before provider invoice creation.
+Its later credit/coverage accounting reuses that snapshot.
 
 ### Historical cost coverage
 

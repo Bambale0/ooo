@@ -593,15 +593,34 @@ async def admin_callback(event, db, dialog, data: str) -> None:
             keyboard(("Курс RUB/USDT", "admin_fx"), ("Заглушить инцидент", "admin_mute"), back="admin_menu"),
         )
     elif data == "admin_fx":
-        from app.billing.fx import current_fx
+        from app.billing.fx import current_fx, fx_policy
 
         fx = await current_fx(db)
-        dialog.state, dialog.data = "admin_fx", {}
+        policy = await fx_policy(db)
+        automatic = policy["automatic_enabled"]
+        mode = "автоматический" if automatic else "ручной"
+        buttons = [("Ручной режим / задать курс", "admin_fx_manual")]
+        if not automatic:
+            buttons.insert(0, ("Включить авто", "admin_fx_auto"))
         await show(
             event,
             f"Курс: {fx['rate']} ₽/USDT. Источник: {fx['source']}.\n"
-            "Введите ручной fallback-курс или «выключить». Автоматический курс имеет приоритет.",
+            f"Режим: {mode}.\n\n"
+            "Авто запрашивает Crypto Pay только при создании нового счёта. "
+            "Все остальные операции используют сохранённый курс.",
+            keyboard(*buttons, back="admin_stw"),
         )
+    elif data == "admin_fx_auto":
+        await ask_confirmation(
+            event,
+            db,
+            "admin_fx",
+            {"automatic_enabled": True},
+            "Включить автоматический курс? Новый курс будет запрашиваться только при создании нового счёта.",
+        )
+    elif data == "admin_fx_manual":
+        dialog.state, dialog.data = "admin_fx_manual", {}
+        await show(event, "Введите ручной курс RUB/USDT, например 95.50.", keyboard(back="admin_fx"))
     elif data == "admin_mute":
         from app.billing.models import FinancialIncident
 
@@ -833,20 +852,20 @@ async def handle_message(event, db, dialog) -> None:
             "Сообщение добавлено. Можно отправить ещё одно сообщение или файл.",
             keyboard(back="admin_support" if is_admin(user) else "support"),
         )
-    elif state == "admin_fx":
+    elif state in {"admin_fx", "admin_fx_manual"}:
         from decimal import Decimal
 
-        rate = None if value.lower() == "выключить" else Decimal(value.replace(",", "."))
-        if rate is not None and (not rate.is_finite() or not 0 < rate < Decimal("1000000000000")):
-            raise ValueError("invalid rate")
+        if state == "admin_fx" and value.lower() == "выключить":
+            payload = {"automatic_enabled": True}
+            prompt = "Оставить автоматический режим без ручного fallback-курса?"
+        else:
+            rate = Decimal(value.replace(",", "."))
+            if not rate.is_finite() or not 0 < rate < Decimal("1000000000000"):
+                raise ValueError("invalid rate")
+            payload = {"automatic_enabled": False, "rate": str(rate)}
+            prompt = f"Включить ручной курс {rate} ₽/USDT? Автоматические запросы курса будут отключены."
         reset(dialog)
-        await ask_confirmation(
-            event,
-            db,
-            "admin_fx",
-            {"rate": str(rate) if rate is not None else None},
-            f"Изменить резервный курс: {rate if rate is not None else 'выключен'}?",
-        )
+        await ask_confirmation(event, db, "admin_fx", payload, prompt)
     elif state == "admin_reject":
         if not 1 <= len(value) <= 2000:
             raise ValueError("reason")
