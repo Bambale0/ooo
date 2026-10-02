@@ -143,3 +143,49 @@ async def test_snapshot_records_current_public_price_without_changing_global(db_
     assert override.price_rub == Decimal("3.85")
     await db_session.refresh(global_price)
     assert global_price.price_rub == Decimal("3.85")
+
+
+async def test_capital_reserve_uses_legacy_retail_with_current_global_cost(db_session):
+    from app.billing.capital import capital_state
+
+    partner = Partner(
+        telegram_id="legacy-capital",
+        company_name="Legacy Capital",
+        project_name="Legacy Capital",
+        balance_rub=Decimal("100.00"),
+    )
+    model = Model(
+        slug="legacy-capital-model",
+        name="Legacy Capital",
+        modality="image",
+        status="production",
+    )
+    db_session.add_all([partner, model])
+    await db_session.flush()
+    db_session.add_all(
+        [
+            PartnerPrice(
+                model_id=model.id,
+                partner_id=None,
+                mode="default",
+                resolution="1K",
+                price_rub=Decimal("3.00"),
+                provider_cost_usdt=Decimal("0.02"),
+                billing_unit="generation",
+            ),
+            PartnerPrice(
+                model_id=model.id,
+                partner_id=partner.id,
+                mode="default",
+                resolution="1K",
+                price_rub=Decimal("1.50"),
+                provider_cost_usdt=Decimal("0.01"),
+                billing_unit="generation",
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    state = await capital_state(db_session)
+
+    assert state["components"]["current_future_cost_reserve_usdt"] == Decimal("1.333333333333333333333333333")
