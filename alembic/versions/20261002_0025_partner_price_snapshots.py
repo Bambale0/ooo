@@ -24,11 +24,6 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.PrimaryKeyConstraint("partner_id", "partner_price_id"),
     )
-    op.create_index(
-        "ix_partner_price_snapshots_partner_id",
-        "partner_price_snapshots",
-        ["partner_id"],
-    )
     op.execute(
         sa.text(
             """
@@ -43,5 +38,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("ix_partner_price_snapshots_partner_id", table_name="partner_price_snapshots")
     op.drop_table("partner_price_snapshots")
