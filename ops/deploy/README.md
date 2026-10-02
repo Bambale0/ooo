@@ -116,9 +116,9 @@ cat > .env << 'EOF'
 APP_ENV=production
 APP_NAME=neironych
 API_PREFIX=/api/v1
-DATABASE_URL=postgresql+asyncpg://neironych:PRODUCTION_PASSWORD@postgres:5432/neironych
+DATABASE_URL=postgresql+asyncpg://neironych:SECURE_PASSWORD_HERE@postgres:5432/neironych
 # ... (see .env.example for full list)
-ASALE_API_KEY=sk-asale-lYcj7Ai6Ktxw4M1xxj03WQPsy7sRa4xf
+ASALE_API_KEY=your-actual-asale-key-here
 EOF
 
 # Create .backup.env (see ops/backup/README.md)

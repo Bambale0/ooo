@@ -65,7 +65,7 @@ Merged: 2026-10-02T18:41:18Z
 - [x] `PRODUCTION_DEPLOY_ENABLED` set to `true`
 - [ ] Production host `/opt/neironych/shared/.env` updated with:
   ```bash
-  ASALE_API_KEY=sk-asale-lYcj7Ai6Ktxw4M1xxj03WQPsy7sRa4xf
+  ASALE_API_KEY=your-actual-asale-key-here
   ```
 - [ ] Database backup completed
 - [ ] TLS certificates in place

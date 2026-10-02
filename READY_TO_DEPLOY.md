@@ -41,7 +41,7 @@ git pull origin main
 ```bash
 ssh deploy@PRODUCTION_HOST
 cd /opt/neironych/shared
-echo 'ASALE_API_KEY=sk-asale-lYcj7Ai6Ktxw4M1xxj03WQPsy7sRa4xf' >> .env
+echo 'ASALE_API_KEY=your-actual-asale-key-here' >> .env
 ```
 
 ### 4. Запусти deployment
