@@ -258,3 +258,67 @@ Branch: `fix/fx-policy-and-inference-diagnostics`.
   - Production Nginx validation and production image build: PASS.
 - A final exact-SHA CI run is required after these documentation/spec commits
   before the PR can be marked ready and merged.
+
+
+# Production autodeploy authentication — 2026-10-03
+
+Baseline: `959f29187a72d6d53d53150bcb7b35281849be72` (`main`).
+Branch: `fix/production-autodeploy-auth`.
+
+## Intended outcome and acceptance
+
+- A successful push CI on the current `main` SHA starts the protected production
+  deployment only while `PRODUCTION_DEPLOY_ENABLED=true`.
+- The release uses the exact CI SHA, authenticates to the private GHCR package for
+  the duration of this run, verifies all four application processes, and leaves no
+  long-lived registry credential on the host.
+- Production SSH remains pinned to the host key; release failures stop before a
+  switch or use the existing rollback path. A new release is not claimed from CI
+  or API revision alone.
+
+## Baseline evidence and risks
+
+- GitHub CI run `37067486951` attempt 2 passed for the baseline SHA. Deploy run
+  `37070605960` reached SSH preflight but failed host-key verification; subsequent
+  retry was skipped after the arming variable changed externally to `false`.
+- The API, `/opt/neironych/REVISION`, and four running `ooo` containers report the
+  baseline SHA. This is an existing manual release, not proof of Actions deploy.
+- The host has no `deploy` user and `/opt/neironych` is root-owned. An anonymous
+  GHCR manifest request is unauthorized; the current workflow cannot pull a new
+  private image on that host without per-run authentication.
+- Production is an existing-host Compose installation. Its code-only release path
+  refuses pending migrations, preserves the database/proxy, and verifies rollback.
+  SSH account configuration and the external change to the arming variable must be
+  resolved before release activation.
+- No database schema, business configuration, API contract, or provider routing
+  change is intended. The GitHub Actions token is a short-lived credential, kept
+  outside the image and application settings.
+
+## Plan and verification seams
+
+1. [x] Inspect repository release instructions, exact-head CI, workflow, host
+   topology, host key, running revision, registry access, and rollback boundary.
+2. [x] Add temporary, private GHCR authentication for the SSH release; clean it
+   on success and failure. Preserve the current exact-SHA and provenance gates.
+3. [ ] Run workflow syntax, focused deployment tests, and PR CI for the exact SHA.
+4. [ ] Resolve the SSH execution identity and the externally disabled arming gate;
+   enable the gate only when authorized state is clear.
+5. [ ] Merge through PR, verify push CI and the production job, then verify the
+   host revision, four containers, API readiness, and credential cleanup.
+
+Observability: use CI/deploy run IDs, commit SHA, safe deploy progress markers,
+container revision/image identities, and readiness. Never print SSH keys, registry
+tokens, Docker auth files, host `.env`, or private payloads.
+
+Preparation evidence: the known local SSH identity reaches the host as `root` on
+port 2022, and this host has no `deploy` user. The production environment SSH
+secret and repository `DEPLOY_SSH_USER=root`, `DEPLOY_USE_SUDO=false`, and
+`DEPLOY_SSH_PORT=2022` now match that existing access. The arming variable remains
+`false` after an external change, so no deployment attempt is authorized until
+its owner clarifies the change. The new GHCR auth flow remains a branch change
+pending PR review, CI, and an exact-SHA release run.
+
+Local verification: workflow YAML loaded; 11 local/remote Bash blocks passed
+`bash -n`; deployment-focused pytest run passed `10/10` with `--noconftest`.
+The laptop's Python environment lacks Pillow, so the full suite will run in
+GitHub CI after PR creation. `git diff --check` passed.
