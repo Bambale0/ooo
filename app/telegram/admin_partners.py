@@ -403,7 +403,7 @@ async def show_partner_payments(event, db, data: str) -> None:
     lines = ["Платежи партнёра"]
     for row in rows[:DETAIL_PAGE_SIZE]:
         lines.append(
-            f"{row.id[:8]} · {row.requested_rub:.2f} ₽ · {row.status}"
+            f"{row.id} · {row.requested_rub:.2f} ₽ · {row.status}"
             f" · возврат {row.refunded_rub:.2f} ₽\n{_date(row.created_at)}"
         )
     if len(lines) == 1:
@@ -429,7 +429,7 @@ async def show_partner_generations(event, db, data: str) -> None:
     for row in rows[:DETAIL_PAGE_SIZE]:
         charge = row.actual_charge_rub if row.actual_charge_rub is not None else row.partner_price_rub
         lines.append(
-            f"{row.id[:8]} · {row.model_slug} · {row.mode}/{row.resolution}\n"
+            f"{row.id} · {row.model_slug} · {row.mode}/{row.resolution}\n"
             f"{row.status} · {charge:.2f} ₽ · {_date(row.created_at)}"
         )
     if len(lines) == 1:
@@ -454,8 +454,10 @@ async def show_partner_ledger(event, db, data: str) -> None:
     lines = ["Ledger партнёра"]
     for row in rows[:DETAIL_PAGE_SIZE]:
         lines.append(
-            f"{row.operation_type} · {row.amount_rub:+.2f} ₽ → {row.balance_after_rub:.2f} ₽\n"
-            f"{(row.description or 'без описания')[:180]} · {_date(row.created_at)}"
+            f"UUID записи: {row.id}\n"
+            + (f"UUID операции: {row.generation_id}\n" if row.generation_id else "")
+            + f"{row.operation_type} · {row.amount_rub:+.2f} ₽ → {row.balance_after_rub:.2f} ₽\n"
+            + f"{(row.description or 'без описания')[:180]} · {_date(row.created_at)}"
         )
     if len(lines) == 1:
         lines.append("Операций ledger нет.")

@@ -221,3 +221,11 @@ Prompts, reference URLs, auth/cookie headers, response bodies and exception mess
 are excluded. The public API/error envelope and no-blind-replay billing semantics
 are unchanged. These diagnostics do not remove an upstream timeout or prove whether
 an uncertain image was accepted. Do not resubmit it with a new key without reconciliation.
+
+## Full operation UUIDs in Telegram history (2026-10-02)
+
+Administrator partner-generation/payment lists and the paid-invoice queue display the complete persisted UUID. The invoice UUID is included in the message body as well as its button, so a narrow button display cannot hide the identifier. Administrator ledger and partner History show `UUID записи` (ledger record ID) and `UUID операции` (the linked generation/payment operation ID when present). Neither identifier is shortened.
+
+For generation investigation copy `UUID операции` into the existing partner `История и поиск -> Поиск по UUID`, or use the existing authenticated `GET /api/v1/generations/{id}`. Search the administrator JSON logs for that exact `generation_id`; native diagnostics already include full `generation_id` and `attempt_id`. A ledger record UUID identifies the financial journal entry and is not itself a generation UUID. Ownership checks and pagination are unchanged. No new credentials or upstream details are exposed to partners.
+
+This UI release does not add an all-HTTP correlation layer or change provider submission, retries, billing or result storage. Existing request IDs remain unchanged; errors before generation admission may still have no generation UUID.

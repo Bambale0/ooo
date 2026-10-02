@@ -265,7 +265,9 @@ async def handle_callback(event, db, dialog) -> None:
             "generation_refund": "Возврат резерва",
         }
         lines = [
-            f"{r.created_at:%d.%m %H:%M} · {labels.get(r.operation_type, 'Операция')} · {r.amount_rub:+.2f} ₽"
+            f"{r.created_at:%d.%m %H:%M} · {labels.get(r.operation_type, 'Операция')} · {r.amount_rub:+.2f} ₽\n"
+            f"UUID записи: {r.id}"
+            + (f"\nUUID операции: {r.generation_id}" if r.generation_id else "")
             for r in rows[:8]
         ]
         buttons = [("Поиск по UUID", "search_prompt")]
@@ -558,11 +560,13 @@ async def admin_callback(event, db, dialog, data: str) -> None:
             .scalars()
             .all()
         )
-        buttons = [(f"{r.requested_rub:.2f} ₽ · {r.id[:8]}", f"admin_credit:{r.id}") for r in rows[:4]]
+        buttons = [(f"{r.requested_rub:.2f} ₽ · {r.id}", f"admin_credit:{r.id}") for r in rows[:4]]
         navigation(buttons, "admin_payments", page, len(rows) > 4)
         await show(
             event,
-            "Оплаченные счета на зачисление" if rows else "Нет счетов на зачисление.",
+            "Оплаченные счета на зачисление\n\n"
+            + "\n\n".join(f"UUID платежа: {r.id}\n{r.requested_rub:.2f} ₽" for r in rows[:4])
+            if rows else "Нет счетов на зачисление.",
             keyboard(*buttons, back="admin_menu"),
         )
     elif data.startswith("admin_credit:"):
