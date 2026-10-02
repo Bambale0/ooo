@@ -124,9 +124,15 @@ jobs:
             nginx/production.conf \
             ops/backup/postgres \
             ops/deploy/existing_host.py
+          remote_dir="$(ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
+            -p "$DEPLOY_SSH_PORT" -i ~/.ssh/deploy_key "$DEPLOY_SSH_USER@$DEPLOY_HOST" \
+            "umask 077; mktemp -d /tmp/neironych-${RELEASE_SHA}.XXXXXX")"
+          [[ "$remote_dir" =~ ^/tmp/neironych-[0-9a-f]{40}\.[a-zA-Z0-9]{6,}$ ]]
           scp -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
             -P "$DEPLOY_SSH_PORT" -i ~/.ssh/deploy_key \
-            "$bundle" "$DEPLOY_SSH_USER@$DEPLOY_HOST:/tmp/neironych-${RELEASE_SHA}.tar.gz"
+            "$bundle" "$DEPLOY_SSH_USER@$DEPLOY_HOST:${remote_dir}/release.tar.gz"
+          digest="$(sha256sum "$bundle" | cut -d ' ' -f 1)"
+          printf 'DEPLOY_BUNDLE_DIR=%s\nDEPLOY_BUNDLE_SHA256=%s\n' "$remote_dir" "$digest" >> "$GITHUB_ENV"
 
       - name: Deploy verified revision with automatic rollback
         env:
@@ -136,12 +142,14 @@ jobs:
           set -euo pipefail
           current="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq .object.sha)"
           [[ "$current" == "$RELEASE_SHA" ]] || { echo 'Superseded release; not deploying.' >&2; exit 1; }
+          [[ "$DEPLOY_BUNDLE_DIR" =~ ^/tmp/neironych-[0-9a-f]{40}\.[a-zA-Z0-9]{6,}$ ]]
+          [[ "$DEPLOY_BUNDLE_SHA256" =~ ^[0-9a-f]{64}$ ]]
           remote=(env)
           if [[ "$DEPLOY_USE_SUDO" == true ]]; then remote=(sudo -n env); fi
           ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
             -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
             -p "$DEPLOY_SSH_PORT" -i ~/.ssh/deploy_key "$DEPLOY_SSH_USER@$DEPLOY_HOST" \
-            "${remote[*]} RELEASE_SHA='${RELEASE_SHA}' REPOSITORY='${GITHUB_REPOSITORY}' DEPLOY_ROOT='${DEPLOY_ROOT}' bash -s" <<'SSH'
+            "${remote[*]} RELEASE_SHA='${RELEASE_SHA}' REPOSITORY='${GITHUB_REPOSITORY}' DEPLOY_ROOT='${DEPLOY_ROOT}' DEPLOY_BUNDLE_DIR='${DEPLOY_BUNDLE_DIR}' DEPLOY_BUNDLE_SHA256='${DEPLOY_BUNDLE_SHA256}' bash -s" <<'SSH'
           set -euo pipefail
 
           REPO="ghcr.io/${REPOSITORY,,}"
@@ -152,8 +160,11 @@ jobs:
           RELEASE_DIR="${RELEASES}/${TAG}"
           REVISION_FILE="${ROOT}/REVISION"
           PREVIOUS_TAG="$(cat "${REVISION_FILE}" 2>/dev/null || true)"
-          BUNDLE="/tmp/neironych-${TAG}.tar.gz"
+          BUNDLE="${DEPLOY_BUNDLE_DIR}/release.tar.gz"
+          test -d "${DEPLOY_BUNDLE_DIR}"
+          test "$(stat -c '%a' "${DEPLOY_BUNDLE_DIR}")" = 700
           test -f "${BUNDLE}"
+          printf '%s  %s\n' "${DEPLOY_BUNDLE_SHA256}" "${BUNDLE}" | sha256sum --check --status
 
           # Existing installations own their project, ports, secrets, proxy and DB.
           # Never switch them to the standalone neironych/PITR/Nginx topology.
@@ -163,6 +174,7 @@ jobs:
             python3 "${RELEASE_DIR}/ops/deploy/existing_host.py" \
               --root "${ROOT}" --revision "${TAG}" --image "${REPO}:${TAG}"
             rm -f "${BUNDLE}"
+            rmdir "${DEPLOY_BUNDLE_DIR}"
             exit 0
           fi
 
@@ -173,6 +185,7 @@ jobs:
           test -f "${SHARED}/nginx/ssl/privkey.pem"
           tar -xzf "${BUNDLE}" -C "${RELEASE_DIR}"
           rm -f "${BUNDLE}"
+          rmdir "${DEPLOY_BUNDLE_DIR}"
           ln -sfn "${SHARED}/.env" "${RELEASE_DIR}/.env"
           ln -sfn "${SHARED}/.backup.env" "${RELEASE_DIR}/.backup.env"
           mkdir -p "${RELEASE_DIR}/nginx"

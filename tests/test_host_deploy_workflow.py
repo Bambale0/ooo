@@ -36,3 +36,12 @@ def test_remote_deploy_shell_blocks_parse():
         for body in re.findall(r"<<'SSH'\n(.*?)\nSSH", step.get('run', ''), re.S):
             result = subprocess.run(['bash', '-n'], input=body, capture_output=True, text=True, check=False)
             assert result.returncode == 0, (step['name'], result.stderr)
+
+
+def test_release_archive_is_private_and_verified_before_extraction():
+    text = Path('.github/workflows/deploy.yml').read_text(encoding='utf-8')
+    assert 'umask 077; mktemp -d' in text
+    assert "stat -c '%a'" in text
+    assert 'sha256sum --check --status' in text
+    assert text.index('sha256sum --check --status') < text.index('tar -xzf')
+    assert 'BUNDLE="${DEPLOY_BUNDLE_DIR}/release.tar.gz"' in text

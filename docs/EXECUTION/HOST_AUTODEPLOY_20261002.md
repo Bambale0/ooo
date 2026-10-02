@@ -25,3 +25,7 @@ syntax), compileall passed. Initial test collection failed before the new module
 was implemented. Full application CI and production execution are not yet claimed.
 The existing standalone deployment contract tests have not been edited.
 GitHub activation still requires its Actions variable and verified SSH/GHCR access.
+
+Review added a private remote upload directory (0700), checksum verification
+before extraction, and a regression test. Final focused local suite: 18 passed.
+PR #71 includes the change; exact-SHA CI and live activation remain separate gates.
