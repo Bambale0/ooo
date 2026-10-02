@@ -333,3 +333,44 @@ async def test_unknown_uuid_and_admin_dialog_do_not_leak(cabinet, db_session):
     await db_session.commit()
     result = await feed(text=str(uuid4()))
     assert "Действие недоступно" in result[-1].text
+
+
+
+async def test_admin_can_switch_fx_between_manual_and_automatic(cabinet, db_session):
+    from app.billing.models import FxFallbackSetting
+
+    feed, _ = cabinet
+    await feed(user=999, callback="admin_fx_manual")
+    await feed(user=999, text="97.50")
+    manual_action = (
+        await db_session.execute(
+            select(BotAction).where(BotAction.kind == "admin_fx").order_by(BotAction.created_at.desc())
+        )
+    ).scalars().first()
+    assert manual_action.payload == {"automatic_enabled": False, "rate": "97.50"}
+    await feed(user=999, callback=f"confirm:{manual_action.id}")
+    manual = (
+        await db_session.execute(
+            select(FxFallbackSetting).order_by(FxFallbackSetting.created_at.desc())
+        )
+    ).scalars().first()
+    assert manual.automatic_enabled is False
+    assert manual.rate == Decimal("97.500000")
+
+    await feed(user=999, callback="admin_fx_auto")
+    auto_action = (
+        await db_session.execute(
+            select(BotAction)
+            .where(BotAction.kind == "admin_fx", BotAction.status == "pending")
+            .order_by(BotAction.created_at.desc())
+        )
+    ).scalars().first()
+    assert auto_action.payload == {"automatic_enabled": True}
+    await feed(user=999, callback=f"confirm:{auto_action.id}")
+    automatic = (
+        await db_session.execute(
+            select(FxFallbackSetting).order_by(FxFallbackSetting.created_at.desc())
+        )
+    ).scalars().first()
+    assert automatic.automatic_enabled is True
+    assert automatic.rate == Decimal("97.500000")
