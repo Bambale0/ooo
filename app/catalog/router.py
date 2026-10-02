@@ -211,13 +211,6 @@ async def upsert_price(payload: PartnerPriceUpsert, db: DbSession) -> None:
     if model is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="model_not_found")
 
-    # Validate partner_id if provided
-    if payload.partner_id is not None:
-        from app.accounts.models import Partner
-        partner_check = await db.execute(select(Partner.id).where(Partner.id == payload.partner_id))
-        if partner_check.scalar_one_or_none() is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="partner_not_found")
-
     from app.billing.fx import current_fx
     from app.billing.fx import snapshot as fx_snapshot
 
@@ -231,7 +224,7 @@ async def upsert_price(payload: PartnerPriceUpsert, db: DbSession) -> None:
     price_result = await db.execute(
         select(PartnerPrice).where(
             PartnerPrice.model_id == model.id,
-            PartnerPrice.partner_id == payload.partner_id if payload.partner_id else PartnerPrice.partner_id.is_(None),
+            PartnerPrice.partner_id.is_(None),
             PartnerPrice.mode == payload.mode,
             PartnerPrice.resolution == payload.resolution,
         )
@@ -241,7 +234,6 @@ async def upsert_price(payload: PartnerPriceUpsert, db: DbSession) -> None:
         db.add(
             PartnerPrice(
                 model_id=model.id,
-                partner_id=payload.partner_id,
                 mode=payload.mode,
                 resolution=payload.resolution,
                 price_rub=payload.price_rub,
@@ -252,7 +244,6 @@ async def upsert_price(payload: PartnerPriceUpsert, db: DbSession) -> None:
         db.add(
             PartnerPriceHistory(
                 model_id=model.id,
-                partner_id=payload.partner_id,
                 mode=payload.mode,
                 resolution=payload.resolution,
                 old_price_rub=None,
@@ -273,7 +264,6 @@ async def upsert_price(payload: PartnerPriceUpsert, db: DbSession) -> None:
         db.add(
             PartnerPriceHistory(
                 model_id=model.id,
-                partner_id=payload.partner_id,
                 mode=payload.mode,
                 resolution=payload.resolution,
                 old_price_rub=old_price_rub,
@@ -288,22 +278,16 @@ async def upsert_price(payload: PartnerPriceUpsert, db: DbSession) -> None:
 
 
 @router.get("/pricing", response_model=list[PricingRead])
-async def list_pricing(db: DbSession, partner_id: str | None = None) -> list[PricingRead]:
-    """List pricing. If partner_id provided, show partner-specific prices; otherwise show only global prices."""
-    query = (
+async def list_pricing(db: DbSession) -> list[PricingRead]:
+    result = await db.execute(
         select(Model, PartnerPrice)
         .join(PartnerPrice, PartnerPrice.model_id == Model.id)
-        .where(Model.status == "production")
+        .where(
+            Model.status == "production",
+            PartnerPrice.partner_id.is_(None),
+        )
+        .order_by(Model.slug, PartnerPrice.mode, PartnerPrice.resolution)
     )
-
-    if partner_id is not None:
-        # Show partner-specific prices only
-        query = query.where(PartnerPrice.partner_id == partner_id)
-    else:
-        # Show global prices only
-        query = query.where(PartnerPrice.partner_id.is_(None))
-
-    result = await db.execute(query.order_by(Model.slug, PartnerPrice.mode, PartnerPrice.resolution))
     return [
         PricingRead(
             model_slug=model.slug,
@@ -313,7 +297,6 @@ async def list_pricing(db: DbSession, partner_id: str | None = None) -> list[Pri
             resolution=price.resolution,
             price_rub=price.price_rub,
             billing_unit=price.billing_unit,
-            partner_id=price.partner_id,
         )
         for model, price in result.all()
     ]
@@ -409,17 +392,3 @@ async def snapshot_partner_pricing(partner_id: str, db: DbSession) -> dict:
     """
     count = await snapshot_global_prices_for_partner(db, partner_id, actor="admin_api")
     return {"partner_id": partner_id, "prices_created": count}
-
-
-@router.post(
-    "/pricing/new-partner/{partner_id}",
-    status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_admin)],
-)
-async def create_new_partner_pricing(partner_id: str, db: DbSession) -> dict:
-    """Create pricing for a new partner with 35% gross margin.
-
-    Applies the new partner pricing formula: price = cost / 0.65
-    """
-    count = await create_new_partner_prices_with_margin(db, partner_id, actor="admin_api")
-    return {"partner_id": partner_id, "prices_created": count, "margin_percent": 35}
