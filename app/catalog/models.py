@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from sqlalchemy import JSON, DateTime, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, Numeric, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.database import Base
@@ -45,12 +45,28 @@ class PartnerModelGrant(Base):
 class PartnerPrice(Base):
     __tablename__ = "partner_prices"
     __table_args__ = (
-        UniqueConstraint("model_id", "mode", "resolution", "partner_id", name="uq_partner_prices_variant"),
+        Index(
+            "uq_partner_prices_global_variant",
+            "model_id",
+            "mode",
+            "resolution",
+            unique=True,
+            postgresql_where=text("partner_id IS NULL"),
+        ),
+        Index(
+            "uq_partner_prices_partner_variant",
+            "model_id",
+            "mode",
+            "resolution",
+            "partner_id",
+            unique=True,
+            postgresql_where=text("partner_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[str] = uuid_pk()
     model_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
-    partner_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    partner_id: Mapped[str | None] = mapped_column(ForeignKey("partners.id"), nullable=True, index=True)
     mode: Mapped[str] = mapped_column(String(80), nullable=False, default="default")
     resolution: Mapped[str] = mapped_column(String(80), nullable=False, default="default")
     price_rub: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
