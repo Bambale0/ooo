@@ -70,7 +70,19 @@ def _search_filter(search: dict | None):
     raise HTTPException(400, "invalid_partner_search")
 
 
-def _parse_search(value: str) -> dict:
+def _parse_picker_search(value: str) -> dict:
+    value = value.strip()
+    if value.isascii() and value.isdigit() and 1 <= len(value) <= 20:
+        return {"field": "telegram_id", "value": str(int(value))}
+    if re.fullmatch(r"@?[A-Za-z0-9_]{1,32}", value):
+        return {"field": "telegram_username", "value": value.lstrip("@").lower()}
+    try:
+        return {"field": "id", "value": str(UUID(value))}
+    except ValueError as exc:
+        raise ValueError("invalid_partner_search") from exc
+
+
+def _parse_admin_search(value: str) -> dict:
     value = value.strip()
     if value.isascii() and value.isdigit() and 1 <= len(value) <= 20:
         return {"field": "telegram_id", "value": str(int(value))}
@@ -170,7 +182,7 @@ async def choose_partner(event, db, dialog, partner_id: str) -> None:
 async def search_partners(event, db, dialog, value: str) -> None:
     require_picker(event, dialog)
     try:
-        search = _parse_search(value)
+        search = _parse_picker_search(value)
     except ValueError:
         await show(event, "Введите числовой Telegram ID, @username, UUID или название.", keyboard(back="admin_form:adjustment"))
         return
@@ -230,7 +242,7 @@ async def prompt_admin_partner_search(event, dialog) -> None:
 async def search_admin_partners(event, db, dialog, value: str) -> None:
     require_admin(event)
     try:
-        search = _parse_search(value)
+        search = _parse_admin_search(value)
     except ValueError:
         await show(
             event,
