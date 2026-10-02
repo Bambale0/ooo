@@ -105,10 +105,14 @@ async def capital_state(db):
         ).scalar()
     )
     withdrawals = Decimal((await db.execute(select(func.coalesce(func.sum(ProfitWithdrawal.amount_usdt), 0)))).scalar())
+    active_reserve = func.coalesce(
+        Generation.provider_cost_reserve_usdt,
+        Generation.provider_cost_usdt_snapshot,
+    )
     active = Decimal(
         (
             await db.execute(
-                select(func.coalesce(func.sum(Generation.provider_cost_usdt_snapshot), 0)).where(
+                select(func.coalesce(func.sum(active_reserve), 0)).where(
                     Generation.status.in_(ACTIVE)
                 )
             )
@@ -179,10 +183,14 @@ async def provider_capital_state(db, partner_id, provider="argolink"):
         balance = await adapter.prepaid_balance_usdt()
     except ProviderAdapterError as exc:
         raise HTTPException(503, "provider_temporarily_unavailable") from exc
+    active_reserve = func.coalesce(
+        Generation.provider_cost_reserve_usdt,
+        Generation.provider_cost_usdt_snapshot,
+    )
     active = Decimal(
         (
             await db.execute(
-                select(func.coalesce(func.sum(Generation.provider_cost_usdt_snapshot), 0)).where(
+                select(func.coalesce(func.sum(active_reserve), 0)).where(
                     Generation.status.in_(ACTIVE)
                 )
             )
