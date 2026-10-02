@@ -7,7 +7,6 @@ from sqlalchemy import select
 from app.accounts.models import Partner
 from app.billing.models import CoverageLedgerEntry, LedgerEntry
 from app.generations.models import Generation
-
 from ops.load import provider_stub, worker_seed
 from ops.load.worker_seed import ACK, _assert_safe_worker_environment
 
