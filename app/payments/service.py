@@ -65,6 +65,8 @@ async def create_or_resume_invoice(
         payment.creation_claimed_until = utc_now() + timedelta(seconds=60)
         await db.commit()
 
+    payment = await _ensure_invoice_fx_snapshot(db, payment=payment, client=client)
+
     try:
         provider_invoice = await client.find_invoice_by_payload(payment.id)
         if provider_invoice is None and may_submit:
@@ -224,10 +226,15 @@ async def credit_paid_invoice(db: AsyncSession, *, payment_id: str) -> PaymentIn
         .scalars()
         .all()
     )
-    from app.billing.fx import current_fx
+    from app.billing.fx import current_fx, restore_snapshot
     from app.billing.fx import snapshot as fx_snapshot
 
-    fx_data = await current_fx(db)
+    fx_data = restore_snapshot(payment.fx_snapshot)
+    if fx_data is None:
+        # Legacy invoices predate immutable invoice FX snapshots. Capture the
+        # currently persisted/operator rate once; current_fx performs no network I/O.
+        fx_data = await current_fx(db)
+        payment.fx_snapshot = {**fx_snapshot(fx_data), "captured_for": "legacy_credit"}
     fx = fx_data["rate"]
     ratio = max((p.provider_cost_usdt * fx / p.price_rub for p in prices), default=Decimal(1))
     coverage = (amount * ratio).quantize(Decimal(".01"), rounding="ROUND_HALF_UP")
@@ -347,6 +354,29 @@ async def get_partner_payment(
     if payment is None or payment.partner_id != partner_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="payment_not_found")
     _mark_expired_if_needed(payment)
+    return payment
+
+
+async def _ensure_invoice_fx_snapshot(
+    db: AsyncSession,
+    *,
+    payment: PaymentInvoice,
+    client: CryptoPayClient,
+) -> PaymentInvoice:
+    if payment.fx_snapshot is not None:
+        return payment
+
+    from app.billing.fx import refresh_fx_for_invoice
+    from app.billing.fx import snapshot as fx_snapshot
+
+    # External FX lookup happens before re-taking the payment row lock. The
+    # creation claim makes this caller the only submitter; the second check
+    # keeps the snapshot idempotent if a concurrent recovery raced us.
+    fx_data = await refresh_fx_for_invoice(db, client=client)
+    payment = await _lock_payment(db, payment.id)
+    if payment.fx_snapshot is None:
+        payment.fx_snapshot = fx_snapshot(fx_data)
+    await db.commit()
     return payment
 
 
