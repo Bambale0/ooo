@@ -152,6 +152,23 @@ async def dispatch_generation_with_routing(
     return await dispatch_generation_to_provider(db, generation, provider)
 
 
+async def active_provider_for_generation(
+    db: AsyncSession,
+    generation_id: str,
+) -> str | None:
+    result = await db.execute(
+        select(ProviderAttempt.provider)
+        .where(
+            ProviderAttempt.generation_id == generation_id,
+            ProviderAttempt.status.in_(("accepted", "processing", "retry_pending", "timeout")),
+            ProviderAttempt.provider_task_id.is_not(None),
+        )
+        .order_by(ProviderAttempt.created_at.desc(), ProviderAttempt.id.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 async def has_provider_capability(
     db: AsyncSession,
     model_id: str,
