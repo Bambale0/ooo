@@ -174,3 +174,69 @@ Acceptance criteria:
 5. [ ] Run CI for the exact branch SHA; fix failures before completion.
 6. [ ] Review diff/requirements and open PR with verification evidence.
 
+
+
+# FX policy + inference rejection diagnostics — 2026-10-02
+
+Baseline: `a919f0a9699ca9a6d66ea403c60b4807a5d8c355` (`main`).
+Branch: `fix/fx-policy-and-inference-diagnostics`.
+
+## User outcome and acceptance criteria
+
+1. Crypto Pay exchange-rate lookup must happen only while a new invoice is being
+   created. Ordinary generation pricing, catalog reads, admin views and payment
+   credit/reconciliation must not call the external exchange-rate endpoint.
+2. Admin must be able to switch FX policy between automatic and manual mode and
+   set the manual RUB/USDT rate durably. Automatic mode refreshes the rate at
+   invoice creation and persists that snapshot; manual mode never calls the
+   exchange-rate endpoint.
+3. Each invoice must keep the FX snapshot captured for its creation so later credit
+   and coverage accounting use the same rate instead of fetching a new one.
+4. Native inference rejections must be queryable by safe identifiers
+   `partner_id` and `api_key_id`, with a stable failure stage and public error
+   code that distinguishes request validation, balance, provider-capital/pricing
+   admission and upstream provider rejection.
+5. No API key values, prompts, reference URLs, provider response bodies or other
+   secrets may enter diagnostics.
+
+## Evidence / root cause
+
+- `current_fx()` currently invokes Crypto Pay `getExchangeRates` whenever the
+  latest automatic snapshot is older than 60 seconds. It is called by generation
+  admission and catalog paths, so normal inference traffic can refresh external FX.
+- Telegram admin supports only a manual *fallback*; automatic mode always has
+  priority and cannot be disabled.
+- Payment credit calls `current_fx()` again, so the coverage rate is not pinned to
+  invoice creation.
+- Pre-generation failures (validation, reserve/admission) do not currently emit a
+  structured event containing both partner/API-key identity and failure stage.
+  Provider diagnostics start only after a generation/attempt already exists.
+
+## Architecture / migration / safety
+
+- Extend the existing append-only `fx_fallback_settings` history with an
+  `automatic_enabled` flag instead of creating a second configuration source.
+- Add nullable `payment_invoices.fx_snapshot` for immutable per-invoice provenance.
+  Legacy invoices without a snapshot use the current persisted/configured rate once
+  at credit time, without network I/O, and persist that fallback snapshot.
+- Existing ledger entries remain append-only. No historical financial row is rewritten.
+- Diagnostics use UUIDs/enums/counts only; raw request bodies and secrets are excluded.
+- No paid production request is required for verification.
+
+## Skills applied
+
+- `systematic-debugging`: evidence first; separate balance, provider and validation paths.
+- `python-fastapi-development`: async SQLAlchemy/FastAPI patterns and migration safety.
+- `python-testing-patterns`: focused regression tests for FX and diagnostics.
+- `observability-and-instrumentation`: stable structured events with safe correlation fields.
+- `verification-before-completion`: exact-SHA CI and production smoke before completion claims.
+
+## Steps
+
+1. [x] Inspect production evidence and current FX/inference paths.
+2. [ ] Add failing regression tests for invoice-scoped FX and rejection tracing.
+3. [ ] Implement FX policy, invoice snapshots, admin controls and migration.
+4. [ ] Implement safe rejection telemetry and provider correlation.
+5. [ ] Run focused tests, full CI and migration/schema checks.
+6. [ ] Review diff, merge through PR and deploy exact verified SHA.
+7. [ ] Verify production readiness and read-only diagnostics after deployment.
