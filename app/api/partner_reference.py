@@ -206,6 +206,7 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
             ("POST /v1/videos/generations", "202 application/json"),
             ("GET /v1/videos/{request_id}", "200 application/json"),
             ("GET /v1/videos/{request_id}/content", "200 video/mp4 | 206 partial content"),
+            ("GET /api/v1/generations/{request_id}/trace", "200 application/json"),
             ("POST /v1/media/uploads", "201 application/json"),
         ],
     )

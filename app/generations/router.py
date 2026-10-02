@@ -1,3 +1,4 @@
+import logging
 from decimal import ROUND_HALF_UP, Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -30,6 +31,7 @@ from app.generations.service import (
 from app.providers.base import ProviderGenerationRequest
 from app.providers.video_contract import validate_video_request
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 _RUB_QUANTUM = Decimal("0.01")
 
@@ -131,6 +133,7 @@ async def create_generation(
         webhook_secret_encrypted_snapshot=auth.api_key.webhook_secret_encrypted,
         request_payload={
             "fx": fx_snapshot(fx_data),
+            "api_key_id": auth.api_key.id,
             "duration_seconds": payload.duration_seconds,
             "aspect_ratio": payload.aspect_ratio,
             "reference_images": [reference.model_dump() for reference in payload.reference_images],
@@ -167,6 +170,16 @@ async def create_generation(
         allow_negative=True,
     )
     await db.refresh(generation)
+    logger.info(
+        "generation_reserved",
+        extra={
+            "trace_id": generation.id,
+            "generation_id": generation.id,
+            "partner_id": generation.partner_id,
+            "api_key_id": auth.api_key.id,
+            "model_id": generation.model_id,
+        },
+    )
     return generation
 
 
@@ -236,6 +249,40 @@ async def resend_generation_webhook(
         "status": event.status,
         "attempt": event.attempt_count + 1,
     }
+
+
+@router.get("/{generation_id}/trace")
+async def read_generation_trace(
+    generation_id: str,
+    db: DbSession,
+    partner: Partner = Depends(get_current_partner),
+) -> dict[str, object]:
+    generation = await db.get(Generation, generation_id)
+    if generation is None or generation.partner_id != partner.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="generation_not_found")
+    from app.generations.trace import generation_trace
+
+    trace = await generation_trace(db, generation, admin=False)
+    logger.info(
+        "generation_trace_read",
+        extra={"trace_id": generation.id, "generation_id": generation.id, "partner_id": generation.partner_id},
+    )
+    return trace
+
+
+@router.get("/admin/{generation_id}/trace", dependencies=[Depends(require_admin)])
+async def read_generation_admin_trace(generation_id: str, db: DbSession) -> dict[str, object]:
+    generation = await db.get(Generation, generation_id)
+    if generation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="generation_not_found")
+    from app.generations.trace import generation_trace
+
+    trace = await generation_trace(db, generation, admin=True)
+    logger.info(
+        "generation_admin_trace_read",
+        extra={"trace_id": generation.id, "generation_id": generation.id, "partner_id": generation.partner_id},
+    )
+    return trace
 
 
 @router.get("/{generation_id}", response_model=GenerationRead)

@@ -264,10 +264,13 @@ async def handle_callback(event, db, dialog) -> None:
             "payment_credit": "Пополнение",
             "generation_refund": "Возврат резерва",
         }
-        lines = [
-            f"{r.created_at:%d.%m %H:%M} · {labels.get(r.operation_type, 'Операция')} · {r.amount_rub:+.2f} ₽"
-            for r in rows[:8]
-        ]
+        lines = []
+        for row in rows[:8]:
+            generation_line = f"\nGeneration UUID: {row.generation_id}" if row.generation_id else ""
+            lines.append(
+                f"{row.created_at:%d.%m %H:%M} · {labels.get(row.operation_type, 'Операция')} · "
+                f"{row.amount_rub:+.2f} ₽\nLedger UUID: {row.id}{generation_line}"
+            )
         buttons = [("Поиск по UUID", "search_prompt")]
         navigation(buttons, "history", page, len(rows) > 8)
         await show(event, "История\n\n" + ("\n".join(lines) or "Операций пока нет."), keyboard(*buttons))

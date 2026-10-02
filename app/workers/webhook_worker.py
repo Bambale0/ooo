@@ -41,6 +41,17 @@ async def process_webhook_work_once() -> int:
                     # the HTTP side effect. A crash after send can then retry as
                     # a new delivery rather than reusing the same attempt identity.
                     await db.commit()
+                    logger.info(
+                        "webhook_delivery_started",
+                        extra={
+                            "trace_id": prepared.generation_id,
+                            "generation_id": prepared.generation_id,
+                            "partner_id": prepared.partner_id,
+                            "event_id": prepared.event_id,
+                            "delivery_id": prepared.delivery_id,
+                            "attempt": prepared.attempt,
+                        },
+                    )
                 except Exception:
                     await db.rollback()
                     logger.exception("webhook_delivery_prepare_failed", extra={"event_id": event_id})
@@ -52,6 +63,20 @@ async def process_webhook_work_once() -> int:
                 try:
                     delivered = await finalize_prepared_delivery(db, prepared, outcome)
                     await db.commit()
+                    logger.info(
+                        "webhook_delivery_finished",
+                        extra={
+                            "trace_id": prepared.generation_id,
+                            "generation_id": prepared.generation_id,
+                            "partner_id": prepared.partner_id,
+                            "event_id": prepared.event_id,
+                            "delivery_id": prepared.delivery_id,
+                            "attempt": prepared.attempt,
+                            "delivered": delivered,
+                            "response_status": outcome.response_status,
+                            "error_type": outcome.error,
+                        },
+                    )
                     return delivered
                 except Exception:
                     await db.rollback()

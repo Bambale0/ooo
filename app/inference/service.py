@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import logging
 from decimal import ROUND_HALF_UP, Decimal
 
 from fastapi import HTTPException
@@ -29,6 +30,8 @@ from app.inference.accounting import MILLION, TOKEN_MODES, charges
 from app.infrastructure.config import get_settings
 from app.providers.models import ProviderAttempt
 from app.providers.service import get_active_provider_credential
+
+logger = logging.getLogger(__name__)
 
 
 def fingerprint(protocol: str, body: dict, files_digest: str = "") -> str:
@@ -149,6 +152,7 @@ async def reserve(
         "request_hash": request_hash,
         "rates": rates,
         "reserved_units": units,
+        "api_key_id": auth.api_key.id,
     }
     if video:
         snapshot["native_body"] = body
@@ -204,6 +208,17 @@ async def reserve(
         )
         db.add(attempt)
     await db.commit()
+    logger.info(
+        "generation_reserved",
+        extra={
+            "trace_id": generation.id,
+            "generation_id": generation.id,
+            "partner_id": generation.partner_id,
+            "api_key_id": auth.api_key.id,
+            "model_id": generation.model_id,
+            "attempt_id": attempt.id if attempt else None,
+        },
+    )
     return generation, attempt
 
 

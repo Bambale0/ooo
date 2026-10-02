@@ -11,7 +11,7 @@ from app.billing.models import LedgerEntry
 from app.catalog.models import Model, PartnerModelGrant
 from app.generations.models import Generation
 from app.payments.models import PaymentInvoice
-from app.providers.models import ProviderCredential
+from app.providers.models import ProviderAttempt, ProviderCredential
 from app.telegram.models import BotDialog
 from app.telegram.service import is_admin
 from app.telegram.ui import keyboard, show
@@ -403,8 +403,9 @@ async def show_partner_payments(event, db, data: str) -> None:
     lines = ["Платежи партнёра"]
     for row in rows[:DETAIL_PAGE_SIZE]:
         lines.append(
-            f"{row.id[:8]} · {row.requested_rub:.2f} ₽ · {row.status}"
-            f" · возврат {row.refunded_rub:.2f} ₽\n{_date(row.created_at)}"
+            f"UUID: {row.id}\n"
+            f"{row.requested_rub:.2f} ₽ · {row.status} · возврат {row.refunded_rub:.2f} ₽\n"
+            f"{_date(row.created_at)}"
         )
     if len(lines) == 1:
         lines.append("Платежей нет.")
@@ -425,11 +426,28 @@ async def show_partner_generations(event, db, data: str) -> None:
             .limit(DETAIL_PAGE_SIZE + 1)
         )
     ).scalars().all()
+    visible = rows[:DETAIL_PAGE_SIZE]
+    generation_ids = [row.id for row in visible]
+    attempts = (
+        list(
+            (
+                await db.execute(
+                    select(ProviderAttempt).where(ProviderAttempt.generation_id.in_(generation_ids))
+                )
+            ).scalars()
+        )
+        if generation_ids
+        else []
+    )
+    attempts_by_generation = {attempt.generation_id: attempt for attempt in attempts}
     lines = ["Генерации партнёра"]
-    for row in rows[:DETAIL_PAGE_SIZE]:
+    for row in visible:
         charge = row.actual_charge_rub if row.actual_charge_rub is not None else row.partner_price_rub
+        attempt = attempts_by_generation.get(row.id)
+        attempt_line = f"\nAttempt UUID: {attempt.id}" if attempt is not None else ""
         lines.append(
-            f"{row.id[:8]} · {row.model_slug} · {row.mode}/{row.resolution}\n"
+            f"Generation UUID: {row.id}{attempt_line}\n"
+            f"{row.model_slug} · {row.mode}/{row.resolution}\n"
             f"{row.status} · {charge:.2f} ₽ · {_date(row.created_at)}"
         )
     if len(lines) == 1:

@@ -11,7 +11,8 @@ from test_telegram_cabinet import partner
 
 from app.accounts.models import ApiKey
 from app.billing.models import LedgerEntry
-from app.providers.models import ProviderCredential
+from app.generations.models import Generation
+from app.providers.models import ProviderAttempt, ProviderCredential
 from app.telegram.models import BotAction, BotDialog
 
 cabinet = cabinet_fixture
@@ -190,7 +191,6 @@ def test_username_migration_preserves_dialog_and_can_be_rolled_back():
     engine.dispose()
 
 
-
 async def test_admin_partner_management_lists_searches_and_opens_card(cabinet, db_session):
     feed, _ = cabinet
     owner = await partner(db_session)
@@ -254,6 +254,45 @@ async def test_admin_partner_card_exposes_operational_views_without_secrets(cabi
     assert "argo_test" in credentials[-1].text
     assert "ENCRYPTED_SECRET_MUST_NOT_RENDER" not in credentials[-1].text
     assert "b" * 64 not in credentials[-1].text
+
+
+async def test_generation_and_partner_history_show_full_correlation_uuids(cabinet, db_session):
+    feed, _ = cabinet
+    owner = await partner(db_session)
+    generation = Generation(
+        partner_id=owner.id,
+        model_id="00000000-0000-0000-0000-000000000111",
+        model_slug="nano-banana-pro",
+        mode="images/edits",
+        resolution="1K",
+        duration_seconds=1,
+        idempotency_key="uuid-visibility-generation",
+        partner_price_rub=Decimal("10.00"),
+        prompt="trace",
+        status="failed",
+    )
+    db_session.add(generation)
+    await db_session.flush()
+    attempt = ProviderAttempt(generation_id=generation.id, provider="argolink", status="failed")
+    ledger = LedgerEntry(
+        partner_id=owner.id,
+        operation_type="generation_charge",
+        amount_rub=Decimal("-10.00"),
+        balance_after_rub=Decimal("990.00"),
+        idempotency_key="uuid-visibility-ledger",
+        generation_id=generation.id,
+    )
+    db_session.add_all([attempt, ledger])
+    await db_session.commit()
+
+    admin_view = await feed(user=999, callback=f"admin_partner_gens:{owner.id}")
+    assert generation.id in admin_view[-1].text
+    assert attempt.id in admin_view[-1].text
+    assert generation.id[:8] + " · " not in admin_view[-1].text
+
+    partner_view = await feed(user=int(owner.telegram_id), callback="history:0")
+    assert ledger.id in partner_view[-1].text
+    assert generation.id in partner_view[-1].text
 
 
 @pytest.mark.parametrize(

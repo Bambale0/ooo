@@ -72,6 +72,22 @@ DEPLOY_KNOWN_HOSTS, registry auth и CI для точного SHA; `latest` не
 Native requests: partner Bearer + Idempotency-Key. Guide: `/guide?lang=ru|en`,
 retail prices: `/prices`, schema: `/docs`.
 
+## Корреляция UUID
+
+Для любой генерации основной correlation ID - полный generation_id; в native API он же
+возвращается как request_id и используется как trace_id в structured logs.
+
+Партнёр может получить tenant-scoped цепочку собственных UUID через
+GET /api/v1/generations/{generation_id}/trace: partner/api-key/model, provider-attempt UUID,
+ledger/coverage UUID, media UUID и webhook event/delivery UUID. Provider-specific credential/task/raw
+error/upstream identifiers партнёру не раскрываются.
+
+Admin может получить расширенную цепочку через
+GET /api/v1/generations/admin/{generation_id}/trace; там дополнительно доступны credential ID,
+provider task ID и allowlisted upstream request UUID. По generation_id следует искать structured
+events generation_reserved, native_inference_*, generation_dispatched, generation_polled,
+webhook_delivery_started и webhook_delivery_finished. UUID пишутся полностью, без сокращения.
+
 ## Неопределённая отправка
 
 `GET /api/v1/providers/reconciliation` показывает неопределённые submit intents.
