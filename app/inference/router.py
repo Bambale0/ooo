@@ -14,6 +14,7 @@ from app.catalog.models import Model
 from app.contracts.registry import MODELS, PROTOCOLS, TEXT_PROTOCOLS, image_reference_limit, validate_request
 from app.generations.models import Generation
 from app.inference.accounting import settle_actual, token_usage
+from app.inference.diagnostics import NativeRequestTrace
 from app.inference.images import image_usage, inspect_url_images
 from app.inference.service import reserve
 from app.inference.streams import SSEDecoder, UsageCollector, event_data
@@ -228,14 +229,18 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
         wire_body["stream_options"] = {**body.get("stream_options", {}), "include_usage": True}
     headers = {key: request.headers[key] for key in ("anthropic-version", "anthropic-beta") if key in request.headers}
     await db.commit()
+    trace = NativeRequestTrace.begin(generation, attempt, wire_body, files)
     try:
         response = await adapter.native_request(protocol, wire_body, files=files, headers=headers)
-    except (httpx.ConnectTimeout, httpx.PoolTimeout, httpx.ConnectError):
+    except (httpx.ConnectTimeout, httpx.PoolTimeout, httpx.ConnectError) as exc:
+        trace.failed(attempt, exc, phase="awaiting_headers")
         await fail(db, generation, attempt, "provider_temporarily_unavailable", definitive=True)
         return public_error("provider_temporarily_unavailable", generation_id=generation.id)
-    except httpx.HTTPError:
+    except httpx.HTTPError as exc:
+        trace.failed(attempt, exc, phase="awaiting_headers")
         await fail(db, generation, attempt, "submission_outcome_unknown", definitive=False)
         return public_error("submission_outcome_unknown", generation_id=generation.id)
+    trace.received_headers(attempt, response)
     if not response.is_success:
         definitive = 400 <= response.status_code < 500 and response.status_code != 408
         code = (
@@ -285,7 +290,8 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
                 generation.request_payload = {**(generation.request_payload or {}), "result_urls": urls}
             units = image_usage(body, await inspect_url_images(body, data))
         await finish(db, generation, attempt, units)
-    except (ValueError, TypeError, KeyError, OSError, httpx.HTTPError):
+    except (ValueError, TypeError, KeyError, OSError, httpx.HTTPError) as exc:
+        trace.failed(attempt, exc, phase="response_body_or_usage")
         await fail(db, generation, attempt, "usage_reconciliation_required", definitive=False)
         # A successful result still belongs to the partner even if its cost needs reconciliation.
         if "data" not in locals():
