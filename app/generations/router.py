@@ -13,7 +13,8 @@ from app.billing.service import (
     require_sufficient_balance,
 )
 from app.catalog.access import RESTRICTED_STATUS, has_model_grant
-from app.catalog.models import Model, PartnerPrice
+from app.catalog.models import Model
+from app.catalog.pricing import effective_partner_price
 from app.generations.models import Generation
 from app.generations.schemas import (
     GenerationCreate,
@@ -47,20 +48,25 @@ async def create_generation(
     if existing is not None:
         return existing
 
-    model_result = await db.execute(
-        select(Model, PartnerPrice)
-        .join(PartnerPrice, PartnerPrice.model_id == Model.id)
-        .where(
-            Model.slug == payload.model_slug,
-            Model.status.in_(["production", RESTRICTED_STATUS]),
-            PartnerPrice.mode == payload.mode,
-            PartnerPrice.resolution == payload.resolution,
+    model = (
+        await db.execute(
+            select(Model).where(
+                Model.slug == payload.model_slug,
+                Model.status.in_(["production", RESTRICTED_STATUS]),
+            )
         )
-    )
-    row = model_result.one_or_none()
-    if row is None:
+    ).scalar_one_or_none()
+    if model is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="model_or_price_not_available")
-    model, price = row
+    price = await effective_partner_price(
+        db,
+        partner_id=partner.id,
+        model_id=model.id,
+        mode=payload.mode,
+        resolution=payload.resolution,
+    )
+    if price is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="model_or_price_not_available")
     if model.status == RESTRICTED_STATUS and not await has_model_grant(db, model.id, partner.id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="model_or_price_not_available")
     try:

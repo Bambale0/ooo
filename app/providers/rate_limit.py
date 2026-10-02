@@ -60,9 +60,9 @@ def reset_provider_rate_limiters() -> None:
 
 def _configured_rate(provider: str, operation: str) -> float:
     settings = get_settings()
-    if provider == "argolink":
+    if provider in {"argolink", "asale"}:
         if operation == "submit":
-            return settings.argolink_submit_rps
+            return getattr(settings, f"{provider}_submit_rps")
         if operation == "poll":
-            return settings.argolink_poll_rps
+            return getattr(settings, f"{provider}_poll_rps")
     raise ValueError(f"Unsupported provider rate limit: {provider}/{operation}")

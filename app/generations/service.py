@@ -1,21 +1,110 @@
 from datetime import timedelta
+from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.billing.service import release_generation_reserves, settle_generation_reserves
+from app.billing.service import (
+    apply_cost_coverage_change,
+    lock_partner_for_update,
+    release_generation_reserve,
+    release_generation_reserves,
+    settle_generation_reserves,
+)
 from app.generations.models import Generation
 from app.infrastructure.config import get_settings
 from app.infrastructure.metrics import monotonic_seconds, observe_provider_request
 from app.infrastructure.retry import is_due, is_older_than, next_poll_at, next_retry_at, utc_now
 from app.media.service import create_provider_ready_asset
+from app.providers.asale import asale_supports_request
 from app.providers.base import ProviderAdapterError, ProviderGenerationRequest, ProviderPollResult
 from app.providers.models import ProviderAttempt, ProviderCredential, ProviderModelCapability
 from app.providers.rate_limit import get_provider_rate_limiter
-from app.providers.service import get_active_provider_credential, get_partner_provider_adapter
+from app.providers.service import (
+    get_active_provider_credential,
+    get_partner_provider_adapter,
+    has_provider_runtime_credential,
+)
 from app.webhooks.service import ensure_terminal_webhook_event
 
 PRIMARY_PROVIDER = "argolink"
+FALLBACK_PROVIDERS = ("asale",)
+
+
+def _provider_request_for_generation(generation: Generation) -> ProviderGenerationRequest:
+    return ProviderGenerationRequest(
+        generation_id=generation.id,
+        native_body=(generation.request_payload or {}).get("native_body"),
+        model_slug=generation.model_slug,
+        mode=generation.mode,
+        resolution=generation.resolution,
+        prompt=generation.prompt,
+        duration_seconds=generation.duration_seconds,
+        aspect_ratio=generation.aspect_ratio,
+        start_image=((generation.request_payload or {}).get("start_image") or {}).get("url"),
+        end_image=((generation.request_payload or {}).get("end_image") or {}).get("url"),
+        reference_images=tuple(
+            item["url"]
+            for item in (generation.request_payload or {}).get("reference_images", [])
+            if isinstance(item, dict) and isinstance(item.get("url"), str)
+        ),
+    )
+
+
+async def select_fallback_provider(
+    db: AsyncSession,
+    generation: Generation,
+    *,
+    after_provider: str,
+) -> tuple[str, Decimal] | None:
+    if after_provider != PRIMARY_PROVIDER:
+        return None
+    request = _provider_request_for_generation(generation)
+    for provider in FALLBACK_PROVIDERS:
+        if provider == "asale" and not asale_supports_request(request):
+            continue
+        capability = (
+            await db.execute(
+                select(ProviderModelCapability).where(
+                    ProviderModelCapability.provider == provider,
+                    ProviderModelCapability.model_id == generation.model_id,
+                    ProviderModelCapability.mode == generation.mode,
+                    ProviderModelCapability.resolution == generation.resolution,
+                    ProviderModelCapability.is_active.is_(True),
+                )
+            )
+        ).scalar_one_or_none()
+        if (
+            capability is None
+            or capability.provider_cost_ceiling_usdt is None
+            or capability.billing_unit is None
+        ):
+            continue
+        if not await has_provider_runtime_credential(db, generation.partner_id, provider):
+            continue
+        if capability.billing_unit == "second":
+            total_cost = Decimal(capability.provider_cost_ceiling_usdt) * Decimal(generation.duration_seconds)
+        elif capability.billing_unit == "generation":
+            total_cost = Decimal(capability.provider_cost_ceiling_usdt)
+        else:
+            continue
+        # Never under-reserve working capital during automatic failover.
+        if total_cost < 0 or total_cost > Decimal(generation.provider_cost_usdt_snapshot):
+            continue
+        if total_cost * Decimal(generation.rub_per_usdt_snapshot) > Decimal(generation.partner_price_rub):
+            continue
+        return provider, total_cost
+    return None
+
+
+async def dispatch_generation_with_routing(
+    db: AsyncSession,
+    generation: Generation,
+) -> ProviderAttempt | None:
+    provider = (generation.request_payload or {}).get("fallback_provider")
+    if provider not in FALLBACK_PROVIDERS:
+        provider = PRIMARY_PROVIDER
+    return await dispatch_generation_to_provider(db, generation, provider)
 
 
 async def has_provider_capability(
@@ -176,7 +265,7 @@ async def dispatch_generation_to_provider(
         _mark_attempt_error(attempt, generation, normalized)
         from app.providers.circuit import observe
 
-        await observe(db, generation)
+        await observe(db, generation, provider=provider)
         if generation.status == "failed":
             await release_generation_reserves(
                 db,
@@ -226,11 +315,19 @@ async def poll_generation_provider(
         )
         generation.status = "timeout"
         generation.public_error_code = "generation_timeout"
-        await release_generation_reserves(
-            db,
-            generation,
-            reason="Released partner reserve after provider processing timeout",
-        )
+        if provider == "asale":
+            await release_generation_reserve(
+                db,
+                generation,
+                reason="Released partner reserve after paid fallback processing timeout",
+            )
+            await _settle_fallback_provider_cost(db, generation, provider)
+        else:
+            await release_generation_reserves(
+                db,
+                generation,
+                reason="Released partner reserve after provider processing timeout",
+            )
         await ensure_terminal_webhook_event(db, generation)
         await db.flush()
         await db.refresh(generation)
@@ -271,7 +368,7 @@ async def poll_generation_provider(
         normalized = adapter.normalize_error(exc)
         from app.providers.circuit import observe
 
-        await observe(db, generation, outcome="error")
+        await observe(db, generation, outcome="error", provider=provider)
         if reconciling_late_success:
             attempt.public_error_code = normalized.public_code
             attempt.raw_error = normalized.raw_error
@@ -289,12 +386,17 @@ async def poll_generation_provider(
         else:
             _mark_attempt_error(attempt, generation, normalized)
             if generation.status == "failed":
-                await release_generation_reserves(
-                    db,
-                    generation,
-                    reason="Released partner reserve after terminal provider polling failure",
-                )
-                await ensure_terminal_webhook_event(db, generation)
+                if provider == "asale" and attempt.provider_task_id:
+                    attempt.status = generation.status = "reconciliation_required"
+                    generation.public_error_code = "submission_outcome_unknown"
+                    attempt.next_attempt_at = attempt.next_poll_at = None
+                else:
+                    await release_generation_reserves(
+                        db,
+                        generation,
+                        reason="Released partner reserve after terminal provider polling failure",
+                    )
+                    await ensure_terminal_webhook_event(db, generation)
         await db.flush()
         await db.refresh(generation)
         return generation
@@ -319,12 +421,14 @@ async def poll_generation_provider(
                 generation.public_error_code = "usage_reconciliation_required"
                 from app.providers.circuit import observe
 
-                await observe(db, generation)
+                await observe(db, generation, provider=provider)
                 await db.flush()
                 return generation
             await settle_actual(db, generation, {"seconds": seconds})
         else:
             await settle_generation_reserves(db, generation)
+            if provider == "asale":
+                await _settle_fallback_provider_cost(db, generation, provider)
         if result.result_url:
             await create_provider_ready_asset(
                 db=db,
@@ -342,14 +446,29 @@ async def poll_generation_provider(
             generation.public_error_code = "generation_timeout"
         elif result.retryable_failure and _schedule_generation_retry(generation, attempt, result):
             pass
+        elif result.retryable_failure and await _queue_fallback_after_safe_failure(
+            db,
+            generation,
+            attempt,
+            result,
+        ):
+            pass
         else:
             generation.status = "failed"
             generation.public_error_code = "provider_generation_failed"
-            await release_generation_reserves(
-                db,
-                generation,
-                reason="Released partner reserve after provider generation failure",
-            )
+            if provider == "asale":
+                await release_generation_reserve(
+                    db,
+                    generation,
+                    reason="Released partner reserve after paid fallback generation failure",
+                )
+                await _settle_fallback_provider_cost(db, generation, provider)
+            else:
+                await release_generation_reserves(
+                    db,
+                    generation,
+                    reason="Released partner reserve after provider generation failure",
+                )
             await ensure_terminal_webhook_event(db, generation)
     elif result.status == "processing":
         if reconciling_late_success:
@@ -369,6 +488,93 @@ async def poll_generation_provider(
     await db.flush()
     await db.refresh(generation)
     return generation
+
+
+async def _queue_fallback_after_safe_failure(
+    db: AsyncSession,
+    generation: Generation,
+    attempt: ProviderAttempt,
+    result: ProviderPollResult,
+) -> bool:
+    if attempt.provider != PRIMARY_PROVIDER:
+        return False
+    selected = await select_fallback_provider(db, generation, after_provider=attempt.provider)
+    if selected is None:
+        return False
+    provider, cost_ceiling = selected
+    failed_at = utc_now()
+    payload = generation.request_payload or {}
+    history = payload.get("provider_failed_tasks", [])
+    generation.request_payload = {
+        **payload,
+        "provider_failed_tasks": [
+            *history,
+            {
+                "provider": attempt.provider,
+                "provider_task_id": attempt.provider_task_id,
+                "credential_id": attempt.credential_id,
+                "error_code": result.error_code,
+                "error": result.raw_error,
+                "usage": result.usage,
+                "failed_at": failed_at.isoformat(),
+                "cost_status": "safe_retry_eligible",
+            },
+        ],
+        "fallback_provider": provider,
+        "fallback_provider_cost_ceiling_usdt": str(cost_ceiling),
+    }
+    attempt.status = "failed"
+    attempt.next_attempt_at = None
+    attempt.next_poll_at = None
+    attempt.last_error = result.raw_error
+    generation.status = "queued"
+    generation.public_error_code = None
+    return True
+
+
+async def _settle_fallback_provider_cost(
+    db: AsyncSession,
+    generation: Generation,
+    provider: str,
+) -> None:
+    if generation.actual_provider_cost_usdt is not None:
+        return
+    payload = generation.request_payload or {}
+    if payload.get("fallback_provider") != provider:
+        return
+    raw_cost = payload.get("fallback_provider_cost_ceiling_usdt")
+    if not isinstance(raw_cost, str):
+        generation.status = "reconciliation_required"
+        generation.public_error_code = "usage_reconciliation_required"
+        return
+    try:
+        cost = Decimal(raw_cost)
+    except Exception:
+        generation.status = "reconciliation_required"
+        generation.public_error_code = "usage_reconciliation_required"
+        return
+    if not cost.is_finite() or cost < 0 or cost > Decimal(generation.provider_cost_usdt_snapshot):
+        generation.status = "reconciliation_required"
+        generation.public_error_code = "usage_reconciliation_required"
+        return
+    fallback_rub = (cost * Decimal(generation.rub_per_usdt_snapshot)).quantize(
+        Decimal("0.01"),
+        rounding=ROUND_HALF_UP,
+    )
+    refund = Decimal(generation.provider_cost_reserve_rub) - fallback_rub
+    if refund > 0:
+        partner = await lock_partner_for_update(db, generation.partner_id)
+        await apply_cost_coverage_change(
+            db=db,
+            partner=partner,
+            amount_rub=refund,
+            operation_type="provider_fallback_cost_adjustment",
+            idempotency_key=f"provider-fallback-cost:{generation.id}",
+            generation_id=generation.id,
+            description=f"Conservative fallback procurement settlement for {provider}",
+            allow_negative=False,
+        )
+    generation.actual_provider_cost_usdt = cost
 
 
 def _schedule_generation_retry(generation: Generation, attempt: ProviderAttempt, result: ProviderPollResult) -> bool:
@@ -477,8 +683,6 @@ async def cancel_before_submit(
     if attempt is None:
         attempt = ProviderAttempt(generation_id=generation.id, provider=provider, status="cancelled")
         db.add(attempt)
-    from decimal import Decimal
-
     generation.status = attempt.status = "cancelled"
     generation.actual_charge_rub = Decimal("0")
     generation.actual_provider_cost_usdt = (

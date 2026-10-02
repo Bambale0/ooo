@@ -133,6 +133,9 @@ async def approve_application(application_id: str, db: DbSession) -> Partner:
                 reason="application_approved",
             )
         )
+    from app.catalog.pricing import snapshot_partner_prices
+
+    await snapshot_partner_prices(db, partner.id)
     application.status = "approved"
     await db.execute(
         update(ConsentAcceptance)

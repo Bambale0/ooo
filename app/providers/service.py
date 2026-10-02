@@ -28,6 +28,16 @@ async def get_active_provider_credential(
     return result.scalars().first()
 
 
+async def has_provider_runtime_credential(
+    db: AsyncSession,
+    partner_id: str,
+    provider: str,
+) -> bool:
+    if provider == "asale" and get_settings().asale_api_key:
+        return True
+    return await get_active_provider_credential(db, partner_id, provider) is not None
+
+
 async def get_partner_provider_adapter(
     db: AsyncSession,
     partner_id: str,
@@ -35,6 +45,8 @@ async def get_partner_provider_adapter(
     *,
     credential_id: str | None = None,
 ) -> ProviderAdapter:
+    if credential_id is None and provider == "asale" and get_settings().asale_api_key:
+        return get_provider_adapter(provider, api_key=get_settings().asale_api_key)
     if credential_id is None:
         credential = await get_active_provider_credential(db, partner_id, provider)
     else:
