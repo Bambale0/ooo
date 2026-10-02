@@ -445,6 +445,18 @@ async def admin_callback(event, db, dialog, data: str) -> None:
         from app.telegram.admin_partners import handle_picker_callback
 
         await handle_picker_callback(event, db, dialog, data)
+    elif data.startswith("admin_partners:"):
+        from app.telegram.admin_partners import show_admin_partners
+
+        await show_admin_partners(event, db, dialog, page_number(data))
+    elif data == "admin_partners_search":
+        from app.telegram.admin_partners import prompt_admin_partner_search
+
+        await prompt_admin_partner_search(event, dialog)
+    elif data == "admin_partners_all":
+        from app.telegram.admin_partners import show_admin_partners
+
+        await show_admin_partners(event, db, dialog, 0, search=None)
     elif data == "admin_catalog_import":
         await ask_confirmation(
             event,
@@ -469,7 +481,7 @@ async def admin_callback(event, db, dialog, data: str) -> None:
                 ("Казначейство", "admin_stw"),
                 ("Цены, возвраты и сверки", "admin_ops"),
                 ("Поддержка", "admin_support"),
-                ("Управление аккаунтом", "admin_account"),
+                ("Партнёры", "admin_partners:0"),
                 ("Состояние", "admin_health"),
             ),
         )
@@ -692,6 +704,10 @@ async def handle_message(event, db, dialog) -> None:
         from app.telegram.admin_partners import search_partners
 
         await search_partners(event, db, dialog, value)
+    elif state == "admin_partner_browse_search":
+        from app.telegram.admin_partners import search_admin_partners
+
+        await search_admin_partners(event, db, dialog, value)
     elif state == "admin_form_input":
         from app.telegram.admin_forms import input_value
 
