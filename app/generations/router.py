@@ -25,6 +25,7 @@ from app.generations.schemas import (
 from app.generations.service import (
     PRIMARY_PROVIDER,
     dispatch_generation_to_provider,
+    fallback_cost_ceiling_for_request,
     has_active_provider_credential,
     has_provider_capability,
     poll_generation_provider,
@@ -69,21 +70,20 @@ async def create_generation(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="model_or_price_not_available")
     if model.status == RESTRICTED_STATUS and not await has_model_grant(db, model.id, partner.id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="model_or_price_not_available")
+    provider_request = ProviderGenerationRequest(
+        generation_id="validation",
+        model_slug=payload.model_slug,
+        mode=payload.mode,
+        resolution=payload.resolution,
+        prompt=payload.prompt,
+        duration_seconds=payload.duration_seconds,
+        aspect_ratio=payload.aspect_ratio,
+        reference_images=tuple(item.url for item in payload.reference_images),
+        start_image=payload.start_image.url if payload.start_image else None,
+        end_image=payload.end_image.url if payload.end_image else None,
+    )
     try:
-        validate_video_request(
-            ProviderGenerationRequest(
-                generation_id="validation",
-                model_slug=payload.model_slug,
-                mode=payload.mode,
-                resolution=payload.resolution,
-                prompt=payload.prompt,
-                duration_seconds=payload.duration_seconds,
-                aspect_ratio=payload.aspect_ratio,
-                reference_images=tuple(item.url for item in payload.reference_images),
-                start_image=payload.start_image.url if payload.start_image else None,
-                end_image=payload.end_image.url if payload.end_image else None,
-            )
-        )
+        validate_video_request(provider_request)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     billable_units = payload.duration_seconds if price.billing_unit == "second" else 1
@@ -95,7 +95,18 @@ async def create_generation(
     fx_data = await current_fx(db)
     provider_cost_usdt = Decimal(price.provider_cost_usdt) * Decimal(billable_units)
     rub_per_usdt = fx_data["rate"]
-    provider_cost_reserve_rub = (provider_cost_usdt * rub_per_usdt).quantize(
+    provider_cost_reserve_usdt = provider_cost_usdt
+    fallback = await fallback_cost_ceiling_for_request(
+        db,
+        partner_id=partner.id,
+        model_id=model.id,
+        request=provider_request,
+    )
+    if fallback is not None:
+        fallback_cost = fallback[1]
+        if fallback_cost * rub_per_usdt <= price_rub:
+            provider_cost_reserve_usdt = max(provider_cost_reserve_usdt, fallback_cost)
+    provider_cost_reserve_rub = (provider_cost_reserve_usdt * rub_per_usdt).quantize(
         _RUB_QUANTUM,
         rounding=ROUND_HALF_UP,
     )
@@ -119,7 +130,7 @@ async def create_generation(
     await require_sufficient_balance(locked_partner, price_rub)
     from app.billing.capital import require_provider_capital
 
-    await require_provider_capital(db, provider_cost_usdt, partner_id=locked_partner.id)
+    await require_provider_capital(db, provider_cost_reserve_usdt, partner_id=locked_partner.id)
 
     generation = Generation(
         partner_id=locked_partner.id,
@@ -132,6 +143,7 @@ async def create_generation(
         idempotency_key=payload.idempotency_key,
         partner_price_rub=price_rub,
         provider_cost_usdt_snapshot=provider_cost_usdt,
+        provider_cost_reserve_usdt=provider_cost_reserve_usdt,
         rub_per_usdt_snapshot=rub_per_usdt,
         provider_cost_reserve_rub=provider_cost_reserve_rub,
         prompt=payload.prompt,

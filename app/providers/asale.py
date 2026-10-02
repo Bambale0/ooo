@@ -363,7 +363,7 @@ class AsaleAdapter:
             )
         if response.status_code in {401, 402, 403}:
             return ProviderAdapterError(
-                "provider_temporarily_unavailable",
+                "provider_rejected_request",
                 raw_error,
                 retryable=False,
             )

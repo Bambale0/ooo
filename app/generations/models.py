@@ -25,6 +25,7 @@ class Generation(Base):
     provider_cost_usdt_snapshot: Mapped[Decimal] = mapped_column(
         ExactNumeric(36, 18), nullable=False, default=Decimal("0")
     )
+    provider_cost_reserve_usdt: Mapped[Decimal | None] = mapped_column(ExactNumeric(36, 18))
     rub_per_usdt_snapshot: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False, default=Decimal("0"))
     provider_cost_reserve_rub: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=Decimal("0.00"))
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
