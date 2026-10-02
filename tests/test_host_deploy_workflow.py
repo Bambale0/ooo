@@ -55,7 +55,8 @@ def test_private_registry_access_is_temporary_and_removed_after_release():
     assert 'config.json' in staged
     assert "DOCKER_CONFIG='${DEPLOY_AUTH_DIR}'" in release
     assert 'trap cleanup_registry_auth EXIT' in release
-    assert cleanup['if'] == "always() && env.DEPLOY_AUTH_DIR != ''"
+    assert cleanup['if'] == 'always()'
+    assert '${DEPLOY_AUTH_DIR:-}' in cleanup['run']
     assert 'rmdir --' in cleanup['run']
     assert 'exit 1' in cleanup['run']
 

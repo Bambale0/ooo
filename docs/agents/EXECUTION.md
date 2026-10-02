@@ -328,3 +328,8 @@ PR #81 CI run `37072752588` passed for code SHA `a6065a42ad5d1850a4bebe01e8ad2fe
 migrations/schema, 750 pytest tests, backup/restore, PITR, Nginx validation,
 and production image build. A final exact-SHA CI run is required after this
 ledger update before merge.
+
+Review correction: cleanup now uses an unconditional `always()` step and checks
+`DEPLOY_AUTH_DIR` in the runner shell. `GITHUB_ENV` makes the path available to
+subsequent shell steps, while the Actions `env` expression context is limited to
+workflow/job/step declarations. The prior expression could skip cleanup.

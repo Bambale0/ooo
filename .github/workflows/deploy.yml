@@ -287,11 +287,12 @@ jobs:
           SSH
 
       - name: Remove temporary GHCR authentication
-        if: always() && env.DEPLOY_AUTH_DIR != ''
+        if: always()
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
         run: |
           set -euo pipefail
+          if [[ -z "${DEPLOY_AUTH_DIR:-}" ]]; then exit 0; fi
           [[ "$DEPLOY_AUTH_DIR" =~ ^/dev/shm/neironych-ghcr-[0-9a-f]{40}\.[a-zA-Z0-9]{6,}$ ]]
           ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
             -p "$DEPLOY_SSH_PORT" -i ~/.ssh/deploy_key "$DEPLOY_SSH_USER@$DEPLOY_HOST" \
