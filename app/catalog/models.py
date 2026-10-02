@@ -44,7 +44,9 @@ class PartnerModelGrant(Base):
 
 class PartnerPrice(Base):
     __tablename__ = "partner_prices"
-    __table_args__ = (UniqueConstraint("model_id", "mode", "resolution", "partner_id", name="uq_partner_prices_variant"),)
+    __table_args__ = (
+        UniqueConstraint("model_id", "mode", "resolution", "partner_id", name="uq_partner_prices_variant"),
+    )
 
     id: Mapped[str] = uuid_pk()
     model_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
