@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     argolink_http_keepalive_expiry_seconds: float = Field(default=30.0, gt=0)
     argolink_submit_rps: float = Field(default=10.0, ge=0)
     argolink_poll_rps: float = Field(default=50.0, ge=0)
+    asale_api_key: str | None = None
+    asale_base_url: str = "https://asale.ai"
+    asale_timeout_seconds: float = Field(default=30.0, gt=0)
     crypto_pay_api_token: str | None = None
     crypto_pay_base_url: str = "https://pay.crypt.bot"
     crypto_pay_timeout_seconds: float = Field(default=10.0, gt=0)
