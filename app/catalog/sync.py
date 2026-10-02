@@ -92,6 +92,7 @@ async def import_reviewed_catalog(db):
                     select(PartnerPrice)
                     .where(
                         PartnerPrice.model_id == model.id,
+                        PartnerPrice.partner_id.is_(None),
                         PartnerPrice.mode == mode,
                         PartnerPrice.resolution == resolution,
                     )
