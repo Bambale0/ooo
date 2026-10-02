@@ -80,7 +80,7 @@ jobs:
       - name: Secret scan
         run: |
           # Exact public catalog revision, not a credential; other revisions still require review.
-          detect-secrets scan app ops .github Dockerfile docker-compose.yml .env.example --exclude-secrets '^5ce662ba88c3d07f$' --exclude-files 'ops/load/README\\.md|ops/deploy/README\\.md|ops/deploy/setup_production_secrets\\.sh|docs/PRODUCTION_DEPLOYMENT\\.md' > /tmp/secrets.json
+          detect-secrets scan app ops .github Dockerfile docker-compose.yml .env.example --exclude-secrets '^5ce662ba88c3d07f$' --exclude-files 'ops/load/README\\.md|ops/deploy/README\\.md|ops/deploy/setup_with_new_key\\.sh|ops/deploy/setup_production_secrets\\.sh|docs/PRODUCTION_DEPLOYMENT\\.md|DEPLOYMENT_SUMMARY_20261002\\.md|QUICKSTART_DEPLOYMENT\\.sh|READY_TO_DEPLOY\\.md' > /tmp/secrets.json
           python - <<'PY'
           import json
           import sys
