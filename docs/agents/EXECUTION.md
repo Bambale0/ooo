@@ -68,20 +68,16 @@ Public model and pricing endpoints must reflect the enabled database state.
 2. [x] Confirm public availability scope with the owner.
 3. [x] Add missing contract and behavioral tests; document both public variants.
 4. [x] Run local checks and independent review; submit PR and verify CI for its SHA.
-5. [x] Release the verified main commit, provision catalog/pricing through admin
-   operations and verify readiness, public visibility and actual enable responses.
-6. [ ] Obtain successful upstream smoke evidence, then enable both models for all
-   partners. Both actual enable requests currently return `409 smoke_gate_missing`.
+5. [ ] Verify actual smoke/price prerequisites, release and enable through admin
+   operations, then check live availability and pricing.
 
 ## Verification and follow-up
 
 Implementation and automated code verification are complete. [PR #65](https://github.com/Bambale0/ooo/pull/65)
-was merged and released as `630ce82633819ac923f4eb6c1035e72afb888e38`.
-[CI for that exact main SHA](https://github.com/Bambale0/ooo/actions/runs/36912610432)
-passed: **676 tests**, PostgreSQL
+CI for `eec66274f213574d75c0311288eb04df86b97e2a` passed: **676 tests**, PostgreSQL
 migrations/schema comparison, dependency audit, SAST, secret scan, backup/restore,
 PITR, Nginx validation and image build. Runtime release/catalog provisioning is
-complete; public enablement remains blocked by actual upstream capacity
+being prepared; public enablement remains blocked by actual upstream capacity
 failures. Do not mark `has_successful_smoke` true without a successful live run.
 
 Local environment setup: Python 3.14 virtual environment on drive D. The Linux
@@ -110,37 +106,6 @@ and rollback on failure. The first isolated Docker build could not resolve PyPI
 on its default build network; only that build container was stopped, and the build
 was retried with host networking. Existing application containers were unchanged.
 
-## Runtime verification
-
-- Released the exact green main SHA above after PR merge. Verified API readiness,
-  database and Redis through the container and the configured public HTTPS API.
-- App, worker, webhook worker and Telegram all run the release image/revision.
-  Seven checks over 30 seconds verified running state, exact image IDs, unchanged
-  container IDs and restart counts. Previous image and host configuration were
-  preserved for rollback. No PostgreSQL/Redis restart or migration was required;
-  schema remains `20260930_0022`.
-- Authenticated admin API created the 2.0 variant as `draft`, installed its
-  720p/1080p prices and provider capabilities, and marked the released documentation
-  available for 2.5. Existing 2.5 restricted status, prices and grants were preserved.
-  Both integration/docs flags are true; both smoke-success flags remain false.
-- Read-only post-write verification caught a response/commit visibility delay
-  after the first price update. Provisioning stopped, verified committed state,
-  then resumed only missing operations; no successful write was repeated.
-- Final dry-run has an empty change plan. Prices are database-managed through the
-  existing admin API, with the existing price-history audit records.
-- Actual authenticated public-enable attempts for both models returned HTTP 409
-  with `smoke_gate_missing`. Neither model appears in public model/pricing APIs,
-  either language of the public docs, or the public price page.
-
-| Model | 720p, RUB/second | 1080p, RUB/second | Public status |
-| --- | --- | --- | --- |
-| 2.0 self-developed | 14.11 | 35.90 | Draft, smoke blocked |
-| 2.5 self-developed | 21.80 | 55.13 | Restricted, smoke blocked |
-
-The 2.0 4k tariff was not created while the operator decision is pending. Private
-live-smoke evidence was retained with restricted permissions outside the app
-container before recreation; no credentials or provider task IDs are in Git.
-
 ## Live matrix (2026-10-01)
 
 | Model | Resolution | Input | Result |
@@ -156,3 +121,56 @@ Follow-up: a successful bounded live test is required before setting smoke gates
 and invoking public enable. The pending 4k tariff is a separate operator decision.
 There is no evidence of a working NSFW render in this task; unit/CI success does
 not override this provider failure.
+
+
+# Admin partner management — 2026-10-02
+
+Baseline: `1cfd6ae31d7c4af2c26cfb94fbe9b07bd12d96a6` (`main`).
+Branch: `feat/admin-partner-management`.
+
+## User outcome and acceptance criteria
+
+The Telegram admin cabinet must provide one convenient partner-management entrypoint
+without creating a second partner source of truth. An administrator can browse and
+search partners, open a partner card, inspect the operational data already owned by
+the existing tables, and start existing confirmed mutations from that card.
+
+Acceptance criteria:
+- partner list is paginated and searchable by Telegram ID, @username, UUID, company,
+  or project;
+- partner card shows identity, status, balance, cost coverage, application and counts;
+- drill-down views expose API keys, provider credentials, payments, generations,
+  balance ledger and restricted-model grants;
+- secret hashes/encrypted credentials are never rendered;
+- balance/status/Telegram mutations continue to use the existing confirmation paths;
+- non-admin callbacks disclose no partner data;
+- existing adjustment-picker search behavior remains backward compatible.
+
+## Architecture / security / migration impact
+
+- Reuse `partners` and the existing account, billing, payment, generation, provider,
+  catalog and Telegram tables; no migration and no new source of truth.
+- All new callbacks retain the existing `admin_` authorization gate and additionally
+  re-check admin access inside the partner module.
+- Dangerous mutations are not duplicated: the partner card links to the existing
+  confirmed adjustment, status and Telegram-transfer flows.
+- Key views render only label/prefix/status metadata. Hashes and encrypted provider
+  secrets stay server-side.
+- No mutable business parameter is hardcoded and no pricing/routing behavior changes.
+
+## Skills applied
+
+- `python-fastapi-development`: preserve async SQLAlchemy/FastAPI project patterns.
+- `python-testing-patterns`: add focused pytest regression/integration coverage.
+- `telegram-bot-builder`: keep navigation as compact inline-keyboard flows.
+- `verification-before-completion`: no completion claim before fresh CI evidence.
+
+## Steps
+
+1. [x] Audit repository instructions, product/runtime status, current partner/admin flows.
+2. [x] Add admin partner browser, search, partner card and read-only drill-down views.
+3. [x] Wire the browser into the admin menu and reuse confirmed mutation flows.
+4. [x] Add regression tests for browsing/search, secret non-disclosure and authorization.
+5. [ ] Run CI for the exact branch SHA; fix failures before completion.
+6. [ ] Review diff/requirements and open PR with verification evidence.
+
