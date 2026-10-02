@@ -19,12 +19,19 @@ Optional repository/environment variables:
 | `DEPLOY_SSH_PORT` | `22` | SSH port |
 | `DEPLOY_USE_SUDO` | `false` | Use already-authorized, noninteractive sudo on this host |
 
-The workflow does not provision SSH users, sudo permissions, secret values or
-registry credentials. Verify SSH access, Docker/Compose and Python 3.10+ and GHCR
-pull access under the chosen execution identity before enabling the repository
+The workflow does not provision SSH users, sudo permissions or secret values.
+Verify SSH access, Docker/Compose and Python 3.10+ under the chosen execution
+identity before enabling the repository
 variable `PRODUCTION_DEPLOY_ENABLED=true`. It first checks SSH/Docker access before
 building/publishing. After enabling the gate, rerun a successful **main CI** for
 the current head (not a PR run) to deploy without an empty source commit.
+
+The workflow logs into GHCR with the run's `GITHUB_TOKEN`, verifies the pushed
+image, and copies only the temporary Docker auth config to a private `/dev/shm`
+directory on the host over pinned SSH. The remote release uses that directory as
+`DOCKER_CONFIG`; both the remote exit trap and an Actions cleanup step remove it.
+The host does not need a long-lived GHCR token. A cleanup failure fails the job
+and needs host inspection. Never print or archive this config.
 
 ## Automatic topology selection
 

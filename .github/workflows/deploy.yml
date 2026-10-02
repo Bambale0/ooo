@@ -134,6 +134,28 @@ jobs:
           digest="$(sha256sum "$bundle" | cut -d ' ' -f 1)"
           printf 'DEPLOY_BUNDLE_DIR=%s\nDEPLOY_BUNDLE_SHA256=%s\n' "$remote_dir" "$digest" >> "$GITHUB_ENV"
 
+      - name: Stage temporary GHCR authentication
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          set -euo pipefail
+          # docker/login-action already authenticated this runner with GITHUB_TOKEN.
+          # Transfer only its short-lived Docker config over pinned SSH, into tmpfs.
+          docker manifest inspect "${IMAGE_REPOSITORY}:${RELEASE_SHA}" >/dev/null
+          runner_config="${DOCKER_CONFIG:-${HOME}/.docker}/config.json"
+          test -s "$runner_config"
+          auth_dir="$(ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
+            -p "$DEPLOY_SSH_PORT" -i ~/.ssh/deploy_key "$DEPLOY_SSH_USER@$DEPLOY_HOST" \
+            "umask 077; mktemp -d /dev/shm/neironych-ghcr-${RELEASE_SHA}.XXXXXX")"
+          [[ "$auth_dir" =~ ^/dev/shm/neironych-ghcr-[0-9a-f]{40}\.[a-zA-Z0-9]{6,}$ ]]
+          printf 'DEPLOY_AUTH_DIR=%s\n' "$auth_dir" >> "$GITHUB_ENV"
+          scp -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
+            -P "$DEPLOY_SSH_PORT" -i ~/.ssh/deploy_key \
+            "$runner_config" "$DEPLOY_SSH_USER@$DEPLOY_HOST:${auth_dir}/config.json"
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
+            -p "$DEPLOY_SSH_PORT" -i ~/.ssh/deploy_key "$DEPLOY_SSH_USER@$DEPLOY_HOST" \
+            "chmod 600 '${auth_dir}/config.json'"
+
       - name: Deploy verified revision with automatic rollback
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
@@ -144,13 +166,20 @@ jobs:
           [[ "$current" == "$RELEASE_SHA" ]] || { echo 'Superseded release; not deploying.' >&2; exit 1; }
           [[ "$DEPLOY_BUNDLE_DIR" =~ ^/tmp/neironych-[0-9a-f]{40}\.[a-zA-Z0-9]{6,}$ ]]
           [[ "$DEPLOY_BUNDLE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$DEPLOY_AUTH_DIR" =~ ^/dev/shm/neironych-ghcr-[0-9a-f]{40}\.[a-zA-Z0-9]{6,}$ ]]
           remote=(env)
           if [[ "$DEPLOY_USE_SUDO" == true ]]; then remote=(sudo -n env); fi
           ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
             -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
             -p "$DEPLOY_SSH_PORT" -i ~/.ssh/deploy_key "$DEPLOY_SSH_USER@$DEPLOY_HOST" \
-            "${remote[*]} RELEASE_SHA='${RELEASE_SHA}' REPOSITORY='${GITHUB_REPOSITORY}' DEPLOY_ROOT='${DEPLOY_ROOT}' DEPLOY_BUNDLE_DIR='${DEPLOY_BUNDLE_DIR}' DEPLOY_BUNDLE_SHA256='${DEPLOY_BUNDLE_SHA256}' bash -s" <<'SSH'
+            "${remote[*]} RELEASE_SHA='${RELEASE_SHA}' REPOSITORY='${GITHUB_REPOSITORY}' DEPLOY_ROOT='${DEPLOY_ROOT}' DEPLOY_BUNDLE_DIR='${DEPLOY_BUNDLE_DIR}' DEPLOY_BUNDLE_SHA256='${DEPLOY_BUNDLE_SHA256}' DOCKER_CONFIG='${DEPLOY_AUTH_DIR}' bash -s" <<'SSH'
           set -euo pipefail
+          [[ "$DOCKER_CONFIG" =~ ^/dev/shm/neironych-ghcr-[0-9a-f]{40}\.[a-zA-Z0-9]{6,}$ ]]
+          cleanup_registry_auth() {
+            rm -f -- "${DOCKER_CONFIG}/config.json"
+            rmdir -- "${DOCKER_CONFIG}"
+          }
+          trap cleanup_registry_auth EXIT
 
           REPO="ghcr.io/${REPOSITORY,,}"
           TAG="${RELEASE_SHA}"
@@ -256,6 +285,21 @@ jobs:
           fi
           exit 1
           SSH
+
+      - name: Remove temporary GHCR authentication
+        if: always()
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${DEPLOY_AUTH_DIR:-}" ]]; then exit 0; fi
+          [[ "$DEPLOY_AUTH_DIR" =~ ^/dev/shm/neironych-ghcr-[0-9a-f]{40}\.[a-zA-Z0-9]{6,}$ ]]
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
+            -p "$DEPLOY_SSH_PORT" -i ~/.ssh/deploy_key "$DEPLOY_SSH_USER@$DEPLOY_HOST" \
+            "if [ -d '${DEPLOY_AUTH_DIR}' ]; then rm -f -- '${DEPLOY_AUTH_DIR}/config.json'; rmdir -- '${DEPLOY_AUTH_DIR}'; fi" || {
+              echo 'Temporary GHCR authentication cleanup could not be verified.' >&2
+              exit 1
+            }
 
       - name: Remove temporary SSH identity
         if: always()

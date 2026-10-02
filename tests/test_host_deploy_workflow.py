@@ -38,6 +38,29 @@ def test_remote_deploy_shell_blocks_parse():
             assert result.returncode == 0, (step['name'], result.stderr)
 
 
+def test_private_registry_access_is_temporary_and_removed_after_release():
+    config = yaml.safe_load(Path('.github/workflows/deploy.yml').read_text(encoding='utf-8'))
+    steps = config['jobs']['deploy']['steps']
+    names = [step['name'] for step in steps]
+    staged = steps[names.index('Stage temporary GHCR authentication')]['run']
+    release = steps[names.index('Deploy verified revision with automatic rollback')]['run']
+    cleanup = steps[names.index('Remove temporary GHCR authentication')]
+
+    assert names.index('Build and push immutable production image') < names.index('Stage temporary GHCR authentication')
+    assert names.index('Stage temporary GHCR authentication') < names.index(
+        'Deploy verified revision with automatic rollback'
+    )
+    assert 'docker manifest inspect' in staged
+    assert 'mktemp -d /dev/shm/' in staged
+    assert 'config.json' in staged
+    assert "DOCKER_CONFIG='${DEPLOY_AUTH_DIR}'" in release
+    assert 'trap cleanup_registry_auth EXIT' in release
+    assert cleanup['if'] == 'always()'
+    assert '${DEPLOY_AUTH_DIR:-}' in cleanup['run']
+    assert 'rmdir --' in cleanup['run']
+    assert 'exit 1' in cleanup['run']
+
+
 def test_release_archive_is_private_and_verified_before_extraction():
     text = Path('.github/workflows/deploy.yml').read_text(encoding='utf-8')
     assert 'umask 077; mktemp -d' in text
