@@ -15,7 +15,8 @@ from app.billing.service import (
     lock_partner_for_update,
     require_sufficient_balance,
 )
-from app.catalog.models import Model, PartnerPrice
+from app.catalog.models import Model
+from app.catalog.pricing import effective_partner_prices
 from app.catalog.procurement import supports_free_rate
 from app.contracts.registry import (
     MODELS,
@@ -110,7 +111,7 @@ async def reserve(
     credential = await get_active_provider_credential(db, partner.id, "argolink")
     if credential is None:
         raise HTTPException(503, "provider_temporarily_unavailable")
-    prices = list((await db.execute(select(PartnerPrice).where(PartnerPrice.model_id == model.id))).scalars())
+    prices = await effective_partner_prices(db, partner_id=partner.id, model_id=model.id)
     from app.billing.fx import current_fx
     from app.billing.fx import snapshot as fx_snapshot
 

@@ -5,10 +5,11 @@ from uuid import uuid4
 
 from sqlalchemy import select, text
 
+from app.accounts.models import Partner
 from app.billing.capital import capital_state
 from app.billing.fx import current_fx
 from app.billing.models import FinancialIncident
-from app.catalog.models import Model, PartnerPrice
+from app.catalog.models import Model, PartnerPrice, PartnerPriceSnapshot
 from app.catalog.procurement import supports_free_rate
 from app.infrastructure.config import get_settings
 from app.infrastructure.retry import utc_now
@@ -92,6 +93,50 @@ async def financial_tick(db) -> None:
             repeating=False,
             detail=f"Конфигурация {model.slug} / {price.mode} / {price.resolution} убыточна. "
             "Новые запросы блокируются до исправления цен или курса.",
+        )
+
+    partner_rows = (
+        await db.execute(
+            select(Partner, Model, PartnerPrice, PartnerPriceSnapshot)
+            .join(PartnerPriceSnapshot, PartnerPriceSnapshot.partner_id == Partner.id)
+            .join(PartnerPrice, PartnerPrice.id == PartnerPriceSnapshot.partner_price_id)
+            .join(Model, Model.id == PartnerPrice.model_id)
+            .where(
+                Partner.status != "deleted",
+                Model.status.in_(("production", "restricted")),
+            )
+        )
+    ).all()
+    for partner, model, price, snapshot in partner_rows:
+        retail = snapshot.price_rub
+        cost_rub = price.provider_cost_usdt * fx
+        negative = retail < cost_rub
+        margin = (retail - cost_rub) / retail * 100 if retail > 0 else 0
+        free_rate = (
+            retail == 0
+            and price.provider_cost_usdt == 0
+            and supports_free_rate(model.slug, price.mode, price.resolution, price.billing_unit)
+        )
+        limit = threshold(thresholds, model.id, price.id)
+        detail_prefix = (
+            f"Партнёр {partner.project_name} ({partner.id}), "
+            f"{model.slug} / {price.mode} / {price.resolution}"
+        )
+        await observe_incident(
+            db,
+            kind=f"partner-margin:{partner.id}:{price.id}",
+            negative=not negative and not free_rate and margin < limit,
+            repeating=False,
+            detail=f"Низкая маржа {detail_prefix}: {margin:.2f}% при пороге {limit}%. "
+            "Розничная цена партнёра зафиксирована snapshot; закупка актуальная.",
+        )
+        await observe_incident(
+            db,
+            kind=f"partner-economics:{partner.id}:{price.id}",
+            negative=negative,
+            repeating=False,
+            detail=f"Negative margin: {detail_prefix}. Розница {retail:.2f} ₽, "
+            f"текущая закупка {cost_rub:.2f} ₽. Новые запросы этого партнёра должны блокироваться.",
         )
 
 

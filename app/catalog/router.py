@@ -6,6 +6,7 @@ from sqlalchemy import select
 from app.api.dependencies import DbSession, require_admin
 from app.catalog.access import grant_model_access, revoke_model_access
 from app.catalog.models import Model, PartnerModelGrant, PartnerPrice, PartnerPriceHistory
+from app.catalog.pricing import snapshot_price_for_existing_partners
 from app.catalog.procurement import supports_free_rate
 from app.catalog.schemas import (
     ModelCreate,
@@ -219,16 +220,17 @@ async def upsert_price(payload: PartnerPriceUpsert, db: DbSession) -> None:
     )
     price = price_result.scalar_one_or_none()
     if price is None:
-        db.add(
-            PartnerPrice(
-                model_id=model.id,
-                mode=payload.mode,
-                resolution=payload.resolution,
-                price_rub=payload.price_rub,
-                provider_cost_usdt=payload.provider_cost_usdt,
-                billing_unit=payload.billing_unit,
-            )
+        price = PartnerPrice(
+            model_id=model.id,
+            mode=payload.mode,
+            resolution=payload.resolution,
+            price_rub=payload.price_rub,
+            provider_cost_usdt=payload.provider_cost_usdt,
+            billing_unit=payload.billing_unit,
         )
+        db.add(price)
+        await db.flush()
+        await snapshot_price_for_existing_partners(db, price)
         db.add(
             PartnerPriceHistory(
                 model_id=model.id,

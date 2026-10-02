@@ -71,3 +71,14 @@ class PartnerPriceHistory(Base):
     billing_unit: Mapped[str] = mapped_column(String(32), nullable=False, default="generation")
     rub_per_usdt_snapshot: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
     created_at: Mapped[object] = utc_created_at()
+
+
+class PartnerPriceSnapshot(Base):
+    """Frozen retail price for one partner; procurement stays on the live template."""
+
+    __tablename__ = "partner_price_snapshots"
+
+    partner_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    partner_price_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    price_rub: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    created_at: Mapped[object] = utc_created_at()

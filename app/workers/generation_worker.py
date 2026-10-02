@@ -224,7 +224,9 @@ async def _dispatch_generation_candidate(
                 await db.rollback()
                 return False
 
-            selected_provider = provider or (generation.request_payload or {}).get("fallback_provider") or PRIMARY_PROVIDER
+            selected_provider = (
+                provider or (generation.request_payload or {}).get("fallback_provider") or PRIMARY_PROVIDER
+            )
             attempt = await dispatch_generation_to_provider(db, generation, selected_provider)
             await db.commit()
             if attempt is not None:
