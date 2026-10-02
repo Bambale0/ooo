@@ -211,25 +211,13 @@ async def credit_paid_invoice(db: AsyncSession, *, payment_id: str) -> PaymentIn
         description="Confirmed Crypto Pay payment credited",
         allow_negative=True,
     )
-    from app.catalog.models import Model, PartnerPrice
-
-    prices = (
-        (
-            await db.execute(
-                select(PartnerPrice)
-                .join(Model, Model.id == PartnerPrice.model_id)
-                .where(Model.status == "production", PartnerPrice.price_rub > 0)
-            )
-        )
-        .scalars()
-        .all()
-    )
     from app.billing.fx import current_fx
     from app.billing.fx import snapshot as fx_snapshot
+    from app.catalog.pricing import worst_cost_to_retail_ratio
 
     fx_data = await current_fx(db)
     fx = fx_data["rate"]
-    ratio = max((p.provider_cost_usdt * fx / p.price_rub for p in prices), default=Decimal(1))
+    ratio = await worst_cost_to_retail_ratio(db, partner.id, fx=fx)
     coverage = (amount * ratio).quantize(Decimal(".01"), rounding="ROUND_HALF_UP")
     payment.coverage_snapshot = {
         "fx": fx_snapshot(fx_data),
