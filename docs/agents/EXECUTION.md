@@ -300,7 +300,7 @@ Branch: `fix/production-autodeploy-auth`.
    topology, host key, running revision, registry access, and rollback boundary.
 2. [x] Add temporary, private GHCR authentication for the SSH release; clean it
    on success and failure. Preserve the current exact-SHA and provenance gates.
-3. [ ] Run workflow syntax, focused deployment tests, and PR CI for the exact SHA.
+3. [x] Run workflow syntax, focused deployment tests, and PR CI for the exact SHA.
 4. [ ] Resolve the SSH execution identity and the externally disabled arming gate;
    enable the gate only when authorized state is clear.
 5. [ ] Merge through PR, verify push CI and the production job, then verify the
@@ -310,9 +310,10 @@ Observability: use CI/deploy run IDs, commit SHA, safe deploy progress markers,
 container revision/image identities, and readiness. Never print SSH keys, registry
 tokens, Docker auth files, host `.env`, or private payloads.
 
-Preparation evidence: the known local SSH identity reaches the host as `root` on
-port 2022, and this host has no `deploy` user. The production environment SSH
-secret and repository `DEPLOY_SSH_USER=root`, `DEPLOY_USE_SUDO=false`, and
+Preparation evidence: a dedicated GitHub Actions SSH identity reaches the host as
+`root` on port 2022; this host has no `deploy` user. Its private key is held only
+locally outside Git and in the production environment secret; the laptop's existing
+SSH key remains separate. Repository `DEPLOY_SSH_USER=root`, `DEPLOY_USE_SUDO=false`, and
 `DEPLOY_SSH_PORT=2022` now match that existing access. The arming variable remains
 `false` after an external change, so no deployment attempt is authorized until
 its owner clarifies the change. The new GHCR auth flow remains a branch change
@@ -322,3 +323,8 @@ Local verification: workflow YAML loaded; 11 local/remote Bash blocks passed
 `bash -n`; deployment-focused pytest run passed `10/10` with `--noconftest`.
 The laptop's Python environment lacks Pillow, so the full suite will run in
 GitHub CI after PR creation. `git diff --check` passed.
+
+PR #81 CI run `37072752588` passed for code SHA `a6065a42ad5d1850a4bebe01e8ad2fe719be924d`: Ruff, dependency/security scans,
+migrations/schema, 750 pytest tests, backup/restore, PITR, Nginx validation,
+and production image build. A final exact-SHA CI run is required after this
+ledger update before merge.
