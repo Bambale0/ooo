@@ -25,8 +25,6 @@ class ProviderCredential(Base):
         index=True,
     )
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
-    provider_cost_ceiling_usdt: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
-    billing_unit: Mapped[str | None] = mapped_column(String(32))
     created_at: Mapped[object] = utc_created_at()
 
 
@@ -40,6 +38,8 @@ class ProviderModelCapability(Base):
     mode: Mapped[str] = mapped_column(String(80), nullable=False)
     resolution: Mapped[str] = mapped_column(String(80), nullable=False)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    provider_cost_ceiling_usdt: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
+    billing_unit: Mapped[str | None] = mapped_column(String(32))
     created_at: Mapped[object] = utc_created_at()
 
 
