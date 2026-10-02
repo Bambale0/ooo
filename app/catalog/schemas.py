@@ -31,7 +31,6 @@ class ModelRead(BaseModel):
 
 class PartnerPriceUpsert(BaseModel):
     model_slug: str
-    partner_id: str | None = None
     mode: str = "default"
     resolution: str = "default"
     price_rub: Decimal = Field(ge=0, allow_inf_nan=False)
@@ -55,7 +54,6 @@ class PricingRead(BaseModel):
     resolution: str
     price_rub: Decimal
     billing_unit: str
-    partner_id: str | None = None
 
 
 class ModelEnableGateUpdate(BaseModel):
