@@ -184,7 +184,11 @@ async def search_partners(event, db, dialog, value: str) -> None:
     try:
         search = _parse_picker_search(value)
     except ValueError:
-        await show(event, "Введите числовой Telegram ID, @username, UUID или название.", keyboard(back="admin_form:adjustment"))
+        await show(
+            event,
+            "Введите числовой Telegram ID, @username, UUID или название.",
+            keyboard(back="admin_form:adjustment"),
+        )
         return
     dialog.data = {**dialog.data, "search": search}
     query = partner_query()
