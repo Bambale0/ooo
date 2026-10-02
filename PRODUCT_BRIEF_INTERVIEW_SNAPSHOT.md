@@ -1074,19 +1074,27 @@ Partner получает ровно запрошенную RUB сумму.
 - для top-up conversion
 - для USD→RUB procurement cost conversion
 
-Background refresh:
+### Решение от 2026-10-02 — rate refresh только при создании invoice
 
-- каждые 5 минут
-- последнее successful rate кешируется
+Внешний Crypto Pay `getExchangeRates` вызывается только при подготовке нового
+top-up invoice и не чаще одного раза на локальную попытку создания invoice.
 
-Если fresh rate недоступен:
+- background refresh курса отсутствует;
+- generation/catalog/admin/payment-credit/reconciliation не запрашивают exchange rate;
+- успешный automatic rate сохраняется и дальше читается локально;
+- если новые invoice не создаются, автоматических сетевых запросов курса нет;
+- каждый invoice сохраняет свой immutable FX snapshot до внешнего createInvoice;
+- credit/coverage этого invoice используют его сохранённый snapshot, а не новый rate.
 
-- система продолжает работать по последнему successful rate
+Admin может включить manual override. Пока он активен:
 
-Если rate старше 1 часа:
+- заданный RUB/USDT rate действует постоянно;
+- даже создание нового invoice не вызывает automatic exchange-rate lookup;
+- после явного отключения manual override новые invoice снова обновляют automatic rate.
 
-- продолжаем использовать его
-- immediate warning админу
+Если automatic lookup при создании invoice временно недоступен, создание может
+использовать уже сохранённый проверенный rate по fallback policy; бесконечного
+фонового retry курса нет.
 
 ## 32. Cost/margin snapshot
 
@@ -1094,9 +1102,10 @@ Background refresh:
 
 USD→RUB rate для cost/margin:
 
-- берётся в момент успешного завершения
-- если Crypto Bot недоступен — последний известный rate
-- сохраняется immutable snapshot
+- берётся из persisted FX state без сетевого запроса Crypto Pay;
+- при admission/reserve сохраняется immutable snapshot в generation;
+- settlement использует тот же generation FX snapshot;
+- historical generation не переоценивается новым rate.
 
 Исторические margin reports не пересчитываются задним числом.
 

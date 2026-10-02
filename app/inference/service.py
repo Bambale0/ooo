@@ -35,6 +35,16 @@ from app.providers.service import get_active_provider_credential
 logger = logging.getLogger(__name__)
 
 
+class InferenceAdmissionError(HTTPException):
+    def __init__(self, status_code: int, detail: str, *, failure_stage: str):
+        super().__init__(status_code=status_code, detail=detail)
+        self.failure_stage = failure_stage
+
+
+def _admission_error(exc: HTTPException, stage: str) -> InferenceAdmissionError:
+    return InferenceAdmissionError(exc.status_code, str(exc.detail), failure_stage=stage)
+
+
 def fingerprint(protocol: str, body: dict, files_digest: str = "") -> str:
     return hashlib.sha256(
         (protocol + "\n" + json.dumps(body, sort_keys=True, separators=(",", ":")) + files_digest).encode()
@@ -80,7 +90,7 @@ async def reserve(
 ):
     partner = await lock_partner_for_update(db, auth.partner.id)
     if partner.status != "active":
-        raise HTTPException(403, "partner_not_active")
+        raise InferenceAdmissionError(403, "partner_not_active", failure_stage="partner_status")
     request_hash = fingerprint(protocol, body, files_digest)
     existing = (
         await db.execute(
@@ -92,7 +102,7 @@ async def reserve(
     ).scalar_one_or_none()
     if existing:
         if (existing.request_payload or {}).get("request_hash") != request_hash:
-            raise HTTPException(409, "idempotency_conflict")
+            raise InferenceAdmissionError(409, "idempotency_conflict", failure_stage="idempotency")
         return existing, None
     from app.catalog.access import RESTRICTED_STATUS, has_model_grant
 
@@ -105,24 +115,39 @@ async def reserve(
         )
     ).scalar_one_or_none()
     if model is None:
-        raise HTTPException(404, "model_not_available")
+        raise InferenceAdmissionError(404, "model_not_available", failure_stage="model_access")
     if model.status == RESTRICTED_STATUS and not await has_model_grant(db, model.id, partner.id):
         raise HTTPException(404, "model_not_available")
     credential = await get_active_provider_credential(db, partner.id, "argolink")
     if credential is None:
-        raise HTTPException(503, "provider_temporarily_unavailable")
+        raise InferenceAdmissionError(503, "provider_temporarily_unavailable", failure_stage="provider_credential")
     prices = await effective_partner_prices(db, partner_id=partner.id, model_id=model.id)
     from app.billing.fx import current_fx
     from app.billing.fx import snapshot as fx_snapshot
 
-    fx_data = await current_fx(db)
+    try:
+        fx_data = await current_fx(db)
+    except HTTPException as exc:
+        raise _admission_error(exc, "fx_rate") from exc
     if trial_telegram_id is not None:
         from app.telegram.trials import claim_trial
 
         if protocol != "videos/generations" or partner.telegram_id != trial_telegram_id:
-            raise HTTPException(403, "trial_not_available")
-        await claim_trial(db, trial_telegram_id)
-    rates, units, resolution = quote(protocol, body, prices, fx=fx_data["rate"], trial=trial_telegram_id is not None)
+            raise InferenceAdmissionError(403, "trial_not_available", failure_stage="trial")
+        try:
+            await claim_trial(db, trial_telegram_id)
+        except HTTPException as exc:
+            raise _admission_error(exc, "trial") from exc
+    try:
+        rates, units, resolution = quote(
+            protocol,
+            body,
+            prices,
+            fx=fx_data["rate"],
+            trial=trial_telegram_id is not None,
+        )
+    except HTTPException as exc:
+        raise _admission_error(exc, "pricing") from exc
     if trial_telegram_id is not None:
         rates = {key: {**value, "retail": "0"} for key, value in rates.items()}
     from app.generations.service import has_provider_capability
@@ -133,17 +158,23 @@ async def reserve(
         mode = key if protocol in TEXT_PROTOCOLS else "default"
         tier = "default" if protocol in TEXT_PROTOCOLS else key if protocol.startswith("images/") else resolution
         if not await has_provider_capability(db, model.id, mode, tier):
-            raise HTTPException(409, "capability_mismatch")
+            raise InferenceAdmissionError(409, "capability_mismatch", failure_stage="capability")
     divisor = MILLION if protocol in TEXT_PROTOCOLS else Decimal(1)
     charge, cost = charges(rates, units, divisor=divisor)
     fx = fx_data["rate"]
     coverage = (cost * fx).quantize(Decimal(".01"), rounding=ROUND_HALF_UP)
     if trial_telegram_id is None and charge < coverage:
-        raise HTTPException(503, "provider_temporarily_unavailable")
-    await require_sufficient_balance(partner, charge)
+        raise InferenceAdmissionError(503, "provider_temporarily_unavailable", failure_stage="pricing")
+    try:
+        await require_sufficient_balance(partner, charge)
+    except HTTPException as exc:
+        raise _admission_error(exc, "balance") from exc
     from app.billing.capital import require_provider_capital
 
-    await require_provider_capital(db, cost, partner_id=partner.id)
+    try:
+        await require_provider_capital(db, cost, partner_id=partner.id)
+    except HTTPException as exc:
+        raise _admission_error(exc, "provider_capital") from exc
     # Native video requests are durable queue work. Sync inference has a durable
     # submission intent; workers must not turn a disconnected call into a second job.
     video = protocol == "videos/generations"
@@ -181,7 +212,10 @@ async def reserve(
     await db.flush()
     from app.providers.circuit import require_admission
 
-    await require_admission(db, generation.id, claim=not video)
+    try:
+        await require_admission(db, generation.id, claim=not video)
+    except HTTPException as exc:
+        raise _admission_error(exc, "provider_circuit") from exc
     await apply_partner_balance_change(
         db,
         partner,

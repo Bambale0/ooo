@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+from uuid import uuid4
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -14,7 +15,7 @@ from app.catalog.models import Model
 from app.contracts.registry import MODELS, PROTOCOLS, TEXT_PROTOCOLS, image_reference_limit, validate_request
 from app.generations.models import Generation
 from app.inference.accounting import settle_actual, token_usage
-from app.inference.diagnostics import NativeRequestTrace
+from app.inference.diagnostics import NativeRequestTrace, log_rejection
 from app.inference.images import image_usage, inspect_url_images
 from app.inference.service import reserve
 from app.inference.streams import SSEDecoder, UsageCollector, event_data
@@ -148,7 +149,9 @@ async def media_upload(request: Request, db: DbSession, auth: PartnerAuth = Depe
 async def inference(protocol: str, request: Request, db: DbSession, auth: PartnerAuth = Depends(get_partner_auth)):
     if protocol not in PROTOCOLS:
         raise HTTPException(404, "unknown_protocol")
+    diagnostic_trace_id = str(uuid4())
     files = None
+    body = None
     digest = ""
     try:
         if request.headers.get("content-type", "").startswith("multipart/form-data"):
@@ -189,15 +192,83 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
                 raise ValueError("invalid_mask_count")
             if not 1 <= image_count <= maximum:
                 raise ValueError("invalid_reference_images")
+    except HTTPException as exc:
+        log_rejection(
+            trace_id=diagnostic_trace_id,
+            partner_id=auth.partner.id,
+            api_key_id=auth.api_key.id,
+            protocol=protocol,
+            model=body.get("model") if isinstance(body, dict) else None,
+            failure_stage="request_validation",
+            error_code=str(exc.detail),
+            http_status=exc.status_code,
+        )
+        raise HTTPException(
+            exc.status_code,
+            exc.detail,
+            headers={**(exc.headers or {}), "X-Request-Id": diagnostic_trace_id},
+        ) from exc
     except (ValueError, TypeError, AttributeError) as exc:
-        raise HTTPException(422, "invalid_request_contract") from exc
+        log_rejection(
+            trace_id=diagnostic_trace_id,
+            partner_id=auth.partner.id,
+            api_key_id=auth.api_key.id,
+            protocol=protocol,
+            model=body.get("model") if isinstance(body, dict) else None,
+            failure_stage="request_validation",
+            error_code="invalid_request_contract",
+            http_status=422,
+        )
+        raise HTTPException(
+            422,
+            "invalid_request_contract",
+            headers={"X-Request-Id": diagnostic_trace_id},
+        ) from exc
     idem = request.headers.get("idempotency-key", "")
     if not 8 <= len(idem) <= 160:
-        raise HTTPException(422, "invalid_idempotency_key")
-    generation, attempt = await reserve(db, auth, protocol, body, idem, files_digest=digest)
+        log_rejection(
+            trace_id=diagnostic_trace_id,
+            partner_id=auth.partner.id,
+            api_key_id=auth.api_key.id,
+            protocol=protocol,
+            model=body.get("model"),
+            failure_stage="request_validation",
+            error_code="invalid_idempotency_key",
+            http_status=422,
+        )
+        raise HTTPException(422, "invalid_idempotency_key", headers={"X-Request-Id": diagnostic_trace_id})
+    try:
+        generation, attempt = await reserve(db, auth, protocol, body, idem, files_digest=digest)
+    except HTTPException as exc:
+        log_rejection(
+            trace_id=diagnostic_trace_id,
+            partner_id=auth.partner.id,
+            api_key_id=auth.api_key.id,
+            protocol=protocol,
+            model=body.get("model"),
+            failure_stage=getattr(exc, "failure_stage", "admission"),
+            error_code=str(exc.detail),
+            http_status=exc.status_code,
+        )
+        raise HTTPException(
+            exc.status_code,
+            exc.detail,
+            headers={**(exc.headers or {}), "X-Request-Id": diagnostic_trace_id},
+        ) from exc
     if protocol == "videos/generations":
         return JSONResponse({"request_id": generation.id}, status_code=202)
     if attempt is None:
+        log_rejection(
+            trace_id=generation.id,
+            partner_id=auth.partner.id,
+            api_key_id=auth.api_key.id,
+            protocol=protocol,
+            model=generation.model_slug,
+            failure_stage="idempotency",
+            error_code="request_already_submitted",
+            http_status=409,
+            generation_id=generation.id,
+        )
         return public_error("request_already_submitted", 409, generation_id=generation.id)
     try:
         adapter = await get_partner_provider_adapter(
@@ -205,6 +276,18 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
         )
     except HTTPException:
         await fail(db, generation, attempt, "provider_temporarily_unavailable", definitive=True)
+        log_rejection(
+            trace_id=generation.id,
+            partner_id=auth.partner.id,
+            api_key_id=auth.api_key.id,
+            protocol=protocol,
+            model=generation.model_slug,
+            failure_stage="provider_credential",
+            error_code="provider_temporarily_unavailable",
+            http_status=503,
+            generation_id=generation.id,
+            attempt_id=attempt.id,
+        )
         return public_error("provider_temporarily_unavailable", generation_id=generation.id)
     wire_body = dict(body)
     if previous := body.get("previous_response_id"):
@@ -223,7 +306,19 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
         ).scalar_one_or_none()
         if previous_attempt is None or not previous_attempt.provider_task_id:
             await fail(db, generation, attempt, "invalid_previous_response", definitive=True)
-            return public_error("invalid_previous_response", 422)
+            log_rejection(
+                trace_id=generation.id,
+                partner_id=auth.partner.id,
+                api_key_id=auth.api_key.id,
+                protocol=protocol,
+                model=generation.model_slug,
+                failure_stage="request_context",
+                error_code="invalid_previous_response",
+                http_status=422,
+                generation_id=generation.id,
+                attempt_id=attempt.id,
+            )
+            return public_error("invalid_previous_response", 422, generation_id=generation.id)
         wire_body["previous_response_id"] = previous_attempt.provider_task_id
     if protocol == "chat/completions" and body.get("stream"):
         wire_body["stream_options"] = {**body.get("stream_options", {}), "include_usage": True}
@@ -251,11 +346,13 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
             else "submission_outcome_unknown"
         )
         retry = response.headers.get("retry-after")
+        public_status = 429 if code == "provider_rate_limited" else 422 if response.status_code == 400 else 503
+        trace.rejected(error_code=code, http_status=public_status)
         await response.aclose()
         await fail(db, generation, attempt, code, definitive=definitive)
         return public_error(
             code,
-            429 if code == "provider_rate_limited" else 422 if response.status_code == 400 else 503,
+            public_status,
             generation_id=generation.id,
             headers={"Retry-After": retry} if retry else None,
         )

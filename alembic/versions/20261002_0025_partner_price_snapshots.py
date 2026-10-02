@@ -1,7 +1,7 @@
 """freeze retail prices for existing partners
 
-Revision ID: 20261002_0024
-Revises: 20261002_0023
+Revision ID: 20261002_0025
+Revises: 20261002_0024
 Create Date: 2026-10-02
 """
 
@@ -9,8 +9,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision = "20261002_0024"
-down_revision = "20261002_0023"
+revision = "20261002_0025"
+down_revision = "20261002_0024"
 branch_labels = None
 depends_on = None
 

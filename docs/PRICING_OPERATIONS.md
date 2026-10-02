@@ -13,7 +13,7 @@ This split prevents existing partners from silently moving to a new retail price
 
 ## Deployment sequence
 
-1. Deploy code and run Alembic through `20261002_0024`.
+1. Deploy code and run Alembic through `20261002_0025`.
 2. Do not change global retail templates before snapshot verification is complete.
 3. Verify snapshot coverage:
    - active/non-deleted partner count;
@@ -31,7 +31,7 @@ This split prevents existing partners from silently moving to a new retail price
 
 ### Existing partners during migration
 
-Migration `20261002_0024` atomically inserts one retail snapshot for every non-deleted partner and every existing `partner_prices` row.
+Migration `20261002_0025` atomically inserts one retail snapshot for every non-deleted partner and every existing `partner_prices` row.
 
 An existing snapshot is never overwritten by a normal global price update.
 

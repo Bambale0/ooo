@@ -6,41 +6,49 @@ import pytest
 from sqlalchemy import func, select
 
 from app.billing.fx import current_fx as real_current_fx
-from app.billing.fx import set_manual_fallback
+from app.billing.fx import refresh_fx_for_invoice, set_fx_policy
 from app.billing.incidents import mute_treasury, observe_incident
 from app.billing.models import FinancialIncident, FxRateSnapshot
 from app.infrastructure.config import get_settings
-from app.payments.crypto_pay import CryptoPayError
 from app.telegram.models import BotNotification
 
 
-async def test_fx_automatic_manual_last_automatic_order(db_session, monkeypatch):
+async def test_fx_is_network_free_except_invoice_refresh_and_manual_mode_disables_auto(db_session, monkeypatch):
     client = AsyncMock()
-    client.get_rub_per_usdt.return_value = Decimal("90.123456")
-    monkeypatch.setattr("app.billing.fx.get_crypto_pay_client", lambda: client)
-    automatic = await real_current_fx(db_session)
-    assert automatic["source"] == "automatic" and automatic["rate"] == Decimal("90.123456")
-    assert automatic["automatic_at"]
-    stored = (await db_session.execute(select(FxRateSnapshot))).scalar_one()
-    stored.created_at = datetime.now(UTC) - timedelta(minutes=2)
+    client.get_rub_per_usdt.return_value = Decimal("91.250000")
+    stale = FxRateSnapshot(rate=Decimal("90.123456"), created_at=datetime.now(UTC) - timedelta(days=2))
+    db_session.add(stale)
+    await set_fx_policy(
+        db_session,
+        automatic_enabled=True,
+        rate=Decimal("95"),
+        actor="999",
+        reason="Automatic with fallback",
+    )
     await db_session.flush()
-    client.get_rub_per_usdt.side_effect = CryptoPayError("offline")
-    await set_manual_fallback(db_session, rate=Decimal("95"), actor="999", reason="Fallback")
-    manual = await real_current_fx(db_session)
-    assert manual["source"] == "manual_fallback" and manual["rate"] == Decimal("95")
-    await set_manual_fallback(db_session, rate=None, actor="999", reason="Disabled")
-    # SQLite now() has second precision; explicitly order the latest setting in this test.
-    from app.billing.models import FxFallbackSetting
 
-    settings = list((await db_session.execute(select(FxFallbackSetting))).scalars())
-    settings[-1].created_at = datetime.now(UTC) + timedelta(seconds=1)
-    await db_session.flush()
-    last = await real_current_fx(db_session)
-    assert last["source"] == "last_automatic" and last["rate"] == automatic["rate"]
-    client.get_rub_per_usdt.side_effect = None
-    client.get_rub_per_usdt.return_value = Decimal("91")
-    recovered = await real_current_fx(db_session)
-    assert recovered["source"] == "automatic" and recovered["rate"] == Decimal("91")
+    current = await real_current_fx(db_session)
+    assert current["source"] == "automatic"
+    assert current["rate"] == Decimal("90.123456")
+    client.get_rub_per_usdt.assert_not_awaited()
+
+    refreshed = await refresh_fx_for_invoice(db_session, client=client)
+    assert refreshed["source"] == "automatic"
+    assert refreshed["rate"] == Decimal("91.250000")
+    client.get_rub_per_usdt.assert_awaited_once()
+
+    client.reset_mock()
+    await set_fx_policy(
+        db_session,
+        automatic_enabled=False,
+        rate=Decimal("97.500000"),
+        actor="999",
+        reason="Manual mode",
+    )
+    manual = await refresh_fx_for_invoice(db_session, client=client)
+    assert manual["source"] == "manual"
+    assert manual["rate"] == Decimal("97.500000")
+    client.get_rub_per_usdt.assert_not_awaited()
 
 
 async def test_incident_repeat_mute_recovery_and_new_episode(db_session, monkeypatch):

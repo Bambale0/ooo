@@ -174,3 +174,87 @@ Acceptance criteria:
 5. [ ] Run CI for the exact branch SHA; fix failures before completion.
 6. [ ] Review diff/requirements and open PR with verification evidence.
 
+
+
+# FX policy + inference rejection diagnostics — 2026-10-02
+
+Baseline: `a919f0a9699ca9a6d66ea403c60b4807a5d8c355` (`main`).
+Branch: `fix/fx-policy-and-inference-diagnostics`.
+
+## User outcome and acceptance criteria
+
+1. Crypto Pay exchange-rate lookup must happen only while a new invoice is being
+   created. Ordinary generation pricing, catalog reads, admin views and payment
+   credit/reconciliation must not call the external exchange-rate endpoint.
+2. Admin must be able to switch FX policy between automatic and manual mode and
+   set the manual RUB/USDT rate durably. Automatic mode refreshes the rate at
+   invoice creation and persists that snapshot; manual mode never calls the
+   exchange-rate endpoint.
+3. Each invoice must keep the FX snapshot captured for its creation so later credit
+   and coverage accounting use the same rate instead of fetching a new one.
+4. Native inference rejections must be queryable by safe identifiers
+   `partner_id` and `api_key_id`, with a stable failure stage and public error
+   code that distinguishes request validation, balance, provider-capital/pricing
+   admission and upstream provider rejection.
+5. No API key values, prompts, reference URLs, provider response bodies or other
+   secrets may enter diagnostics.
+
+## Evidence / root cause
+
+- `current_fx()` currently invokes Crypto Pay `getExchangeRates` whenever the
+  latest automatic snapshot is older than 60 seconds. It is called by generation
+  admission and catalog paths, so normal inference traffic can refresh external FX.
+- Telegram admin supports only a manual *fallback*; automatic mode always has
+  priority and cannot be disabled.
+- Payment credit calls `current_fx()` again, so the coverage rate is not pinned to
+  invoice creation.
+- Pre-generation failures (validation, reserve/admission) do not currently emit a
+  structured event containing both partner/API-key identity and failure stage.
+  Provider diagnostics start only after a generation/attempt already exists.
+
+## Architecture / migration / safety
+
+- Extend the existing append-only `fx_fallback_settings` history with an
+  `automatic_enabled` flag instead of creating a second configuration source.
+- Add nullable `payment_invoices.fx_snapshot` for immutable per-invoice provenance.
+  Legacy invoices without a snapshot use the current persisted/configured rate once
+  at credit time, without network I/O, and persist that fallback snapshot.
+- Existing ledger entries remain append-only. No historical financial row is rewritten.
+- Diagnostics use UUIDs/enums/counts only; raw request bodies and secrets are excluded.
+- No paid production request is required for verification.
+
+## Skills applied
+
+- `systematic-debugging`: evidence first; separate balance, provider and validation paths.
+- `python-fastapi-development`: async SQLAlchemy/FastAPI patterns and migration safety.
+- `python-testing-patterns`: focused regression tests for FX and diagnostics.
+- `observability-and-instrumentation`: stable structured events with safe correlation fields.
+- `verification-before-completion`: exact-SHA CI and production smoke before completion claims.
+
+## Steps
+
+1. [x] Inspect production evidence and current FX/inference paths.
+2. [x] Add regression tests for invoice-scoped FX and rejection tracing.
+3. [x] Implement FX policy, invoice snapshots, admin controls and migration.
+4. [x] Implement safe rejection telemetry and provider correlation.
+5. [x] Run focused/full CI through migration/schema/test/security/build gates.
+6. [ ] Review diff, merge through PR and deploy exact verified SHA.
+7. [ ] Verify production readiness and read-only diagnostics after deployment.
+
+
+## Verification before final merge
+
+- Product brief sections 31–32 and implementation FX policy were updated to the
+  explicit 2026-10-02 decision: external exchange-rate lookup only at invoice
+  creation; manual override persists until explicitly disabled.
+- Initial test-first PR run exposed test/lint issues before implementation was
+  complete; no completion claim was made from that run.
+- CI run #221 for code SHA `aa133a88d1a7de0b6794f49b1d43765c57e656f6`
+  passed all gates before the documentation alignment commit:
+  - Ruff, dependency audit, SAST and secret scan: PASS.
+  - Alembic upgrade and ORM schema comparison: PASS.
+  - Pytest: **719 passed in 49.98s**.
+  - Encrypted backup/restore and WAL PITR: PASS.
+  - Production Nginx validation and production image build: PASS.
+- A final exact-SHA CI run is required after these documentation/spec commits
+  before the PR can be marked ready and merged.

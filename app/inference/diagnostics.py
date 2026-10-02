@@ -16,6 +16,43 @@ from app.providers.models import ProviderAttempt
 logger = logging.getLogger(__name__)
 
 
+def log_rejection(
+    *,
+    trace_id: str,
+    partner_id: str,
+    api_key_id: str,
+    protocol: str,
+    failure_stage: str,
+    error_code: str,
+    http_status: int,
+    model: str | None = None,
+    generation_id: str | None = None,
+    attempt_id: str | None = None,
+    upstream_status: int | None = None,
+) -> None:
+    """One safe, queryable event for every public inference rejection."""
+
+    event: dict[str, str | int] = {
+        "trace_id": trace_id,
+        "partner_id": partner_id,
+        "api_key_id": api_key_id,
+        "protocol": protocol,
+        "failure_stage": failure_stage,
+        "error_code": error_code,
+        "http_status": http_status,
+    }
+    if isinstance(model, str) and re.fullmatch(r"[A-Za-z0-9._:/-]{1,120}", model):
+        event["model"] = model
+    if generation_id:
+        event["generation_id"] = generation_id
+    if attempt_id:
+        event["attempt_id"] = attempt_id
+    if isinstance(upstream_status, int):
+        event["upstream_status"] = upstream_status
+    logger.warning("native_inference_rejected", extra=event)
+
+
+
 @dataclass
 class NativeRequestTrace:
     context: dict[str, str | int]
@@ -76,6 +113,25 @@ class NativeRequestTrace:
             attempt.raw_error = json.dumps(event, separators=(",", ":"))
         logger.log(
             logging.INFO if response.is_success else logging.WARNING, "native_inference_upstream_headers", extra=event
+        )
+
+    def rejected(self, *, error_code: str, http_status: int) -> None:
+        log_rejection(
+            trace_id=str(self.context["trace_id"]),
+            partner_id=str(self.context["partner_id"]),
+            api_key_id=str(self.context["api_key_id"]),
+            protocol=str(self.context["protocol"]),
+            model=str(self.context["model"]),
+            failure_stage="provider_response",
+            error_code=error_code,
+            http_status=http_status,
+            generation_id=str(self.context["generation_id"]),
+            attempt_id=str(self.context["attempt_id"]),
+            upstream_status=(
+                int(self.response_context["upstream_status"])
+                if "upstream_status" in self.response_context
+                else None
+            ),
         )
 
     def failed(self, attempt: ProviderAttempt, error: Exception, *, phase: str) -> None:

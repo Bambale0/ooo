@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.database import Base
@@ -59,6 +59,7 @@ class FxFallbackSetting(Base):
     __tablename__ = "fx_fallback_settings"
     id: Mapped[str] = uuid_pk()
     rate: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
+    automatic_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     actor: Mapped[str] = mapped_column(String(64), nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[object] = mapped_column(

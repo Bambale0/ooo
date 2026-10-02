@@ -1,7 +1,7 @@
 """provider capability fallback cost ceiling
 
-Revision ID: 20261002_0023
-Revises: 20260930_0022
+Revision ID: 20261002_0024
+Revises: 20261002_0023
 Create Date: 2026-10-02
 """
 
@@ -9,8 +9,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision = "20261002_0023"
-down_revision = "20260930_0022"
+revision = "20261002_0024"
+down_revision = "20261002_0023"
 branch_labels = None
 depends_on = None
 
