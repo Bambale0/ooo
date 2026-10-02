@@ -200,7 +200,7 @@ async def show_admin_partners(event, db, dialog, page: int = 0, *, search: dict 
     require_admin(event)
     if search is None and dialog.state == "admin_partner_browse":
         search = dialog.data.get("search")
-    query = partner_query().where(Partner.status != "deleted")
+    query = partner_query()
     condition = _search_filter(search)
     if condition is not None:
         query = query.where(condition)
@@ -250,7 +250,7 @@ async def search_admin_partners(event, db, dialog, value: str) -> None:
             keyboard(back="admin_partners:0"),
         )
         return
-    query = partner_query().where(Partner.status != "deleted")
+    query = partner_query()
     rows = (await db.execute(query.where(_search_filter(search)).limit(2))).all()
     if len(rows) == 1 and search["field"] != "telegram_username":
         await show_partner_card(event, db, dialog, rows[0][0].id)
@@ -299,13 +299,18 @@ async def show_partner_card(event, db, dialog, partner_id: str) -> None:
         ("Генерации", f"admin_partner_gens:{partner.id}"),
         ("Ledger", f"admin_partner_ledger:{partner.id}"),
         ("Доступ к моделям", f"admin_partner_models:{partner.id}"),
-        ("Корректировать баланс", f"admin_partner_adjust:{partner.id}"),
-        (
-            "Отключить" if partner.status == "active" else "Включить",
-            f"admin_{'disable' if partner.status == 'active' else 'enable'}:{partner.id}",
-        ),
-        ("Перенести Telegram ID", f"admin_transfer:{partner.id}"),
     ]
+    if partner.status != "deleted":
+        buttons.extend(
+            [
+                ("Корректировать баланс", f"admin_partner_adjust:{partner.id}"),
+                (
+                    "Отключить" if partner.status == "active" else "Включить",
+                    f"admin_{'disable' if partner.status == 'active' else 'enable'}:{partner.id}",
+                ),
+                ("Перенести Telegram ID", f"admin_transfer:{partner.id}"),
+            ]
+        )
     await show(event, text, keyboard(*buttons, back="admin_partners:0"))
 
 
@@ -442,7 +447,7 @@ async def show_partner_ledger(event, db, data: str) -> None:
     for row in rows[:DETAIL_PAGE_SIZE]:
         lines.append(
             f"{row.operation_type} · {row.amount_rub:+.2f} ₽ → {row.balance_after_rub:.2f} ₽\n"
-            f"{row.description or 'без описания'} · {_date(row.created_at)}"
+            f"{(row.description or 'без описания')[:180]} · {_date(row.created_at)}"
         )
     if len(lines) == 1:
         lines.append("Операций ledger нет.")
@@ -467,7 +472,7 @@ async def show_partner_models(event, db, data: str) -> None:
     lines = ["Доступ к restricted-моделям"]
     for grant, model in rows[:DETAIL_PAGE_SIZE]:
         state = "активен" if grant.revoked_at is None else f"отозван {_date(grant.revoked_at)}"
-        lines.append(f"{model.slug} · {state}\n{grant.reason} · {_date(grant.created_at)}")
+        lines.append(f"{model.slug} · {state}\n{grant.reason[:180]} · {_date(grant.created_at)}")
     if len(lines) == 1:
         lines.append("Индивидуальных доступов нет.")
     buttons = _section_navigation("admin_partner_models", partner_id, page, len(rows) > DETAIL_PAGE_SIZE)
