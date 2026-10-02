@@ -9,7 +9,9 @@ from sqlalchemy import create_engine, func, inspect, select, text
 from test_telegram_cabinet import cabinet as cabinet_fixture
 from test_telegram_cabinet import partner
 
+from app.accounts.models import ApiKey
 from app.billing.models import LedgerEntry
+from app.providers.models import ProviderCredential
 from app.telegram.models import BotAction, BotDialog
 
 cabinet = cabinet_fixture
@@ -186,3 +188,86 @@ def test_username_migration_preserves_dialog_and_can_be_rolled_back():
                 column["name"] for column in inspect(connection).get_columns("bot_dialogs")
             }
     engine.dispose()
+
+
+
+async def test_admin_partner_management_lists_searches_and_opens_card(cabinet, db_session):
+    feed, _ = cabinet
+    owner = await partner(db_session)
+    owner.company_name = "Acme Studio"
+    owner.project_name = "Video Factory"
+    db_session.add(BotDialog(telegram_id=owner.telegram_id, telegram_username="acme_owner"))
+    await db_session.commit()
+
+    menu = await feed(user=999, callback="admin_menu")
+    assert "admin_partners:0" in button_data(menu)
+
+    listing = await feed(user=999, callback="admin_partners:0")
+    assert f"admin_partner_view:{owner.id}" in button_data(listing)
+    assert "Поиск" in listing[-1].text
+
+    await feed(user=999, callback="admin_partners_search")
+    card = await feed(user=999, text="Acme Studio")
+    assert owner.id in card[-1].text
+    assert "Video Factory" in card[-1].text
+    assert "@acme_owner" in card[-1].text
+    assert "Баланс: 1000.00 ₽" in card[-1].text
+    assert f"admin_partner_adjust:{owner.id}" in button_data(card)
+    assert f"admin_disable:{owner.id}" in button_data(card)
+
+
+async def test_admin_partner_card_exposes_operational_views_without_secrets(cabinet, db_session):
+    feed, _ = cabinet
+    owner = await partner(db_session)
+    db_session.add(
+        ApiKey(
+            partner_id=owner.id,
+            name="Production",
+            key_hash="a" * 64,
+            key_prefix="nr_live_123",
+            webhook_url="https://example.org/hook",
+        )
+    )
+    db_session.add(
+        ProviderCredential(
+            provider="argolink",
+            label="Primary",
+            key_hash="b" * 64,
+            key_prefix="argo_test",
+            encrypted_api_key="ENCRYPTED_SECRET_MUST_NOT_RENDER",
+            partner_id=owner.id,
+        )
+    )
+    await db_session.commit()
+
+    card = await feed(user=999, callback=f"admin_partner_view:{owner.id}")
+    assert "API-ключей: 1" in card[-1].text
+    assert "ключей поставщика: 1" in card[-1].text
+
+    keys = await feed(user=999, callback=f"admin_partner_keys:{owner.id}")
+    assert "Production" in keys[-1].text
+    assert "nr_live_123" in keys[-1].text
+    assert "a" * 64 not in keys[-1].text
+
+    credentials = await feed(user=999, callback=f"admin_partner_creds:{owner.id}")
+    assert "argolink" in credentials[-1].text
+    assert "argo_test" in credentials[-1].text
+    assert "ENCRYPTED_SECRET_MUST_NOT_RENDER" not in credentials[-1].text
+    assert "b" * 64 not in credentials[-1].text
+
+
+@pytest.mark.parametrize(
+    "callback",
+    [
+        "admin_partners:0",
+        "admin_partners_search",
+        "admin_partner_view:00000000-0000-0000-0000-000000000001",
+        "admin_partner_keys:00000000-0000-0000-0000-000000000001",
+    ],
+)
+async def test_partner_management_denies_nonadmin(cabinet, db_session, callback):
+    feed, _ = cabinet
+    owner = await partner(db_session)
+    methods = await feed(user=456, callback=callback)
+    assert all(owner.telegram_id not in (getattr(method, "text", "") or "") for method in methods)
+    assert (await db_session.get(BotDialog, "456")) is None
