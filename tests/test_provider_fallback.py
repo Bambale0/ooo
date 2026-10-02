@@ -311,3 +311,123 @@ async def test_primary_success_refunds_fallback_only_cost_reserve(db_session, mo
     assert generation.status == "completed"
     assert Decimal(generation.actual_provider_cost_usdt) == Decimal("0.85")
     assert Decimal(partner.cost_coverage_rub) == Decimal("915.00")
+
+
+async def test_admin_dispatch_uses_routed_fallback_provider(
+    client,
+    db_session,
+    admin_headers,
+    monkeypatch,
+):
+    partner = Partner(
+        telegram_id="admin-fallback-dispatch",
+        company_name="Admin fallback",
+        project_name="Admin fallback",
+        status="active",
+    )
+    db_session.add(partner)
+    await db_session.flush()
+    generation = Generation(
+        partner_id=partner.id,
+        model_id="admin-fallback-model",
+        model_slug="seedance-2.5",
+        mode="videos/generations",
+        resolution="480p",
+        duration_seconds=4,
+        idempotency_key="admin-fallback-dispatch",
+        partner_price_rub=Decimal("100"),
+        provider_cost_usdt_snapshot=Decimal("0.312"),
+        provider_cost_reserve_usdt=Decimal("0.412"),
+        rub_per_usdt_snapshot=Decimal("80"),
+        provider_cost_reserve_rub=Decimal("32.96"),
+        prompt="admin fallback",
+        request_payload={"fallback_provider": "asale"},
+        status="queued",
+    )
+    db_session.add(generation)
+    await db_session.flush()
+
+    async def forbidden_primary(*args, **kwargs):
+        raise AssertionError("admin dispatch must not hardcode the primary provider")
+
+    async def routed(db, current):
+        assert current.id == generation.id
+        current.status = "sent_to_provider"
+        attempt = ProviderAttempt(
+            generation_id=current.id,
+            provider="asale",
+            provider_task_id="asale-admin-task",
+            status="accepted",
+        )
+        db.add(attempt)
+        await db.flush()
+        return attempt
+
+    monkeypatch.setattr(
+        "app.generations.router.dispatch_generation_to_provider",
+        forbidden_primary,
+        raising=False,
+    )
+    monkeypatch.setattr("app.generations.router.dispatch_generation_with_routing", routed, raising=False)
+
+    response = await client.post(
+        f"/api/v1/generations/{generation.id}/dispatch",
+        headers=admin_headers,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "sent_to_provider"
+
+
+async def test_admin_poll_uses_active_fallback_attempt(
+    client,
+    db_session,
+    admin_headers,
+    monkeypatch,
+):
+    partner = Partner(
+        telegram_id="admin-fallback-poll",
+        company_name="Admin fallback poll",
+        project_name="Admin fallback poll",
+        status="active",
+    )
+    db_session.add(partner)
+    await db_session.flush()
+    generation = Generation(
+        partner_id=partner.id,
+        model_id="admin-fallback-poll-model",
+        model_slug="seedance-2.5",
+        mode="videos/generations",
+        resolution="480p",
+        duration_seconds=4,
+        idempotency_key="admin-fallback-poll",
+        partner_price_rub=Decimal("100"),
+        provider_cost_usdt_snapshot=Decimal("0.312"),
+        provider_cost_reserve_usdt=Decimal("0.412"),
+        rub_per_usdt_snapshot=Decimal("80"),
+        provider_cost_reserve_rub=Decimal("32.96"),
+        prompt="admin fallback poll",
+        request_payload={"fallback_provider": "asale"},
+        status="processing",
+    )
+    db_session.add(generation)
+    await db_session.flush()
+
+    async def active_provider(db, generation_id):
+        assert generation_id == generation.id
+        return "asale"
+
+    async def poll(db, current, provider):
+        assert provider == "asale"
+        current.status = "processing"
+        await db.flush()
+        return current
+
+    monkeypatch.setattr("app.generations.router.active_provider_for_generation", active_provider, raising=False)
+    monkeypatch.setattr("app.generations.router.poll_generation_provider", poll)
+
+    response = await client.post(
+        f"/api/v1/generations/{generation.id}/poll-provider",
+        headers=admin_headers,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "processing"

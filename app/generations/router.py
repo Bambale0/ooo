@@ -24,7 +24,8 @@ from app.generations.schemas import (
 )
 from app.generations.service import (
     PRIMARY_PROVIDER,
-    dispatch_generation_to_provider,
+    active_provider_for_generation,
+    dispatch_generation_with_routing,
     fallback_cost_ceiling_for_request,
     has_active_provider_credential,
     has_provider_capability,
@@ -214,7 +215,7 @@ async def dispatch_generation(generation_id: str, db: DbSession) -> ProviderDisp
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="generation_not_found")
     if generation.status not in {"queued", "sent_to_provider"}:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="generation_not_dispatchable")
-    attempt = await dispatch_generation_to_provider(db, generation, PRIMARY_PROVIDER)
+    attempt = await dispatch_generation_with_routing(db, generation)
     if attempt is None:
         raise HTTPException(503, "provider_temporarily_unavailable", headers={"Retry-After": "60"})
     await db.refresh(generation)
@@ -237,7 +238,10 @@ async def poll_generation(generation_id: str, db: DbSession) -> ProviderPollRead
     ).scalar_one_or_none()
     if generation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="generation_not_found")
-    generation = await poll_generation_provider(db, generation, PRIMARY_PROVIDER)
+    provider = await active_provider_for_generation(db, generation.id)
+    if provider is None:
+        provider = (generation.request_payload or {}).get("fallback_provider") or PRIMARY_PROVIDER
+    generation = await poll_generation_provider(db, generation, provider)
     return ProviderPollRead(
         generation_id=generation.id,
         status=generation.status,
