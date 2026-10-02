@@ -6,10 +6,7 @@ from sqlalchemy import select
 from app.api.dependencies import DbSession, require_admin
 from app.catalog.access import grant_model_access, revoke_model_access
 from app.catalog.models import Model, PartnerModelGrant, PartnerPrice, PartnerPriceHistory
-from app.catalog.pricing import (
-    create_new_partner_prices_with_margin,
-    snapshot_global_prices_for_partner,
-)
+from app.catalog.pricing import snapshot_global_prices_for_partner
 from app.catalog.procurement import supports_free_rate
 from app.catalog.schemas import (
     ModelCreate,
