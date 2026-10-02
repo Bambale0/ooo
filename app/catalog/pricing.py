@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.accounts.models import Partner
-from app.catalog.models import Model, PartnerPrice, PartnerPriceHistory
+from app.catalog.models import PartnerPrice, PartnerPriceHistory
 
 
 def calculate_new_partner_price(provider_cost_usdt: Decimal, fx_rate: Decimal) -> Decimal:
