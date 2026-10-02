@@ -133,3 +133,20 @@ async def test_asale_no_supply_is_retryable():
     assert caught.value.public_code == "provider_temporarily_unavailable"
     assert caught.value.raw_error == "asale_no_supply"
     assert caught.value.retryable is True
+
+
+@pytest.mark.parametrize("status,code", [(401, "unauthorized"), (402, "payment_required"), (403, "forbidden")])
+async def test_asale_definite_account_rejection_is_not_ambiguous_submission(status, code):
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, json={"error": {"code": code, "message": code}})
+
+    async with httpx.AsyncClient(
+        base_url="https://gw.asale.ai",
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        adapter = AsaleAdapter(api_key="sk-asale-test", client=client)
+        with pytest.raises(ProviderAdapterError) as caught:
+            await adapter.submit_generation(request())
+
+    assert caught.value.public_code == "provider_rejected_request"
+    assert caught.value.retryable is False

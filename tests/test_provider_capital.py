@@ -11,12 +11,14 @@ from test_native_inference import setup as setup_native
 from app.accounts.models import Partner
 from app.billing.capital import capital_state, require_provider_capital
 from app.billing.models import CoverageLedgerEntry, LedgerEntry
+from app.catalog.models import Model
 from app.generations.models import Generation
 from app.infrastructure.config import get_settings
 from app.infrastructure.retry import utc_now
 from app.payments.models import PaymentInvoice
 from app.providers.argolink import ArgoLinkAdapter
 from app.providers.base import ProviderAdapterError
+from app.providers.models import ProviderModelCapability
 
 # The shared fixture replaces this method to keep unrelated tests offline.
 ACTUAL_PREPAID_BALANCE = ArgoLinkAdapter.prepaid_balance_usdt
@@ -351,3 +353,115 @@ async def test_postgres_serializes_provider_reservations_across_partner_keys(mon
             await db.execute(delete(Partner).where(Partner.id.in_(ids)))
             await db.commit()
         await engine.dispose()
+
+
+async def test_active_provider_capital_uses_explicit_fallback_reserve(db_session, monkeypatch):
+    partner_id, _ = await _seed_generation_preflight(db_session)
+    other = Partner(telegram_id="fallback-reserve-partner", company_name="Fallback", project_name="Fallback")
+    db_session.add(other)
+    await db_session.flush()
+    generation = Generation(
+        partner_id=other.id,
+        model_id="fallback-reserve-model",
+        model_slug="seedance-2.5",
+        mode="default",
+        resolution="480p",
+        status="queued",
+        idempotency_key="fallback-reserve-capital",
+        partner_price_rub=Decimal("200"),
+        provider_cost_usdt_snapshot=Decimal("1.25"),
+        prompt="test",
+    )
+    generation.provider_cost_reserve_usdt = Decimal("1.50")
+    db_session.add(generation)
+    await db_session.flush()
+
+    monkeypatch.setattr(ArgoLinkAdapter, "prepaid_balance_usdt", AsyncMock(return_value=Decimal("2")))
+    with pytest.raises(HTTPException) as rejected:
+        await require_provider_capital(db_session, Decimal(".60"), partner_id=partner_id)
+    assert rejected.value.status_code == 503
+    await require_provider_capital(db_session, Decimal(".50"), partner_id=partner_id)
+
+
+async def test_generation_admission_reserves_profitable_asale_fallback_ceiling(client, db_session, monkeypatch):
+    partner_id, token = await _seed_generation_preflight(db_session)
+    model = (await db_session.execute(select(Model).where(Model.slug == "seedance-2.5"))).scalar_one()
+    db_session.add(
+        ProviderModelCapability(
+            provider="asale",
+            model_id=model.id,
+            mode="text_to_video",
+            resolution="720p",
+            is_active=True,
+            provider_cost_ceiling_usdt=Decimal("0.190000"),
+            billing_unit="second",
+        )
+    )
+    await db_session.commit()
+    monkeypatch.setattr(get_settings(), "asale_api_key", "sk-asale-platform")
+    monkeypatch.setattr(ArgoLinkAdapter, "prepaid_balance_usdt", AsyncMock(return_value=Decimal("100")))
+
+    response = await client.post(
+        "/api/v1/generations",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "model_slug": "seedance-2.5",
+            "mode": "text_to_video",
+            "resolution": "720p",
+            "duration_seconds": 5,
+            "prompt": "fallback reserve",
+            "idempotency_key": "fallback-reserve-admission",
+        },
+    )
+    assert response.status_code == 202, response.text
+
+    generation = await db_session.get(Generation, response.json()["id"])
+    assert generation is not None
+    assert Decimal(generation.provider_cost_usdt_snapshot) == Decimal("0.850000")
+    assert Decimal(generation.provider_cost_reserve_usdt) == Decimal("0.950000")
+    assert Decimal(generation.provider_cost_reserve_rub) == Decimal("95.00")
+
+
+async def test_native_video_admission_reserves_profitable_asale_fallback_ceiling(client, db_session, monkeypatch):
+    def no_submission(request):
+        raise AssertionError("Durable video admission must not submit synchronously")
+
+    partner, headers, upstream = await setup_native(
+        db_session,
+        monkeypatch,
+        no_submission,
+        model="seedance-2.5",
+        category="video",
+        rates=[("default", "480p", "second", Decimal("20"), Decimal(".078"))],
+    )
+    try:
+        model = (await db_session.execute(select(Model).where(Model.slug == "seedance-2.5"))).scalar_one()
+        db_session.add(
+            ProviderModelCapability(
+                provider="asale",
+                model_id=model.id,
+                mode="default",
+                resolution="480p",
+                is_active=True,
+                provider_cost_ceiling_usdt=Decimal("0.090000"),
+                billing_unit="second",
+            )
+        )
+        await db_session.commit()
+        monkeypatch.setattr(get_settings(), "asale_api_key", "sk-asale-platform")
+        monkeypatch.setattr(ArgoLinkAdapter, "prepaid_balance_usdt", AsyncMock(return_value=Decimal("100")))
+
+        response = await client.post(
+            "/v1/videos/generations",
+            headers=headers,
+            json={"model": "seedance-2.5", "prompt": "native fallback reserve", "duration": 4, "resolution": "480p"},
+        )
+        assert response.status_code == 202, response.text
+
+        generation = await db_session.get(Generation, response.json()["request_id"])
+        assert generation is not None
+        assert Decimal(generation.provider_cost_usdt_snapshot) == Decimal("0.312000")
+        assert Decimal(generation.provider_cost_reserve_usdt) == Decimal("0.360000")
+        assert Decimal(generation.provider_cost_reserve_rub) == Decimal("36.00")
+    finally:
+        await upstream.aclose()

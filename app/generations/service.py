@@ -71,16 +71,14 @@ def _provider_request_for_generation(generation: Generation) -> ProviderGenerati
     )
 
 
-async def select_fallback_provider(
+async def fallback_cost_ceiling_for_request(
     db: AsyncSession,
-    generation: Generation,
     *,
-    after_provider: str,
+    partner_id: str,
+    model_id: str,
+    request: ProviderGenerationRequest,
 ) -> tuple[str, Decimal] | None:
-    if after_provider != PRIMARY_PROVIDER:
-        return None
-    request = _provider_request_for_generation(generation)
-    capability_mode = "default" if generation.mode == "videos/generations" else generation.mode
+    capability_mode = "default" if request.mode == "videos/generations" else request.mode
     for provider in FALLBACK_PROVIDERS:
         if provider == "asale" and not asale_supports_request(request):
             continue
@@ -88,9 +86,9 @@ async def select_fallback_provider(
             await db.execute(
                 select(ProviderModelCapability).where(
                     ProviderModelCapability.provider == provider,
-                    ProviderModelCapability.model_id == generation.model_id,
+                    ProviderModelCapability.model_id == model_id,
                     ProviderModelCapability.mode == capability_mode,
-                    ProviderModelCapability.resolution == generation.resolution,
+                    ProviderModelCapability.resolution == request.resolution,
                     ProviderModelCapability.is_active.is_(True),
                 )
             )
@@ -101,21 +99,47 @@ async def select_fallback_provider(
             or capability.billing_unit is None
         ):
             continue
-        if not await has_provider_runtime_credential(db, generation.partner_id, provider):
+        if not await has_provider_runtime_credential(db, partner_id, provider):
             continue
         if capability.billing_unit == "second":
-            total_cost = Decimal(capability.provider_cost_ceiling_usdt) * Decimal(generation.duration_seconds)
+            total_cost = Decimal(capability.provider_cost_ceiling_usdt) * Decimal(request.duration_seconds)
         elif capability.billing_unit == "generation":
             total_cost = Decimal(capability.provider_cost_ceiling_usdt)
         else:
             continue
-        # Never under-reserve working capital during automatic failover.
-        if total_cost < 0 or total_cost > Decimal(generation.provider_cost_usdt_snapshot):
-            continue
-        if total_cost * Decimal(generation.rub_per_usdt_snapshot) > Decimal(generation.partner_price_rub):
+        if total_cost < 0:
             continue
         return provider, total_cost
     return None
+
+
+async def select_fallback_provider(
+    db: AsyncSession,
+    generation: Generation,
+    *,
+    after_provider: str,
+) -> tuple[str, Decimal] | None:
+    if after_provider != PRIMARY_PROVIDER:
+        return None
+    selected = await fallback_cost_ceiling_for_request(
+        db,
+        partner_id=generation.partner_id,
+        model_id=generation.model_id,
+        request=_provider_request_for_generation(generation),
+    )
+    if selected is None:
+        return None
+    provider, total_cost = selected
+    reserve = (
+        Decimal(generation.provider_cost_reserve_usdt)
+        if generation.provider_cost_reserve_usdt is not None
+        else Decimal(generation.provider_cost_usdt_snapshot)
+    )
+    if total_cost > reserve:
+        return None
+    if total_cost * Decimal(generation.rub_per_usdt_snapshot) > Decimal(generation.partner_price_rub):
+        return None
+    return provider, total_cost
 
 
 async def dispatch_generation_with_routing(
@@ -434,6 +458,13 @@ async def poll_generation_provider(
             await settle_generation_reserves(db, generation)
             if provider == "asale":
                 await _settle_fallback_provider_cost(db, generation, provider)
+            else:
+                await _settle_provider_cost_reserve(
+                    db,
+                    generation,
+                    provider=provider,
+                    actual_cost=Decimal(generation.provider_cost_usdt_snapshot),
+                )
         if result.result_url:
             await create_provider_ready_asset(
                 db=db,
@@ -537,13 +568,54 @@ async def _queue_fallback_after_safe_failure(
     return True
 
 
+async def _settle_provider_cost_reserve(
+    db: AsyncSession,
+    generation: Generation,
+    *,
+    provider: str,
+    actual_cost: Decimal,
+) -> None:
+    if generation.actual_provider_cost_usdt is not None:
+        return
+    reserve = (
+        Decimal(generation.provider_cost_reserve_usdt)
+        if generation.provider_cost_reserve_usdt is not None
+        else Decimal(generation.provider_cost_usdt_snapshot)
+    )
+    cost = Decimal(actual_cost)
+    if not cost.is_finite() or cost < 0 or cost > reserve:
+        generation.status = "reconciliation_required"
+        generation.public_error_code = "usage_reconciliation_required"
+        return
+    actual_rub = (cost * Decimal(generation.rub_per_usdt_snapshot)).quantize(
+        Decimal("0.01"),
+        rounding=ROUND_HALF_UP,
+    )
+    refund = Decimal(generation.provider_cost_reserve_rub) - actual_rub
+    if refund < 0:
+        generation.status = "reconciliation_required"
+        generation.public_error_code = "usage_reconciliation_required"
+        return
+    if refund > 0:
+        partner = await lock_partner_for_update(db, generation.partner_id)
+        await apply_cost_coverage_change(
+            db=db,
+            partner=partner,
+            amount_rub=refund,
+            operation_type="provider_cost_reserve_adjustment",
+            idempotency_key=f"provider-cost-settlement:{generation.id}",
+            generation_id=generation.id,
+            description=f"Settled provider cost reserve for {provider}",
+            allow_negative=False,
+        )
+    generation.actual_provider_cost_usdt = cost
+
+
 async def _settle_fallback_provider_cost(
     db: AsyncSession,
     generation: Generation,
     provider: str,
 ) -> None:
-    if generation.actual_provider_cost_usdt is not None:
-        return
     payload = generation.request_payload or {}
     if payload.get("fallback_provider") != provider:
         return
@@ -558,28 +630,12 @@ async def _settle_fallback_provider_cost(
         generation.status = "reconciliation_required"
         generation.public_error_code = "usage_reconciliation_required"
         return
-    if not cost.is_finite() or cost < 0 or cost > Decimal(generation.provider_cost_usdt_snapshot):
-        generation.status = "reconciliation_required"
-        generation.public_error_code = "usage_reconciliation_required"
-        return
-    fallback_rub = (cost * Decimal(generation.rub_per_usdt_snapshot)).quantize(
-        Decimal("0.01"),
-        rounding=ROUND_HALF_UP,
+    await _settle_provider_cost_reserve(
+        db,
+        generation,
+        provider=provider,
+        actual_cost=cost,
     )
-    refund = Decimal(generation.provider_cost_reserve_rub) - fallback_rub
-    if refund > 0:
-        partner = await lock_partner_for_update(db, generation.partner_id)
-        await apply_cost_coverage_change(
-            db=db,
-            partner=partner,
-            amount_rub=refund,
-            operation_type="provider_fallback_cost_adjustment",
-            idempotency_key=f"provider-fallback-cost:{generation.id}",
-            generation_id=generation.id,
-            description=f"Conservative fallback procurement settlement for {provider}",
-            allow_negative=False,
-        )
-    generation.actual_provider_cost_usdt = cost
 
 
 def _schedule_generation_retry(generation: Generation, attempt: ProviderAttempt, result: ProviderPollResult) -> bool:

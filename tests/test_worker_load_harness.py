@@ -1,7 +1,13 @@
+from decimal import Decimal
+
 import httpx
 import pytest
+from sqlalchemy import select
 
-from ops.load import provider_stub
+from app.accounts.models import Partner
+from app.billing.models import CoverageLedgerEntry, LedgerEntry
+from app.generations.models import Generation
+from ops.load import provider_stub, worker_seed
 from ops.load.worker_seed import ACK, _assert_safe_worker_environment
 
 
@@ -81,3 +87,69 @@ def test_worker_fixture_requires_loopback_provider_and_explicit_ack(monkeypatch)
     finally:
         settings.app_env = original_env
         settings.argolink_base_url = original_url
+
+
+async def test_worker_clean_removes_generation_ledgers_before_partner(db_session, monkeypatch):
+    partner = Partner(
+        telegram_id="worker-load-clean-ledgers",
+        company_name="Worker load cleanup",
+        project_name="Worker load cleanup",
+    )
+    db_session.add(partner)
+    await db_session.flush()
+    generation = Generation(
+        partner_id=partner.id,
+        model_id="worker-load-model",
+        model_slug="seedance-2.5",
+        mode="text_to_video",
+        resolution="720p",
+        duration_seconds=5,
+        idempotency_key="worker-load-clean-ledgers",
+        partner_price_rub=Decimal("1.00"),
+        provider_cost_usdt_snapshot=Decimal("0.01"),
+        provider_cost_reserve_usdt=Decimal("0.01"),
+        rub_per_usdt_snapshot=Decimal("100"),
+        provider_cost_reserve_rub=Decimal("1.00"),
+        prompt="cleanup",
+        status="completed",
+    )
+    db_session.add(generation)
+    await db_session.flush()
+    db_session.add_all(
+        [
+            CoverageLedgerEntry(
+                partner_id=partner.id,
+                operation_type="provider_cost_reserve_adjustment",
+                amount_rub=Decimal("0.01"),
+                coverage_after_rub=Decimal("0.01"),
+                idempotency_key="worker-load-clean-coverage",
+                generation_id=generation.id,
+            ),
+            LedgerEntry(
+                partner_id=partner.id,
+                operation_type="generation_usage_adjustment",
+                amount_rub=Decimal("0.01"),
+                balance_after_rub=Decimal("0.01"),
+                idempotency_key="worker-load-clean-retail",
+                generation_id=generation.id,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    class SessionContext:
+        async def __aenter__(self):
+            return db_session
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(worker_seed, "SessionLocal", lambda: SessionContext())
+    monkeypatch.setattr(worker_seed, "_assert_safe_worker_environment", lambda: None)
+
+    await worker_seed.clean()
+
+    assert (await db_session.execute(select(CoverageLedgerEntry))).scalars().all() == []
+    assert (await db_session.execute(select(LedgerEntry))).scalars().all() == []
+    assert (await db_session.execute(select(Generation))).scalars().all() == []
+    assert (await db_session.execute(select(Partner))).scalars().all() == []

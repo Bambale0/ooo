@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 from sqlalchemy import delete, func, select
 
 from app.accounts.models import Partner
+from app.billing.models import CoverageLedgerEntry, LedgerEntry
 from app.generations.models import Generation
 from app.infrastructure.config import get_settings
 from app.infrastructure.database import SessionLocal
@@ -196,6 +197,10 @@ async def clean() -> None:
                 await db.execute(delete(ProviderOutcome).where(ProviderOutcome.generation_id.in_(generation_ids)))
                 await db.execute(delete(MediaAsset).where(MediaAsset.generation_id.in_(generation_ids)))
                 await db.execute(delete(ProviderAttempt).where(ProviderAttempt.generation_id.in_(generation_ids)))
+                await db.execute(
+                    delete(CoverageLedgerEntry).where(CoverageLedgerEntry.generation_id.in_(generation_ids))
+                )
+                await db.execute(delete(LedgerEntry).where(LedgerEntry.generation_id.in_(generation_ids)))
                 await db.execute(delete(Generation).where(Generation.id.in_(generation_ids)))
 
             await db.execute(delete(ProviderCredential).where(ProviderCredential.partner_id.in_(partner_ids)))

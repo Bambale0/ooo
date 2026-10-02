@@ -29,6 +29,7 @@ from app.contracts.registry import (
 from app.generations.models import Generation
 from app.inference.accounting import MILLION, TOKEN_MODES, charges
 from app.infrastructure.config import get_settings
+from app.providers.base import ProviderGenerationRequest
 from app.providers.models import ProviderAttempt
 from app.providers.service import get_active_provider_credential
 
@@ -150,7 +151,7 @@ async def reserve(
         raise _admission_error(exc, "pricing") from exc
     if trial_telegram_id is not None:
         rates = {key: {**value, "retail": "0"} for key, value in rates.items()}
-    from app.generations.service import has_provider_capability
+    from app.generations.service import fallback_cost_ceiling_for_request, has_provider_capability
 
     for key in rates:
         if key == "input_reserve":
@@ -162,7 +163,44 @@ async def reserve(
     divisor = MILLION if protocol in TEXT_PROTOCOLS else Decimal(1)
     charge, cost = charges(rates, units, divisor=divisor)
     fx = fx_data["rate"]
-    coverage = (cost * fx).quantize(Decimal(".01"), rounding=ROUND_HALF_UP)
+    provider_cost_reserve_usdt = cost
+    if protocol == "videos/generations":
+        video_body = normalized_video(body)
+
+        def media_url(value) -> str | None:
+            if isinstance(value, str):
+                return value
+            if isinstance(value, dict) and isinstance(value.get("url"), str):
+                return value["url"]
+            return None
+
+        references = video_body.get("reference_images", [])
+        fallback_request = ProviderGenerationRequest(
+            generation_id="reserve",
+            native_body=body,
+            model_slug=model.slug,
+            mode=protocol,
+            resolution=resolution,
+            prompt=str(video_body.get("prompt", "")),
+            duration_seconds=int(units.get("seconds", 1)),
+            aspect_ratio=video_body.get("aspect_ratio"),
+            reference_images=tuple(
+                url
+                for item in references
+                if (url := media_url(item)) is not None
+            ),
+            start_image=media_url(video_body.get("start_image")),
+            end_image=media_url(video_body.get("end_image")),
+        )
+        fallback = await fallback_cost_ceiling_for_request(
+            db,
+            partner_id=partner.id,
+            model_id=model.id,
+            request=fallback_request,
+        )
+        if fallback is not None and fallback[1] * fx <= charge:
+            provider_cost_reserve_usdt = max(provider_cost_reserve_usdt, fallback[1])
+    coverage = (provider_cost_reserve_usdt * fx).quantize(Decimal(".01"), rounding=ROUND_HALF_UP)
     if trial_telegram_id is None and charge < coverage:
         raise InferenceAdmissionError(503, "provider_temporarily_unavailable", failure_stage="pricing")
     try:
@@ -172,7 +210,7 @@ async def reserve(
     from app.billing.capital import require_provider_capital
 
     try:
-        await require_provider_capital(db, cost, partner_id=partner.id)
+        await require_provider_capital(db, provider_cost_reserve_usdt, partner_id=partner.id)
     except HTTPException as exc:
         raise _admission_error(exc, "provider_capital") from exc
     # Native video requests are durable queue work. Sync inference has a durable
@@ -201,6 +239,7 @@ async def reserve(
         idempotency_key=idempotency_key,
         partner_price_rub=charge,
         provider_cost_usdt_snapshot=cost,
+        provider_cost_reserve_usdt=provider_cost_reserve_usdt,
         rub_per_usdt_snapshot=fx,
         provider_cost_reserve_rub=coverage,
         prompt="",
