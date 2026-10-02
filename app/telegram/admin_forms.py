@@ -390,7 +390,14 @@ async def history(event, db, data):
         rows = list((await db.execute(select(Model).order_by(Model.slug).offset(page * 3).limit(4))).scalars())
         lines = []
         for model in rows[:3]:
-            prices = (await db.execute(select(PartnerPrice).where(PartnerPrice.model_id == model.id))).scalars()
+            prices = (
+                await db.execute(
+                    select(PartnerPrice).where(
+                        PartnerPrice.model_id == model.id,
+                        PartnerPrice.partner_id.is_(None),
+                    )
+                )
+            ).scalars()
             lines.append(f"{model.slug}: {model.status}")
             lines.extend(
                 f"{p.mode}/{p.resolution}: {p.price_rub} ₽, закупка {p.provider_cost_usdt} USDT/{p.billing_unit}"
@@ -399,7 +406,10 @@ async def history(event, db, data):
             last = (
                 await db.execute(
                     select(PartnerPriceHistory)
-                    .where(PartnerPriceHistory.model_id == model.id)
+                    .where(
+                        PartnerPriceHistory.model_id == model.id,
+                        PartnerPriceHistory.partner_id.is_(None),
+                    )
                     .order_by(PartnerPriceHistory.created_at.desc())
                     .limit(3)
                 )
