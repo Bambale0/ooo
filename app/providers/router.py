@@ -139,10 +139,14 @@ async def upsert_provider_capability(
             mode=payload.mode,
             resolution=payload.resolution,
             is_active=payload.is_active,
+            provider_cost_ceiling_usdt=payload.provider_cost_ceiling_usdt,
+            billing_unit=payload.billing_unit,
         )
         db.add(capability)
     else:
         capability.is_active = payload.is_active
+        capability.provider_cost_ceiling_usdt = payload.provider_cost_ceiling_usdt
+        capability.billing_unit = payload.billing_unit
     await db.flush()
     await db.refresh(capability)
     return capability
