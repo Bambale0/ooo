@@ -107,11 +107,10 @@ async def reserve(
     credential = await get_active_provider_credential(db, partner.id, "argolink")
     if credential is None:
         raise HTTPException(503, "provider_temporarily_unavailable")
-    # Fetch partner-specific prices first, then global prices as fallback
     prices_query = select(PartnerPrice).where(
         PartnerPrice.model_id == model.id,
-        (PartnerPrice.partner_id == partner.id) | (PartnerPrice.partner_id.is_(None))
-    ).order_by(PartnerPrice.partner_id.desc().nulls_last())
+        (PartnerPrice.partner_id == partner.id) | PartnerPrice.partner_id.is_(None),
+    )
     prices = list((await db.execute(prices_query)).scalars())
     from app.billing.fx import current_fx
     from app.billing.fx import snapshot as fx_snapshot
@@ -217,8 +216,20 @@ def quote(protocol, body, prices, *, fx=None, trial=False):
     rates = {}
 
     def add(key, mode, resolution, unit):
-        # Prefer partner-specific price (partner_id NOT NULL) over global (partner_id IS NULL)
-        price = next(
+        global_price = next(
+            (
+                p
+                for p in prices
+                if p.mode == mode
+                and p.resolution == resolution
+                and p.billing_unit == unit
+                and p.partner_id is None
+            ),
+            None,
+        )
+        if global_price is None:
+            raise HTTPException(503, "provider_temporarily_unavailable")
+        override = next(
             (
                 p
                 for p in prices
@@ -229,38 +240,26 @@ def quote(protocol, body, prices, *, fx=None, trial=False):
             ),
             None,
         )
-        if price is None:
-            price = next(
-                (
-                    p
-                    for p in prices
-                    if p.mode == mode
-                    and p.resolution == resolution
-                    and p.billing_unit == unit
-                    and p.partner_id is None
-                ),
-                None,
-            )
-        if price is None:
-            raise HTTPException(503, "provider_temporarily_unavailable")
-        # Check every rate individually; expensive cached/written tokens cannot
-        # silently be sold below procurement just because the whole quote is positive.
+        retail = Decimal(override.price_rub if override is not None else global_price.price_rub)
+        cost = Decimal(global_price.provider_cost_usdt)
+        # Partner overrides freeze only RUB retail. Procurement always comes from
+        # the current global contract row so coverage cannot drift stale.
         free_rate = supports_free_rate(body["model"], mode, resolution, unit)
         if (
-            price.provider_cost_usdt < 0
-            or price.price_rub < 0
-            or (not free_rate and (price.provider_cost_usdt == 0 or price.price_rub == 0))
-            or (not trial and price.price_rub < price.provider_cost_usdt * fx)
+            cost < 0
+            or retail < 0
+            or (not free_rate and (cost == 0 or retail == 0))
+            or (not trial and retail < cost * fx)
         ):
             raise HTTPException(503, "provider_temporarily_unavailable")
         observed = OBSERVATIONS["manual_procurement_review"].get(body["model"])
         if (
             protocol == "images/edits"
             and observed
-            and price.provider_cost_usdt < Decimal(observed["observed_default_edit_usd"])
+            and cost < Decimal(observed["observed_default_edit_usd"])
         ):
             raise HTTPException(503, "provider_temporarily_unavailable")
-        rates[key] = {"retail": str(price.price_rub), "cost": str(price.provider_cost_usdt)}
+        rates[key] = {"retail": str(retail), "cost": str(cost)}
 
     if protocol in TEXT_PROTOCOLS:
 
