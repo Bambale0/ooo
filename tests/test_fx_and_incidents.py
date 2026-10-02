@@ -10,7 +10,6 @@ from app.billing.fx import refresh_fx_for_invoice, set_fx_policy
 from app.billing.incidents import mute_treasury, observe_incident
 from app.billing.models import FinancialIncident, FxRateSnapshot
 from app.infrastructure.config import get_settings
-from app.payments.crypto_pay import CryptoPayError
 from app.telegram.models import BotNotification
 
 
