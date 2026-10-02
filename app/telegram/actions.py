@@ -127,14 +127,31 @@ async def confirm_action(event, db, telegram_id: str, action_id: str) -> None:
     elif kind == "admin_fx":
         from decimal import Decimal
 
-        from app.billing.fx import set_manual_fallback
+        from app.billing.fx import fx_policy, set_fx_policy, set_manual_fallback
 
-        await set_manual_fallback(
-            db,
-            rate=Decimal(payload["rate"]) if payload["rate"] else None,
-            actor=telegram_id,
-            reason=f"telegram-confirmation:{action.id}",
-        )
+        if "automatic_enabled" not in payload:
+            # Backward compatibility for confirmations created by the previous
+            # fallback-only admin screen before this release.
+            await set_manual_fallback(
+                db,
+                rate=Decimal(payload["rate"]) if payload.get("rate") else None,
+                actor=telegram_id,
+                reason=f"telegram-confirmation:{action.id}",
+            )
+        else:
+            automatic_enabled = bool(payload["automatic_enabled"])
+            if automatic_enabled:
+                current = await fx_policy(db)
+                rate = current["manual_rate"]
+            else:
+                rate = Decimal(payload["rate"])
+            await set_fx_policy(
+                db,
+                automatic_enabled=automatic_enabled,
+                rate=rate,
+                actor=telegram_id,
+                reason=f"telegram-confirmation:{action.id}",
+            )
     elif kind == "admin_mute":
         from app.billing.incidents import mute_treasury
 
