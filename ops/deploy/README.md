@@ -73,8 +73,8 @@ The script will prompt for:
    ssh deploy@PRODUCTION_HOST
    cd /opt/neironych/shared
    
-   # Add to .env
-   echo 'ASALE_API_KEY=sk-asale-lYcj7Ai6Ktxw4M1xxj03WQPsy7sRa4xf' >> .env
+   # Add to .env (use actual key from GitHub secrets)
+   echo 'ASALE_API_KEY=your-actual-asale-key-here' >> .env
    
    # Verify
    grep ASALE_API_KEY .env
