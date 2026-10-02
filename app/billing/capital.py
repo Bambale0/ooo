@@ -119,7 +119,11 @@ async def capital_state(db):
             await db.execute(
                 select(PartnerPrice)
                 .join(Model, Model.id == PartnerPrice.model_id)
-                .where(Model.status == "production", PartnerPrice.price_rub > 0)
+                .where(
+                    Model.status == "production",
+                    PartnerPrice.price_rub > 0,
+                    PartnerPrice.partner_id.is_(None)  # Use global prices for capital calculation
+                )
             )
         )
         .scalars()

@@ -65,7 +65,10 @@ async def financial_tick(db) -> None:
         await db.execute(
             select(Model, PartnerPrice)
             .join(PartnerPrice, Model.id == PartnerPrice.model_id)
-            .where(Model.status == "production")
+            .where(
+                Model.status == "production",
+                PartnerPrice.partner_id.is_(None)  # Check global prices for margin incidents
+            )
         )
     ).all()
     for model, price in rows:

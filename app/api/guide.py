@@ -86,7 +86,10 @@ async def prices(db: DbSession):
         await db.execute(
             select(Model, PartnerPrice)
             .join(PartnerPrice, PartnerPrice.model_id == Model.id)
-            .where(Model.status == "production")
+            .where(
+                Model.status == "production",
+                PartnerPrice.partner_id.is_(None)  # Show global prices in public guide
+            )
             .order_by(Model.slug, PartnerPrice.mode, PartnerPrice.resolution)
         )
     ).all()

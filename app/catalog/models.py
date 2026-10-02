@@ -44,10 +44,11 @@ class PartnerModelGrant(Base):
 
 class PartnerPrice(Base):
     __tablename__ = "partner_prices"
-    __table_args__ = (UniqueConstraint("model_id", "mode", "resolution", name="uq_partner_prices_variant"),)
+    __table_args__ = (UniqueConstraint("model_id", "mode", "resolution", "partner_id", name="uq_partner_prices_variant"),)
 
     id: Mapped[str] = uuid_pk()
     model_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    partner_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     mode: Mapped[str] = mapped_column(String(80), nullable=False, default="default")
     resolution: Mapped[str] = mapped_column(String(80), nullable=False, default="default")
     price_rub: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
@@ -62,6 +63,7 @@ class PartnerPriceHistory(Base):
 
     id: Mapped[str] = uuid_pk()
     model_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    partner_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     mode: Mapped[str] = mapped_column(String(80), nullable=False, default="default")
     resolution: Mapped[str] = mapped_column(String(80), nullable=False, default="default")
     old_price_rub: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))

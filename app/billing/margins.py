@@ -19,10 +19,12 @@ async def margin_scope(db, model=None, mode=None, resolution=None):
         raise HTTPException(404, "model_not_found")
     if mode is None:
         return f"model:{row.id}"
+    # Use global price (partner_id IS NULL) for margin scope resolution
     price = (
         await db.execute(
             select(PartnerPrice).where(
                 PartnerPrice.model_id == row.id,
+                PartnerPrice.partner_id.is_(None),
                 PartnerPrice.mode == mode,
                 PartnerPrice.resolution == resolution,
             )

@@ -107,7 +107,12 @@ async def reserve(
     credential = await get_active_provider_credential(db, partner.id, "argolink")
     if credential is None:
         raise HTTPException(503, "provider_temporarily_unavailable")
-    prices = list((await db.execute(select(PartnerPrice).where(PartnerPrice.model_id == model.id))).scalars())
+    # Fetch partner-specific prices first, then global prices as fallback
+    prices_query = select(PartnerPrice).where(
+        PartnerPrice.model_id == model.id,
+        (PartnerPrice.partner_id == partner.id) | (PartnerPrice.partner_id.is_(None))
+    ).order_by(PartnerPrice.partner_id.desc().nulls_last())
+    prices = list((await db.execute(prices_query)).scalars())
     from app.billing.fx import current_fx
     from app.billing.fx import snapshot as fx_snapshot
 
@@ -212,9 +217,16 @@ def quote(protocol, body, prices, *, fx=None, trial=False):
     rates = {}
 
     def add(key, mode, resolution, unit):
+        # Prefer partner-specific price (partner_id NOT NULL) over global (partner_id IS NULL)
         price = next(
-            (p for p in prices if p.mode == mode and p.resolution == resolution and p.billing_unit == unit), None
+            (p for p in prices if p.mode == mode and p.resolution == resolution and p.billing_unit == unit and p.partner_id is not None),
+            None
         )
+        if price is None:
+            price = next(
+                (p for p in prices if p.mode == mode and p.resolution == resolution and p.billing_unit == unit and p.partner_id is None),
+                None
+            )
         if price is None:
             raise HTTPException(503, "provider_temporarily_unavailable")
         # Check every rate individually; expensive cached/written tokens cannot

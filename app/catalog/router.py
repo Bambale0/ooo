@@ -6,6 +6,10 @@ from sqlalchemy import select
 from app.api.dependencies import DbSession, require_admin
 from app.catalog.access import grant_model_access, revoke_model_access
 from app.catalog.models import Model, PartnerModelGrant, PartnerPrice, PartnerPriceHistory
+from app.catalog.pricing import (
+    create_new_partner_prices_with_margin,
+    snapshot_global_prices_for_partner,
+)
 from app.catalog.procurement import supports_free_rate
 from app.catalog.schemas import (
     ModelCreate,
@@ -110,7 +114,11 @@ async def enable_restricted_model(model_slug: str, db: DbSession) -> Model:
     from app.billing.fx import current_fx
 
     fx = (await current_fx(db))["rate"]
-    prices = list((await db.execute(select(PartnerPrice).where(PartnerPrice.model_id == model.id))).scalars())
+    # Fetch global prices only (partner_id IS NULL) for restricted model enablement check
+    prices = list((await db.execute(select(PartnerPrice).where(
+        PartnerPrice.model_id == model.id,
+        PartnerPrice.partner_id.is_(None)
+    ))).scalars())
     if not prices:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="price_gate_missing")
     if any(p.price_rub < p.provider_cost_usdt * fx for p in prices):
@@ -202,6 +210,14 @@ async def upsert_price(payload: PartnerPriceUpsert, db: DbSession) -> None:
     model = model_result.scalar_one_or_none()
     if model is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="model_not_found")
+
+    # Validate partner_id if provided
+    if payload.partner_id is not None:
+        from app.accounts.models import Partner
+        partner_check = await db.execute(select(Partner.id).where(Partner.id == payload.partner_id))
+        if partner_check.scalar_one_or_none() is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="partner_not_found")
+
     from app.billing.fx import current_fx
     from app.billing.fx import snapshot as fx_snapshot
 
@@ -210,9 +226,12 @@ async def upsert_price(payload: PartnerPriceUpsert, db: DbSession) -> None:
     provider_cost_rub = Decimal(payload.provider_cost_usdt) * rub_per_usdt
     if Decimal(payload.price_rub) < provider_cost_rub:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="partner_price_below_provider_cost")
+
+    # Check for existing price (global or partner-specific)
     price_result = await db.execute(
         select(PartnerPrice).where(
             PartnerPrice.model_id == model.id,
+            PartnerPrice.partner_id == payload.partner_id if payload.partner_id else PartnerPrice.partner_id.is_(None),
             PartnerPrice.mode == payload.mode,
             PartnerPrice.resolution == payload.resolution,
         )
@@ -222,6 +241,7 @@ async def upsert_price(payload: PartnerPriceUpsert, db: DbSession) -> None:
         db.add(
             PartnerPrice(
                 model_id=model.id,
+                partner_id=payload.partner_id,
                 mode=payload.mode,
                 resolution=payload.resolution,
                 price_rub=payload.price_rub,
@@ -232,6 +252,7 @@ async def upsert_price(payload: PartnerPriceUpsert, db: DbSession) -> None:
         db.add(
             PartnerPriceHistory(
                 model_id=model.id,
+                partner_id=payload.partner_id,
                 mode=payload.mode,
                 resolution=payload.resolution,
                 old_price_rub=None,
@@ -252,6 +273,7 @@ async def upsert_price(payload: PartnerPriceUpsert, db: DbSession) -> None:
         db.add(
             PartnerPriceHistory(
                 model_id=model.id,
+                partner_id=payload.partner_id,
                 mode=payload.mode,
                 resolution=payload.resolution,
                 old_price_rub=old_price_rub,
@@ -266,13 +288,22 @@ async def upsert_price(payload: PartnerPriceUpsert, db: DbSession) -> None:
 
 
 @router.get("/pricing", response_model=list[PricingRead])
-async def list_pricing(db: DbSession) -> list[PricingRead]:
-    result = await db.execute(
+async def list_pricing(db: DbSession, partner_id: str | None = None) -> list[PricingRead]:
+    """List pricing. If partner_id provided, show partner-specific prices; otherwise show only global prices."""
+    query = (
         select(Model, PartnerPrice)
         .join(PartnerPrice, PartnerPrice.model_id == Model.id)
         .where(Model.status == "production")
-        .order_by(Model.slug, PartnerPrice.mode, PartnerPrice.resolution)
     )
+
+    if partner_id is not None:
+        # Show partner-specific prices only
+        query = query.where(PartnerPrice.partner_id == partner_id)
+    else:
+        # Show global prices only
+        query = query.where(PartnerPrice.partner_id.is_(None))
+
+    result = await db.execute(query.order_by(Model.slug, PartnerPrice.mode, PartnerPrice.resolution))
     return [
         PricingRead(
             model_slug=model.slug,
@@ -282,6 +313,7 @@ async def list_pricing(db: DbSession) -> list[PricingRead]:
             resolution=price.resolution,
             price_rub=price.price_rub,
             billing_unit=price.billing_unit,
+            partner_id=price.partner_id,
         )
         for model, price in result.all()
     ]
@@ -295,7 +327,11 @@ async def ensure_model_can_be_enabled(db: DbSession, model: Model | ModelCreate)
     if not model.has_successful_smoke:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="smoke_gate_missing")
     if isinstance(model, Model):
-        price_result = await db.execute(select(PartnerPrice).where(PartnerPrice.model_id == model.id))
+        # Check global prices only for production enablement gates
+        price_result = await db.execute(select(PartnerPrice).where(
+            PartnerPrice.model_id == model.id,
+            PartnerPrice.partner_id.is_(None)
+        ))
         prices = list(price_result.scalars())
         if not prices:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="price_gate_missing")
@@ -359,3 +395,31 @@ async def import_contracts(db: DbSession):
     from app.catalog.sync import import_reviewed_catalog
 
     return await import_reviewed_catalog(db)
+
+
+@router.post(
+    "/pricing/snapshot/{partner_id}",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin)],
+)
+async def snapshot_partner_pricing(partner_id: str, db: DbSession) -> dict:
+    """Snapshot all current global prices for an existing partner.
+
+    This freezes their pricing at current global rates so future changes won't affect them.
+    """
+    count = await snapshot_global_prices_for_partner(db, partner_id, actor="admin_api")
+    return {"partner_id": partner_id, "prices_created": count}
+
+
+@router.post(
+    "/pricing/new-partner/{partner_id}",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin)],
+)
+async def create_new_partner_pricing(partner_id: str, db: DbSession) -> dict:
+    """Create pricing for a new partner with 35% gross margin.
+
+    Applies the new partner pricing formula: price = cost / 0.65
+    """
+    count = await create_new_partner_prices_with_margin(db, partner_id, actor="admin_api")
+    return {"partner_id": partner_id, "prices_created": count, "margin_percent": 35}
