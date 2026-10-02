@@ -273,17 +273,20 @@ async def test_validation_rejection_logs_partner_key_and_stage(client, db_sessio
         monkeypatch,
         lambda request: (_ for _ in ()).throw(AssertionError("invalid request must not reach provider")),
     )
+    await db_session.refresh(partner)
+    partner_id = partner.id
+    key = (
+        await db_session.execute(select(ApiKey).where(ApiKey.partner_id == partner_id))
+    ).scalar_one()
+    key_id = key.id
     caplog.set_level(logging.WARNING, logger="app.inference.diagnostics")
     response = await client.post("/v1/images/edits", headers=headers, json={**nano_body(), "n": 0})
     assert response.status_code == 422
-    key = (
-        await db_session.execute(select(ApiKey).where(ApiKey.partner_id == partner.id))
-    ).scalar_one()
     events = [record for record in caplog.records if record.getMessage() == "native_inference_rejected"]
     assert len(events) == 1
     event = events[0]
-    assert event.partner_id == partner.id
-    assert event.api_key_id == key.id
+    assert event.partner_id == partner_id
+    assert event.api_key_id == key_id
     assert event.failure_stage == "request_validation"
     assert event.error_code == "invalid_request_contract"
     assert event.http_status == 422
@@ -301,17 +304,20 @@ async def test_balance_rejection_logs_exact_stage_and_key(client, db_session, mo
         raise AssertionError("insufficient balance must not reach provider")
 
     partner, headers, upstream = await nano_setup(db_session, monkeypatch, handler)
+    await db_session.refresh(partner)
+    partner_id = partner.id
+    key = (
+        await db_session.execute(select(ApiKey).where(ApiKey.partner_id == partner_id))
+    ).scalar_one()
+    key_id = key.id
     partner.balance_rub = Decimal("0")
     await db_session.commit()
     caplog.set_level(logging.WARNING, logger="app.inference.diagnostics")
     response = await client.post("/v1/images/edits", headers=headers, json=nano_body())
     assert response.status_code == 402
-    key = (
-        await db_session.execute(select(ApiKey).where(ApiKey.partner_id == partner.id))
-    ).scalar_one()
     event = next(record for record in caplog.records if record.getMessage() == "native_inference_rejected")
-    assert event.partner_id == partner.id
-    assert event.api_key_id == key.id
+    assert event.partner_id == partner_id
+    assert event.api_key_id == key_id
     assert event.failure_stage == "balance"
     assert event.error_code == "insufficient_balance"
     assert event.http_status == 402
@@ -334,17 +340,20 @@ async def test_provider_rejection_logs_provider_stage_without_body_or_secret(
         return httpx.Response(400, json={"error": sensitive})
 
     partner, headers, upstream = await nano_setup(db_session, monkeypatch, handler)
+    await db_session.refresh(partner)
+    partner_id = partner.id
+    key = (
+        await db_session.execute(select(ApiKey).where(ApiKey.partner_id == partner_id))
+    ).scalar_one()
+    key_id = key.id
     caplog.set_level(logging.WARNING, logger="app.inference.diagnostics")
     response = await client.post("/v1/images/edits", headers=headers, json=nano_body())
     assert response.status_code == 422
-    key = (
-        await db_session.execute(select(ApiKey).where(ApiKey.partner_id == partner.id))
-    ).scalar_one()
     events = [record for record in caplog.records if record.getMessage() == "native_inference_rejected"]
     assert len(events) == 1
     event = events[0]
-    assert event.partner_id == partner.id
-    assert event.api_key_id == key.id
+    assert event.partner_id == partner_id
+    assert event.api_key_id == key_id
     assert event.failure_stage == "provider_response"
     assert event.error_code == "provider_rejected_request"
     assert event.upstream_status == 400
