@@ -21,6 +21,8 @@ class FakeCryptoPayClient:
         self.deleted: list[int] = []
         self.invoices: dict[int, CryptoPayInvoice] = {}
         self.next_id = 7001
+        self.fx_calls = 0
+        self.rub_per_usdt = Decimal("100")
 
     async def create_rub_invoice(self, *, amount_rub: str, payload: str) -> CryptoPayInvoice:
         self.created.append((amount_rub, payload))
@@ -49,6 +51,10 @@ class FakeCryptoPayClient:
             if invoice.payload == payload:
                 return invoice
         return None
+
+    async def get_rub_per_usdt(self) -> Decimal:
+        self.fx_calls += 1
+        return self.rub_per_usdt
 
     async def delete_invoice(self, invoice_id: int) -> None:
         self.deleted.append(invoice_id)
@@ -167,6 +173,7 @@ async def test_crypto_pay_paid_invoice_automatically_credits_both_ledgers(
     assert Decimal(created.json()["requested_rub"]) == Decimal("1500.00")
     assert created.json()["accepted_assets"] == "USDT,TON"
     assert len(fake.created) == 1
+    assert fake.fx_calls == 1
 
     duplicate = await client.post(
         "/api/v1/payments/invoices",
@@ -176,9 +183,12 @@ async def test_crypto_pay_paid_invoice_automatically_credits_both_ledgers(
     assert duplicate.status_code == 202
     assert duplicate.json()["id"] == payment_id
     assert len(fake.created) == 1
+    assert fake.fx_calls == 1
 
     payment = await db_session.get(PaymentInvoice, payment_id)
     assert payment is not None
+    assert payment.fx_snapshot["rate"] == "100"
+    assert payment.fx_snapshot["source"] == "automatic"
     provider_invoice_id = payment.provider_invoice_id
     assert provider_invoice_id is not None
     fake.invoices[provider_invoice_id] = CryptoPayInvoice(
@@ -432,3 +442,44 @@ async def test_admin_can_reconcile_unknown_invoice_only_with_matching_payload(
     again = await client.post(f"/api/v1/payments/invoices/{payment.id}/reconcile", json=body, headers=admin_headers)
     assert again.status_code == 200
     assert payment.reconciliation_snapshot["reason"] == body["reason"]
+
+
+
+async def test_credit_uses_invoice_fx_snapshot_without_refresh(db_session, monkeypatch):
+    from app.catalog.models import Model, PartnerPrice
+    from app.payments.service import credit_paid_invoice
+
+    partner, _ = await _partner_with_api_key(db_session, telegram_id="invoice-fx-snapshot")
+    model = Model(slug="invoice-fx-model", name="Invoice FX Model", modality="image", status="production")
+    db_session.add(model)
+    await db_session.flush()
+    db_session.add(
+        PartnerPrice(
+            model_id=model.id,
+            mode="default",
+            resolution="default",
+            billing_unit="generation",
+            price_rub=Decimal("1000"),
+            provider_cost_usdt=Decimal("5"),
+        )
+    )
+    payment = PaymentInvoice(
+        partner_id=partner.id,
+        idempotency_key="invoice-fx-credit",
+        requested_rub=Decimal("1500"),
+        status="paid_waiting_credit",
+        fx_snapshot={"rate": "100", "source": "automatic", "automatic_at": "2026-10-02T10:00:00+00:00"},
+    )
+    db_session.add(payment)
+    await db_session.commit()
+
+    async def unexpected_refresh(_db):
+        raise AssertionError("credit must use the invoice FX snapshot")
+
+    monkeypatch.setattr("app.billing.fx.current_fx", unexpected_refresh)
+    await credit_paid_invoice(db_session, payment_id=payment.id)
+    await db_session.commit()
+    await db_session.refresh(partner)
+    assert partner.balance_rub == Decimal("1500")
+    assert partner.cost_coverage_rub == Decimal("750.00")
+    assert payment.coverage_snapshot["fx"]["rate"] == "100"
