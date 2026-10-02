@@ -139,3 +139,86 @@ async def test_safe_primary_failure_queues_and_dispatches_asale_fallback(db_sess
     assert fallback_attempt.provider == "asale"
     assert fallback_attempt.provider_task_id == "asale-task"
     assert generation.status == "sent_to_provider"
+
+
+async def test_native_video_fallback_uses_default_capability_and_native_prompt(db_session, monkeypatch):
+    settings = get_settings()
+    monkeypatch.setattr(settings, "asale_api_key", "sk-asale-platform")
+
+    partner = Partner(
+        telegram_id="native-fallback",
+        company_name="Native fallback",
+        project_name="Native fallback",
+        status="active",
+    )
+    db_session.add(partner)
+    await db_session.flush()
+    generation = Generation(
+        partner_id=partner.id,
+        model_id="seedance-native-model",
+        model_slug="seedance-2.5",
+        mode="videos/generations",
+        resolution="720p",
+        duration_seconds=7,
+        aspect_ratio=None,
+        idempotency_key="native-fallback",
+        partner_price_rub=Decimal("100.00"),
+        provider_cost_usdt_snapshot=Decimal("0.85"),
+        rub_per_usdt_snapshot=Decimal("100"),
+        provider_cost_reserve_rub=Decimal("85.00"),
+        prompt="",
+        request_payload={
+            "native_body": {
+                "model": "seedance-2.5",
+                "prompt": "native prompt",
+                "duration": 7,
+                "resolution": "720p",
+                "aspect_ratio": "16:9",
+            }
+        },
+        status="queued",
+    )
+    capability = ProviderModelCapability(
+        provider="asale",
+        model_id=generation.model_id,
+        mode="default",
+        resolution="720p",
+        is_active=True,
+        provider_cost_ceiling_usdt=Decimal("0.0615"),
+        billing_unit="second",
+    )
+    db_session.add_all([generation, capability])
+    await db_session.flush()
+
+    selected = await select_fallback_provider(db_session, generation, after_provider="argolink")
+    assert selected == ("asale", Decimal("0.4305"))
+
+    seen = {}
+
+    class FallbackAdapter:
+        async def submit_generation(self, request):
+            seen["request"] = request
+            return ProviderSubmitResult(provider_task_id="asale-native-task")
+
+        def normalize_error(self, error):
+            raise error
+
+    async def adapter(db, partner_id, provider, **kwargs):
+        assert provider == "asale"
+        return FallbackAdapter()
+
+    monkeypatch.setattr("app.generations.service.get_partner_provider_adapter", adapter)
+    generation.request_payload = {
+        **generation.request_payload,
+        "fallback_provider": "asale",
+        "fallback_provider_cost_ceiling_usdt": "0.4305",
+    }
+    attempt = await dispatch_generation_with_routing(db_session, generation)
+
+    assert attempt is not None
+    request = seen["request"]
+    assert request.mode == "videos/generations"
+    assert request.prompt == "native prompt"
+    assert request.duration_seconds == 7
+    assert request.resolution == "720p"
+    assert request.aspect_ratio == "16:9"

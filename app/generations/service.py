@@ -11,6 +11,7 @@ from app.billing.service import (
     release_generation_reserves,
     settle_generation_reserves,
 )
+from app.contracts.registry import normalized_video
 from app.generations.models import Generation
 from app.infrastructure.config import get_settings
 from app.infrastructure.metrics import monotonic_seconds, observe_provider_request
@@ -32,21 +33,40 @@ FALLBACK_PROVIDERS = ("asale",)
 
 
 def _provider_request_for_generation(generation: Generation) -> ProviderGenerationRequest:
+    request_payload = generation.request_payload or {}
+    native_body = request_payload.get("native_body")
+    normalized: dict = {}
+    if isinstance(native_body, dict):
+        try:
+            normalized = normalized_video(native_body)
+        except ValueError:
+            native_body = None
+
+    def media_url(value) -> str | None:
+        if isinstance(value, str):
+            return value
+        if isinstance(value, dict) and isinstance(value.get("url"), str):
+            return value["url"]
+        return None
+
+    references = normalized.get("reference_images", request_payload.get("reference_images", []))
     return ProviderGenerationRequest(
         generation_id=generation.id,
-        native_body=(generation.request_payload or {}).get("native_body"),
+        native_body=native_body if isinstance(native_body, dict) else None,
         model_slug=generation.model_slug,
         mode=generation.mode,
-        resolution=generation.resolution,
-        prompt=generation.prompt,
-        duration_seconds=generation.duration_seconds,
-        aspect_ratio=generation.aspect_ratio,
-        start_image=((generation.request_payload or {}).get("start_image") or {}).get("url"),
-        end_image=((generation.request_payload or {}).get("end_image") or {}).get("url"),
+        resolution=str(normalized.get("resolution", generation.resolution)),
+        prompt=str(normalized.get("prompt", generation.prompt)),
+        duration_seconds=int(normalized.get("duration", generation.duration_seconds)),
+        aspect_ratio=normalized.get("aspect_ratio", generation.aspect_ratio),
+        start_image=media_url(normalized.get("start_image"))
+        or media_url(request_payload.get("start_image")),
+        end_image=media_url(normalized.get("end_image"))
+        or media_url(request_payload.get("end_image")),
         reference_images=tuple(
-            item["url"]
-            for item in (generation.request_payload or {}).get("reference_images", [])
-            if isinstance(item, dict) and isinstance(item.get("url"), str)
+            url
+            for item in references
+            if (url := media_url(item)) is not None
         ),
     )
 
@@ -60,6 +80,7 @@ async def select_fallback_provider(
     if after_provider != PRIMARY_PROVIDER:
         return None
     request = _provider_request_for_generation(generation)
+    capability_mode = "default" if generation.mode == "videos/generations" else generation.mode
     for provider in FALLBACK_PROVIDERS:
         if provider == "asale" and not asale_supports_request(request):
             continue
@@ -68,7 +89,7 @@ async def select_fallback_provider(
                 select(ProviderModelCapability).where(
                     ProviderModelCapability.provider == provider,
                     ProviderModelCapability.model_id == generation.model_id,
-                    ProviderModelCapability.mode == generation.mode,
+                    ProviderModelCapability.mode == capability_mode,
                     ProviderModelCapability.resolution == generation.resolution,
                     ProviderModelCapability.is_active.is_(True),
                 )
@@ -191,23 +212,7 @@ async def dispatch_generation_to_provider(
     else:
         adapter = await get_partner_provider_adapter(db, generation.partner_id, provider)
         credential = await get_active_provider_credential(db, generation.partner_id, provider)
-    request = ProviderGenerationRequest(
-        generation_id=generation.id,
-        native_body=(generation.request_payload or {}).get("native_body"),
-        model_slug=generation.model_slug,
-        mode=generation.mode,
-        resolution=generation.resolution,
-        prompt=generation.prompt,
-        duration_seconds=generation.duration_seconds,
-        aspect_ratio=generation.aspect_ratio,
-        start_image=((generation.request_payload or {}).get("start_image") or {}).get("url"),
-        end_image=((generation.request_payload or {}).get("end_image") or {}).get("url"),
-        reference_images=tuple(
-            item["url"]
-            for item in (generation.request_payload or {}).get("reference_images", [])
-            if isinstance(item, dict) and isinstance(item.get("url"), str)
-        ),
-    )
+    request = _provider_request_for_generation(generation)
     try:
         await get_provider_rate_limiter(provider, "submit").acquire()
         if retrying_failed_task and attempt and await _expire_generation_retry(db, generation, attempt):

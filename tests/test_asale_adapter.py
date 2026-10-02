@@ -29,6 +29,49 @@ def request(**changes):
         ({"model_slug": "seedance-2.5", "resolution": "720p"}, True),
         ({"model_slug": "seedance-2.5", "resolution": "1080p"}, False),
         ({"model_slug": "seedance-2.5", "aspect_ratio": "9:21"}, False),
+        (
+            {
+                "mode": "videos/generations",
+                "native_body": {
+                    "model": "seedance-2.0",
+                    "prompt": "native",
+                    "duration": 5,
+                    "resolution": "720p",
+                    "aspect_ratio": "16:9",
+                },
+            },
+            True,
+        ),
+        (
+            {
+                "mode": "videos/generations",
+                "native_body": {
+                    "model": "seedance-2.0",
+                    "prompt": "native",
+                    "duration": 5,
+                    "resolution": "720p",
+                    "aspect_ratio": "16:9",
+                    "frame_images": [
+                        {"frame_type": "first_frame", "url": "https://example.test/start.jpg"}
+                    ],
+                },
+            },
+            False,
+        ),
+        (
+            {
+                "mode": "videos/generations",
+                "native_body": {
+                    "model": "seedance-2.0",
+                    "prompt": "native",
+                    "duration": 5,
+                    "resolution": "720p",
+                    "aspect_ratio": "16:9",
+                    "seed": 42,
+                },
+            },
+            False,
+        ),
         ({"mode": "reference", "reference_images": ("https://example.test/ref.jpg",)}, False),
         ({"mode": "first_frame", "start_image": "https://example.test/start.jpg"}, False),
         ({"model_slug": "wan-3"}, False),
