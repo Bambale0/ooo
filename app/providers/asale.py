@@ -29,10 +29,36 @@ def asale_supports_request(payload: ProviderGenerationRequest) -> bool:
     resolutions = _ASALE_VIDEO_RESOLUTIONS.get(payload.model_slug)
     if resolutions is None or payload.resolution.lower() not in resolutions:
         return False
-    if payload.mode not in {"default", "text_to_video"}:
+    if payload.mode not in {"default", "text_to_video", "videos/generations"}:
         return False
-    # Asale documents frame/reference inputs, but their JSON wire shape has not
-    # been smoke-tested in this project. Fail closed until it has.
+    if not payload.prompt.strip():
+        return False
+    if payload.mode == "videos/generations":
+        native = payload.native_body
+        if not isinstance(native, dict):
+            return False
+        # The adapter currently forwards only the fields below. Reject every
+        # other native control instead of silently dropping provider semantics.
+        safe_native_fields = {
+            "model",
+            "prompt",
+            "duration",
+            "seconds",
+            "resolution",
+            "aspect_ratio",
+            "ratio",
+            "size",
+            "n",
+            "generate_audio",
+        }
+        if set(native) - safe_native_fields:
+            return False
+        if native.get("model") != payload.model_slug or native.get("n", 1) != 1:
+            return False
+        if native.get("generate_audio", False):
+            return False
+    # Frame/reference inputs are intentionally fail-closed until their exact
+    # Asale wire contract has a production smoke test.
     if payload.reference_images or payload.start_image or payload.end_image:
         return False
     if payload.model_slug == "seedance-2.0":

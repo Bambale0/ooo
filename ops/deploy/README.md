@@ -74,7 +74,7 @@ The script will prompt for:
    cd /opt/neironych/shared
    
    # Add to .env
-   echo 'ASALE_API_KEY=sk-asale-lYcj7Ai6Ktxw4M1xxj03WQPsy7sRa4xf' >> .env
+   echo 'ASALE_API_KEY=<ASALE_API_KEY>' >> .env
    
    # Verify
    grep ASALE_API_KEY .env
@@ -116,9 +116,9 @@ cat > .env << 'EOF'
 APP_ENV=production
 APP_NAME=neironych
 API_PREFIX=/api/v1
-DATABASE_URL=postgresql+asyncpg://neironych:PRODUCTION_PASSWORD@postgres:5432/neironych
+DATABASE_URL=<PRODUCTION_DATABASE_URL>
 # ... (see .env.example for full list)
-ASALE_API_KEY=sk-asale-lYcj7Ai6Ktxw4M1xxj03WQPsy7sRa4xf
+ASALE_API_KEY=<ASALE_API_KEY>
 EOF
 
 # Create .backup.env (see ops/backup/README.md)
