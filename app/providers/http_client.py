@@ -32,26 +32,31 @@ async def close_provider_http_clients() -> None:
 
 
 def _create_provider_http_client(provider: str) -> httpx.AsyncClient:
-    if provider != "argolink":
+    settings = get_settings()
+    if provider == "argolink":
+        prefix = "argolink"
+    elif provider == "asale":
+        prefix = "asale"
+    else:
         raise ValueError(f"Unsupported provider: {provider}")
 
-    settings = get_settings()
     timeout = httpx.Timeout(
-        connect=settings.argolink_http_connect_timeout_seconds,
-        read=settings.argolink_http_read_timeout_seconds,
-        write=settings.argolink_http_write_timeout_seconds,
-        pool=settings.argolink_http_pool_timeout_seconds,
+        connect=getattr(settings, f"{prefix}_http_connect_timeout_seconds"),
+        read=getattr(settings, f"{prefix}_http_read_timeout_seconds"),
+        write=getattr(settings, f"{prefix}_http_write_timeout_seconds"),
+        pool=getattr(settings, f"{prefix}_http_pool_timeout_seconds"),
     )
+    max_connections = getattr(settings, f"{prefix}_http_max_connections")
     limits = httpx.Limits(
-        max_connections=settings.argolink_http_max_connections,
+        max_connections=max_connections,
         max_keepalive_connections=min(
-            settings.argolink_http_max_keepalive_connections,
-            settings.argolink_http_max_connections,
+            getattr(settings, f"{prefix}_http_max_keepalive_connections"),
+            max_connections,
         ),
-        keepalive_expiry=settings.argolink_http_keepalive_expiry_seconds,
+        keepalive_expiry=getattr(settings, f"{prefix}_http_keepalive_expiry_seconds"),
     )
     return httpx.AsyncClient(
-        base_url=settings.argolink_base_url.rstrip("/"),
+        base_url=getattr(settings, f"{prefix}_base_url").rstrip("/"),
         headers={"Content-Type": "application/json"},
         timeout=timeout,
         limits=limits,
