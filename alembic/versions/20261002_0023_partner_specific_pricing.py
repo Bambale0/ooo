@@ -48,16 +48,26 @@ def upgrade() -> None:
     # Update unique constraint to include partner_id
     # partner_id NULL = global price, partner_id NOT NULL = partner-specific override
     op.drop_constraint("uq_partner_prices_variant", "partner_prices", type_="unique")
-    op.create_unique_constraint(
-        "uq_partner_prices_variant",
+    op.create_index(
+        "uq_partner_prices_global_variant",
+        "partner_prices",
+        ["model_id", "mode", "resolution"],
+        unique=True,
+        postgresql_where=sa.text("partner_id IS NULL"),
+    )
+    op.create_index(
+        "uq_partner_prices_partner_variant",
         "partner_prices",
         ["model_id", "mode", "resolution", "partner_id"],
+        unique=True,
+        postgresql_where=sa.text("partner_id IS NOT NULL"),
     )
 
 
 def downgrade() -> None:
     # Restore original unique constraint
-    op.drop_constraint("uq_partner_prices_variant", "partner_prices", type_="unique")
+    op.drop_index("uq_partner_prices_partner_variant", table_name="partner_prices")
+    op.drop_index("uq_partner_prices_global_variant", table_name="partner_prices")
     op.create_unique_constraint(
         "uq_partner_prices_variant",
         "partner_prices",
