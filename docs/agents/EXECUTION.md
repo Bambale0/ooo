@@ -121,3 +121,56 @@ Follow-up: a successful bounded live test is required before setting smoke gates
 and invoking public enable. The pending 4k tariff is a separate operator decision.
 There is no evidence of a working NSFW render in this task; unit/CI success does
 not override this provider failure.
+
+
+# Admin partner management — 2026-10-02
+
+Baseline: `1cfd6ae31d7c4af2c26cfb94fbe9b07bd12d96a6` (`main`).
+Branch: `feat/admin-partner-management`.
+
+## User outcome and acceptance criteria
+
+The Telegram admin cabinet must provide one convenient partner-management entrypoint
+without creating a second partner source of truth. An administrator can browse and
+search partners, open a partner card, inspect the operational data already owned by
+the existing tables, and start existing confirmed mutations from that card.
+
+Acceptance criteria:
+- partner list is paginated and searchable by Telegram ID, @username, UUID, company,
+  or project;
+- partner card shows identity, status, balance, cost coverage, application and counts;
+- drill-down views expose API keys, provider credentials, payments, generations,
+  balance ledger and restricted-model grants;
+- secret hashes/encrypted credentials are never rendered;
+- balance/status/Telegram mutations continue to use the existing confirmation paths;
+- non-admin callbacks disclose no partner data;
+- existing adjustment-picker search behavior remains backward compatible.
+
+## Architecture / security / migration impact
+
+- Reuse `partners` and the existing account, billing, payment, generation, provider,
+  catalog and Telegram tables; no migration and no new source of truth.
+- All new callbacks retain the existing `admin_` authorization gate and additionally
+  re-check admin access inside the partner module.
+- Dangerous mutations are not duplicated: the partner card links to the existing
+  confirmed adjustment, status and Telegram-transfer flows.
+- Key views render only label/prefix/status metadata. Hashes and encrypted provider
+  secrets stay server-side.
+- No mutable business parameter is hardcoded and no pricing/routing behavior changes.
+
+## Skills applied
+
+- `python-fastapi-development`: preserve async SQLAlchemy/FastAPI project patterns.
+- `python-testing-patterns`: add focused pytest regression/integration coverage.
+- `telegram-bot-builder`: keep navigation as compact inline-keyboard flows.
+- `verification-before-completion`: no completion claim before fresh CI evidence.
+
+## Steps
+
+1. [x] Audit repository instructions, product/runtime status, current partner/admin flows.
+2. [x] Add admin partner browser, search, partner card and read-only drill-down views.
+3. [x] Wire the browser into the admin menu and reuse confirmed mutation flows.
+4. [x] Add regression tests for browsing/search, secret non-disclosure and authorization.
+5. [ ] Run CI for the exact branch SHA; fix failures before completion.
+6. [ ] Review diff/requirements and open PR with verification evidence.
+
