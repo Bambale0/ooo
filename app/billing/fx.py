@@ -67,9 +67,7 @@ async def fx_policy(db) -> dict:
     }
 
 
-async def current_fx(db) -> dict:
-    """Return persisted/configured FX without external I/O."""
-
+async def _persisted_fx(db) -> dict:
     policy = await fx_policy(db)
     automatic = await _latest_automatic_row(db)
     automatic_at = aware(automatic.created_at).isoformat() if automatic else None
@@ -89,21 +87,27 @@ async def current_fx(db) -> dict:
     raise HTTPException(503, "provider_temporarily_unavailable")
 
 
+async def current_fx(db) -> dict:
+    """Return persisted/configured FX without external I/O."""
+
+    return await _persisted_fx(db)
+
+
 async def refresh_fx_for_invoice(db, *, client=None) -> dict:
     """Refresh automatic FX once for invoice creation; manual mode is network-free."""
 
     policy = await fx_policy(db)
     if not policy["automatic_enabled"]:
-        return await current_fx(db)
+        return await _persisted_fx(db)
 
     provider = client or get_crypto_pay_client()
     try:
         rate = _valid_rate(await provider.get_rub_per_usdt())
-    except (CryptoPayError, ValueError, TypeError, HTTPException):
+    except (CryptoPayError, ValueError, TypeError, AttributeError, HTTPException):
         # Invoice creation remains available when the exchange-rate endpoint is
         # temporarily unavailable, but only from an already persisted/operator
         # fallback. No other runtime path retries the rate endpoint.
-        return await current_fx(db)
+        return await _persisted_fx(db)
     automatic = FxRateSnapshot(rate=rate, created_at=utc_now())
     db.add(automatic)
     await db.flush()
