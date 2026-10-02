@@ -24,6 +24,8 @@ _client: httpx.AsyncClient | None = None
 class PreparedWebhookDelivery:
     event_id: str
     delivery_id: str
+    generation_id: str
+    partner_id: str
     attempt: int
     webhook_url: str
     webhook_secret_encrypted: str | None
@@ -173,6 +175,8 @@ async def prepare_claimed_delivery(
     return PreparedWebhookDelivery(
         event_id=event.id,
         delivery_id=delivery.id,
+        generation_id=event.generation_id,
+        partner_id=event.partner_id,
         attempt=attempt,
         webhook_url=event.webhook_url,
         webhook_secret_encrypted=event.webhook_secret_encrypted,

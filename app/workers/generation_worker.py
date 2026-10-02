@@ -227,6 +227,16 @@ async def _dispatch_generation_candidate(
 
             attempt = await dispatch_generation_to_provider(db, generation, provider)
             await db.commit()
+            if attempt is not None:
+                logger.info(
+                    "generation_dispatched",
+                    extra={
+                        "trace_id": generation.id,
+                        "generation_id": generation.id,
+                        "partner_id": generation.partner_id,
+                        "attempt_id": getattr(attempt, "id", None),
+                    },
+                )
             return attempt is not None
         except Exception:
             await db.rollback()
@@ -252,7 +262,26 @@ async def _poll_generation_candidate(
                 return False
 
             await poll_generation_provider(db, generation, provider)
+            attempt = (
+                await db.execute(
+                    select(ProviderAttempt).where(
+                        ProviderAttempt.generation_id == generation.id,
+                        ProviderAttempt.provider == provider,
+                    )
+                )
+            ).scalar_one_or_none()
             await db.commit()
+            logger.info(
+                "generation_polled",
+                extra={
+                    "trace_id": generation.id,
+                    "generation_id": generation.id,
+                    "partner_id": generation.partner_id,
+                    "attempt_id": attempt.id if attempt else None,
+                    "generation_status": generation.status,
+                    "attempt_status": attempt.status if attempt else None,
+                },
+            )
             return True
         except Exception:
             await db.rollback()
