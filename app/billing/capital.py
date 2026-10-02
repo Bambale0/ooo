@@ -8,7 +8,7 @@ from sqlalchemy import case, func, select, text
 
 from app.accounts.models import Partner, ProfitWithdrawal
 from app.billing.models import WalletSnapshot
-from app.catalog.models import Model, PartnerPrice
+from app.catalog.pricing import worst_cost_to_retail_ratio
 from app.generations.models import Generation
 from app.infrastructure.config import get_settings
 from app.infrastructure.retry import utc_now
@@ -114,33 +114,22 @@ async def capital_state(db):
             )
         ).scalar()
     )
-    rows = (
+    funded_partners = list(
         (
             await db.execute(
-                select(PartnerPrice)
-                .join(Model, Model.id == PartnerPrice.model_id)
-                .where(
-                    Model.status == "production",
-                    PartnerPrice.price_rub > 0,
-                    PartnerPrice.partner_id.is_(None)  # Use global prices for capital calculation
+                select(Partner).where(
+                    Partner.balance_rub > 0,
+                    Partner.status != "deleted",
                 )
             )
-        )
-        .scalars()
-        .all()
+        ).scalars()
     )
-    ratio = max((p.provider_cost_usdt / p.price_rub for p in rows), default=None)
-    balances = Decimal(
-        (
-            await db.execute(
-                select(func.coalesce(func.sum(Partner.balance_rub), 0)).where(
-                    Partner.balance_rub > 0, Partner.status != "deleted"
-                )
-            )
-        ).scalar()
-    )
+    balances = sum((Decimal(partner.balance_rub) for partner in funded_partners), Decimal(0))
+    future = Decimal(0)
+    for partner in funded_partners:
+        ratio = await worst_cost_to_retail_ratio(db, partner.id)
+        future += Decimal(partner.balance_rub) * ratio
     historical = Decimal((await db.execute(select(func.coalesce(func.sum(Partner.cost_coverage_rub), 0)))).scalar())
-    future = balances * ratio if ratio is not None else Decimal(0) if balances == 0 else None
     book_cash = settings.opening_working_capital_usdt + received - completed_cost - withdrawals
     liquid = min(wallet, book_cash) if wallet is not None else None
     available = liquid - active - pending - settings.required_provider_float_usdt if liquid is not None else None
