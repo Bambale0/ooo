@@ -52,6 +52,7 @@ class PartnerPrice(Base):
             "resolution",
             unique=True,
             postgresql_where=text("partner_id IS NULL"),
+            sqlite_where=text("partner_id IS NULL"),
         ),
         Index(
             "uq_partner_prices_partner_variant",
@@ -61,6 +62,7 @@ class PartnerPrice(Base):
             "partner_id",
             unique=True,
             postgresql_where=text("partner_id IS NOT NULL"),
+            sqlite_where=text("partner_id IS NOT NULL"),
         ),
     )
 
