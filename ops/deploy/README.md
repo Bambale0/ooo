@@ -116,7 +116,7 @@ cat > .env << 'EOF'
 APP_ENV=production
 APP_NAME=neironych
 API_PREFIX=/api/v1
-DATABASE_URL=postgresql+asyncpg://neironych:PRODUCTION_PASSWORD@postgres:5432/neironych
+DATABASE_URL=<PRODUCTION_DATABASE_URL>
 # ... (see .env.example for full list)
 ASALE_API_KEY=<ASALE_API_KEY>
 EOF
