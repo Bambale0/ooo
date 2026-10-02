@@ -26,8 +26,6 @@ class ProviderCredentialRead(BaseModel):
     partner_application_id: str | None
     partner_id: str | None
     is_active: bool
-    provider_cost_ceiling_usdt: Decimal | None
-    billing_unit: str | None
 
     model_config = {"from_attributes": True}
 
@@ -55,5 +53,7 @@ class ProviderCapabilityRead(BaseModel):
     mode: str
     resolution: str
     is_active: bool
+    provider_cost_ceiling_usdt: Decimal | None
+    billing_unit: str | None
 
     model_config = {"from_attributes": True}
