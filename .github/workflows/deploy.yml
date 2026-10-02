@@ -16,22 +16,78 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    # Production stays fail-closed until the repository is explicitly armed.
-    # Set repository Actions variable PRODUCTION_DEPLOY_ENABLED=true only after
-    # the production host, SSH identity, known_hosts and environment are ready.
-    if: github.event.workflow_run.conclusion == 'success' && vars.PRODUCTION_DEPLOY_ENABLED == 'true'
+    # Keep the explicit arming gate. A successful PR/fork run is NOT a release.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      vars.PRODUCTION_DEPLOY_ENABLED == 'true'
     environment: production
     concurrency:
       group: production-deploy
       cancel-in-progress: false
     env:
       RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+      DEPLOY_ROOT: ${{ vars.DEPLOY_ROOT || '/opt/neironych' }}
+      DEPLOY_SSH_USER: ${{ vars.DEPLOY_SSH_USER || 'deploy' }}
+      DEPLOY_SSH_PORT: ${{ vars.DEPLOY_SSH_PORT || '22' }}
+      DEPLOY_USE_SUDO: ${{ vars.DEPLOY_USE_SUDO || 'false' }}
 
     steps:
       - name: Checkout verified revision
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ env.RELEASE_SHA }}
+          persist-credentials: false
+
+      - name: Validate release and SSH configuration
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$DEPLOY_ROOT" =~ ^/[a-zA-Z0-9_./-]+$ && "$DEPLOY_ROOT" != / && "$DEPLOY_ROOT" != *..* ]]
+          [[ "$DEPLOY_SSH_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          [[ "$DEPLOY_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]]
+          [[ "$DEPLOY_SSH_PORT" =~ ^[0-9]{1,5}$ ]]
+          (( 10#$DEPLOY_SSH_PORT > 0 && 10#$DEPLOY_SSH_PORT < 65536 ))
+          [[ "$DEPLOY_USE_SUDO" == true || "$DEPLOY_USE_SUDO" == false ]]
+          current="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq .object.sha)"
+          if [[ "$current" != "$RELEASE_SHA" ]]; then
+            echo 'A newer main revision exists; refusing an out-of-order deployment.' >&2
+            exit 1
+          fi
+
+      - name: Install pinned SSH identity
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_SSH_KEY"
+          test -n "$DEPLOY_KNOWN_HOSTS"
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/deploy_key ~/.ssh/known_hosts
+
+      - name: Verify SSH access before publishing an image
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          set -euo pipefail
+          remote=(bash -s)
+          if [[ "$DEPLOY_USE_SUDO" == true ]]; then remote=(sudo -n bash -s); fi
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
+            -p "$DEPLOY_SSH_PORT" -i ~/.ssh/deploy_key "$DEPLOY_SSH_USER@$DEPLOY_HOST" \
+            "${remote[*]}" <<'SSH'
+          set -euo pipefail
+          docker info --format '{{.ServerVersion}}' >/dev/null
+          python3 --version
+          SSH
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
@@ -52,67 +108,71 @@ jobs:
           context: .
           push: true
           tags: ${{ env.IMAGE_REPOSITORY }}:${{ env.RELEASE_SHA }}
+          labels: org.opencontainers.image.revision=${{ env.RELEASE_SHA }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      - name: Install pinned SSH identity
-        env:
-          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
-        run: |
-          set -euo pipefail
-          test -n "$DEPLOY_SSH_KEY"
-          test -n "$DEPLOY_KNOWN_HOSTS"
-          mkdir -p ~/.ssh
-          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
-          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/deploy_key ~/.ssh/known_hosts
 
       - name: Package and upload verified release configuration
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
         run: |
           set -euo pipefail
-          test -n "$DEPLOY_HOST"
           bundle="/tmp/neironych-${RELEASE_SHA}.tar.gz"
           tar -czf "$bundle" \
             docker-compose.prod.yml \
             docker-compose.pitr.yml \
             nginx/production.conf \
-            ops/backup/postgres
-          scp -o BatchMode=yes -i ~/.ssh/deploy_key \
-            "$bundle" "deploy@$DEPLOY_HOST:/tmp/neironych-${RELEASE_SHA}.tar.gz"
+            ops/backup/postgres \
+            ops/deploy/existing_host.py
+          scp -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
+            -P "$DEPLOY_SSH_PORT" -i ~/.ssh/deploy_key \
+            "$bundle" "$DEPLOY_SSH_USER@$DEPLOY_HOST:/tmp/neironych-${RELEASE_SHA}.tar.gz"
 
       - name: Deploy verified revision with automatic rollback
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          test -n "$DEPLOY_HOST"
-          ssh -o BatchMode=yes -i ~/.ssh/deploy_key "deploy@$DEPLOY_HOST" \
-            "RELEASE_SHA='${RELEASE_SHA}' REPOSITORY='${{ github.repository }}' bash -s" <<'SSH'
+          current="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq .object.sha)"
+          [[ "$current" == "$RELEASE_SHA" ]] || { echo 'Superseded release; not deploying.' >&2; exit 1; }
+          remote=(env)
+          if [[ "$DEPLOY_USE_SUDO" == true ]]; then remote=(sudo -n env); fi
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
+            -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+            -p "$DEPLOY_SSH_PORT" -i ~/.ssh/deploy_key "$DEPLOY_SSH_USER@$DEPLOY_HOST" \
+            "${remote[*]} RELEASE_SHA='${RELEASE_SHA}' REPOSITORY='${GITHUB_REPOSITORY}' DEPLOY_ROOT='${DEPLOY_ROOT}' bash -s" <<'SSH'
           set -euo pipefail
 
           REPO="ghcr.io/${REPOSITORY,,}"
           TAG="${RELEASE_SHA}"
-          ROOT="/opt/neironych"
+          ROOT="${DEPLOY_ROOT}"
           RELEASES="${ROOT}/releases"
           SHARED="${ROOT}/shared"
           RELEASE_DIR="${RELEASES}/${TAG}"
           REVISION_FILE="${ROOT}/REVISION"
           PREVIOUS_TAG="$(cat "${REVISION_FILE}" 2>/dev/null || true)"
           BUNDLE="/tmp/neironych-${TAG}.tar.gz"
+          test -f "${BUNDLE}"
+
+          # Existing installations own their project, ports, secrets, proxy and DB.
+          # Never switch them to the standalone neironych/PITR/Nginx topology.
+          if [ -f "${ROOT}/compose.host.yml" ]; then
+            mkdir -p "${RELEASE_DIR}"
+            tar -xzf "${BUNDLE}" -C "${RELEASE_DIR}"
+            python3 "${RELEASE_DIR}/ops/deploy/existing_host.py" \
+              --root "${ROOT}" --revision "${TAG}" --image "${REPO}:${TAG}"
+            rm -f "${BUNDLE}"
+            exit 0
+          fi
 
           mkdir -p "${RELEASES}" "${SHARED}" "${RELEASE_DIR}" "${SHARED}/nginx"
-          test -f "${BUNDLE}"
           test -f "${SHARED}/.env"
           test -f "${SHARED}/.backup.env"
           test -f "${SHARED}/nginx/ssl/fullchain.pem"
           test -f "${SHARED}/nginx/ssl/privkey.pem"
-
           tar -xzf "${BUNDLE}" -C "${RELEASE_DIR}"
           rm -f "${BUNDLE}"
-
           ln -sfn "${SHARED}/.env" "${RELEASE_DIR}/.env"
           ln -sfn "${SHARED}/.backup.env" "${RELEASE_DIR}/.backup.env"
           mkdir -p "${RELEASE_DIR}/nginx"
@@ -133,7 +193,7 @@ jobs:
             expected="$1"
             for attempt in $(seq 1 12); do
               sleep 5
-              status="$(curl -fsS http://localhost:8000/api/v1/readiness 2>/dev/null || true)"
+              status="$(curl -fsS --max-time 10 http://localhost:8000/api/v1/readiness 2>/dev/null || true)"
               if printf '%s' "$status" | grep -Fq "\"revision\":\"${expected}\""; then
                 return 0
               fi
@@ -147,13 +207,11 @@ jobs:
               echo "No previous revision recorded; automatic rollback is unavailable"
               return 1
             fi
-
             previous_dir="${RELEASES}/${PREVIOUS_TAG}"
             if [ ! -d "${previous_dir}" ]; then
               echo "Previous release bundle ${previous_dir} is missing"
               return 1
             fi
-
             echo "Rolling back application and runtime configuration to ${PREVIOUS_TAG}"
             export NEIRONYCH_IMAGE="${REPO}:${PREVIOUS_TAG}"
             export APP_REVISION="${PREVIOUS_TAG}"
@@ -165,18 +223,9 @@ jobs:
 
           export NEIRONYCH_IMAGE="${REPO}:${TAG}"
           export APP_REVISION="${TAG}"
-
           docker pull "${NEIRONYCH_IMAGE}"
-
-          # Keep the PITR image/config versioned with the release bundle.
           compose_for "${RELEASE_DIR}" build postgres
-
-          # Migrations follow expand/deploy/contract so the previous application
-          # release remains compatible if health verification forces rollback.
           compose_for "${RELEASE_DIR}" run --rm -e APP_REVISION="${TAG}" app alembic upgrade head
-
-          # A production release includes every mandatory runtime process and the
-          # external TLS proxy, not only the API container.
           compose_for "${RELEASE_DIR}" --profile telegram up -d --no-build \
             app worker webhook_worker telegram nginx
 
@@ -186,7 +235,6 @@ jobs:
             echo "Deploy verified: revision ${TAG} is live"
             exit 0
           fi
-
           echo "ERROR: revision ${TAG} did not become ready; attempting rollback"
           if rollback; then
             echo "Rollback verified: revision ${PREVIOUS_TAG} is live"
@@ -195,3 +243,7 @@ jobs:
           fi
           exit 1
           SSH
+
+      - name: Remove temporary SSH identity
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
