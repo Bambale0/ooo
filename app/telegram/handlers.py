@@ -456,6 +456,7 @@ async def admin_callback(event, db, dialog, data: str) -> None:
     elif data == "admin_partners_all":
         from app.telegram.admin_partners import show_admin_partners
 
+        reset(dialog)
         await show_admin_partners(event, db, dialog, 0, search=None)
     elif data == "admin_catalog_import":
         await ask_confirmation(
