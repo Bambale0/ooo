@@ -40,8 +40,12 @@ def partner_query() -> Select[tuple[Partner, str | None]]:
 
 def recipient_label(partner: Partner, username: str | None) -> str:
     username_label = f" · @{username}" if username else ""
+    return f"{partner.telegram_id} · {partner.company_name[:25]}{username_label}"
+
+
+def admin_partner_label(partner: Partner, username: str | None) -> str:
     status_label = {"active": "✓", "disabled": "⏸", "deleted": "×"}.get(partner.status, "•")
-    return f"{status_label} {partner.telegram_id} · {partner.company_name[:22]}{username_label}"
+    return f"{status_label} {recipient_label(partner, username)}"
 
 
 def _status(partner: Partner) -> str:
@@ -217,7 +221,7 @@ async def show_admin_partners(event, db, dialog, page: int = 0, *, search: dict 
     ).all()
     dialog.state, dialog.data = "admin_partner_browse", {"search": search}
     buttons = [
-        (recipient_label(partner, username), f"admin_partner_view:{partner.id}")
+        (admin_partner_label(partner, username), f"admin_partner_view:{partner.id}")
         for partner, username in rows[:PAGE_SIZE]
     ]
     if page:
