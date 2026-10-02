@@ -202,3 +202,22 @@ Crypto Pay; для более старых неизвестных invoice id д�
 созданием фиктивной оплаты в production: используйте изолированные тесты и
 наблюдайте следующий настоящий платёж. Provider float и ограничения treasury
 продолжают проверяться отдельно при генерациях.
+
+## Native upstream diagnostics
+
+Native inference emits `native_inference_submit_started`,
+`native_inference_upstream_headers` and, on transport/decode failures,
+`native_inference_transport_or_decode_failed`. Each event links the local
+`generation_id`, `attempt_id`, `trace_id`, model and protocol. Failures also retain
+this bounded diagnostic JSON in the existing internal `ProviderAttempt.raw_error`.
+
+`upstream_status` distinguishes an upstream HTTP 524/5xx from a local transport
+exception. `phase` distinguishes `awaiting_headers`, `response_headers` and
+`response_body_or_usage`. `submit_elapsed_ms` includes adapter rate-limiter wait;
+it must not be reported as provider rendering time. Well-formed `cf_ray` and UUID
+`upstream_request_id` headers are retained only internally for escalation.
+
+Prompts, reference URLs, auth/cookie headers, response bodies and exception messages
+are excluded. The public API/error envelope and no-blind-replay billing semantics
+are unchanged. These diagnostics do not remove an upstream timeout or prove whether
+an uncertain image was accepted. Do not resubmit it with a new key without reconciliation.
