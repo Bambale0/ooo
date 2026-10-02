@@ -1,4 +1,6 @@
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from decimal import Decimal
+
+from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.database import Base
@@ -23,6 +25,8 @@ class ProviderCredential(Base):
         index=True,
     )
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    provider_cost_ceiling_usdt: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
+    billing_unit: Mapped[str | None] = mapped_column(String(32))
     created_at: Mapped[object] = utc_created_at()
 
 
