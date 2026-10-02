@@ -98,6 +98,10 @@ jobs:
                   print(f"{path}:{item.get('line_number')}: {item.get('type')}")
           sys.exit(1 if findings else 0)
           PY
+          if grep -RInE 'sk-asale-[A-Za-z0-9_-]{20,}'             app ops docs .github *.md Dockerfile docker-compose*.yml .env.example; then
+            echo "Asale API key pattern detected in repository content" >&2
+            exit 1
+          fi
 
       - name: Apply migrations
         run: alembic upgrade head
