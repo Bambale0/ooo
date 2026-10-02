@@ -234,9 +234,27 @@ Branch: `fix/fx-policy-and-inference-diagnostics`.
 ## Steps
 
 1. [x] Inspect production evidence and current FX/inference paths.
-2. [ ] Add failing regression tests for invoice-scoped FX and rejection tracing.
-3. [ ] Implement FX policy, invoice snapshots, admin controls and migration.
-4. [ ] Implement safe rejection telemetry and provider correlation.
-5. [ ] Run focused tests, full CI and migration/schema checks.
+2. [x] Add regression tests for invoice-scoped FX and rejection tracing.
+3. [x] Implement FX policy, invoice snapshots, admin controls and migration.
+4. [x] Implement safe rejection telemetry and provider correlation.
+5. [x] Run focused/full CI through migration/schema/test/security/build gates.
 6. [ ] Review diff, merge through PR and deploy exact verified SHA.
 7. [ ] Verify production readiness and read-only diagnostics after deployment.
+
+
+## Verification before final merge
+
+- Product brief sections 31–32 and implementation FX policy were updated to the
+  explicit 2026-10-02 decision: external exchange-rate lookup only at invoice
+  creation; manual override persists until explicitly disabled.
+- Initial test-first PR run exposed test/lint issues before implementation was
+  complete; no completion claim was made from that run.
+- CI run #221 for code SHA `aa133a88d1a7de0b6794f49b1d43765c57e656f6`
+  passed all gates before the documentation alignment commit:
+  - Ruff, dependency audit, SAST and secret scan: PASS.
+  - Alembic upgrade and ORM schema comparison: PASS.
+  - Pytest: **719 passed in 49.98s**.
+  - Encrypted backup/restore and WAL PITR: PASS.
+  - Production Nginx validation and production image build: PASS.
+- A final exact-SHA CI run is required after these documentation/spec commits
+  before the PR can be marked ready and merged.
