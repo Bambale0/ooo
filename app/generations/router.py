@@ -12,7 +12,8 @@ from app.billing.service import (
     require_sufficient_balance,
 )
 from app.catalog.access import RESTRICTED_STATUS, has_model_grant
-from app.catalog.models import Model, PartnerPrice
+from app.catalog.models import Model
+from app.catalog.pricing import resolve_partner_price, retail_price
 from app.generations.models import Generation
 from app.generations.schemas import (
     GenerationCreate,
@@ -45,20 +46,31 @@ async def create_generation(
     if existing is not None:
         return existing
 
-    model_result = await db.execute(
-        select(Model, PartnerPrice)
-        .join(PartnerPrice, PartnerPrice.model_id == Model.id)
-        .where(
-            Model.slug == payload.model_slug,
-            Model.status.in_(["production", RESTRICTED_STATUS]),
-            PartnerPrice.mode == payload.mode,
-            PartnerPrice.resolution == payload.resolution,
+    model = (
+        await db.execute(
+            select(Model).where(
+                Model.slug == payload.model_slug,
+                Model.status.in_(["production", RESTRICTED_STATUS]),
+            )
         )
-    )
-    row = model_result.one_or_none()
-    if row is None:
+    ).scalar_one_or_none()
+    if model is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="model_or_price_not_available")
-    model, price = row
+    try:
+        price, override = await resolve_partner_price(
+            db,
+            model_id=model.id,
+            mode=payload.mode,
+            resolution=payload.resolution,
+            partner_id=partner.id,
+        )
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="model_or_price_not_available",
+            ) from exc
+        raise
     if model.status == RESTRICTED_STATUS and not await has_model_grant(db, model.id, partner.id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="model_or_price_not_available")
     try:
@@ -79,7 +91,8 @@ async def create_generation(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     billable_units = payload.duration_seconds if price.billing_unit == "second" else 1
-    price_rub = Decimal(price.price_rub) * Decimal(billable_units)
+    unit_price_rub = retail_price(price, override)
+    price_rub = unit_price_rub * Decimal(billable_units)
 
     from app.billing.fx import current_fx
     from app.billing.fx import snapshot as fx_snapshot
@@ -137,7 +150,7 @@ async def create_generation(
             "start_image": payload.start_image.model_dump() if payload.start_image else None,
             "end_image": payload.end_image.model_dump() if payload.end_image else None,
             "billing_unit": price.billing_unit,
-            "unit_price_rub": str(price.price_rub),
+            "unit_price_rub": str(unit_price_rub),
             "billable_units": billable_units,
         },
     )
