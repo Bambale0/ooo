@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select, update
 
 from app.accounts.models import Partner, PartnerApplication
@@ -16,6 +17,18 @@ from app.providers.schemas import (
 )
 
 router = APIRouter()
+
+
+@router.get("/infai/catalog", dependencies=[Depends(require_admin)])
+async def infai_catalog(db: DbSession):
+    from decimal import Decimal
+
+    from app.providers.infai import InfaiError, catalog_with_retail
+
+    try:
+        return jsonable_encoder(await catalog_with_retail(db), custom_encoder={Decimal: str})
+    except InfaiError as exc:
+        raise HTTPException(exc.status, exc.code) from None
 
 
 @router.post(

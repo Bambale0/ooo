@@ -744,3 +744,6 @@ Implementation epics и README не должны самовольно менят
 Уведомления провайдера принимаются через `POST /webhook/res/` с отдельным Bearer-секретом
 и доставляются администратору через существующую Telegram-очередь.
 Настройка и формат: [Provider notifications](docs/PROVIDER_NOTIFICATIONS.md).
+
+Чтение аккаунта InfAI, моделей и закупочных цен по группам с сохранением текущей розницы:
+[интеграция InfAI](docs/INFAI_INTEGRATION.md).

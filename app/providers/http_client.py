@@ -33,6 +33,13 @@ async def close_provider_http_clients() -> None:
 
 def _create_provider_http_client(provider: str) -> httpx.AsyncClient:
     settings = get_settings()
+    if provider == "infai":
+        # Management credentials are scoped to this verified origin, never redirects.
+        return httpx.AsyncClient(
+            base_url="https://infai.cc", timeout=httpx.Timeout(20, connect=5, pool=5),
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+            trust_env=False, follow_redirects=False,
+        )
     if provider == "argolink":
         prefix = "argolink"
     elif provider == "asale":
