@@ -29,7 +29,7 @@ async def cabinet(db_session, monkeypatch):
     bot.session = AsyncMock()
     counter = 0
 
-    async def feed(*, user=123, username=None, text=None, callback=None, document=None):
+    async def feed(*, user=123, username=None, text=None, callback=None, document=None, reply_markup=None):
         nonlocal counter
         counter += 1
         sender = {"id": user, "is_bot": False, "first_name": "Test"}
@@ -43,6 +43,8 @@ async def cabinet(db_session, monkeypatch):
         }
         update = {"update_id": counter}
         if callback:
+            if reply_markup is not None:
+                message["reply_markup"] = reply_markup.model_dump(exclude_none=True)
             update["callback_query"] = {
                 "id": str(counter),
                 "from": sender,
