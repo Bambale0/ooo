@@ -295,6 +295,47 @@ async def test_telegram_infai_overview_is_admin_only(cabinet, infai_settings, mo
     assert "test-infai-system-token" not in allowed.text and "private@example.org" not in allowed.text
 
 
+async def test_telegram_infai_shows_progress_before_provider_request(cabinet, monkeypatch):
+    from aiogram.methods import EditMessageText
+
+    from app.providers.infai import InfaiError
+
+    feed, bot = cabinet
+    progress = []
+
+    async def unavailable(db):
+        progress.extend(call.args[1].text for call in bot.session.call_args_list
+                        if isinstance(call.args[1], EditMessageText))
+        raise InfaiError("infai_temporarily_unavailable", 503)
+
+    monkeypatch.setattr("app.telegram.infai.catalog_with_retail", unavailable)
+    await feed(user=999, callback="admin_infai")
+    assert any("Запрашиваем" in text for text in progress)
+
+
+async def test_telegram_infai_stalled_request_releases_navigation(cabinet, monkeypatch):
+    import asyncio
+
+    feed, _ = cabinet
+    cancelled = False
+
+    async def stalled(db):
+        nonlocal cancelled
+        try:
+            await asyncio.Future()
+        finally:
+            cancelled = True
+
+    monkeypatch.setattr("app.telegram.infai.catalog_with_retail", stalled)
+    monkeypatch.setattr("app.telegram.infai.OVERVIEW_TIMEOUT_SECONDS", 0.01, raising=False)
+    async with asyncio.timeout(1):
+        methods = await feed(user=999, callback="admin_infai")
+    assert cancelled
+    assert "не успел" in methods[-1].text
+    assert any(b.callback_data == "admin_menu" for row in methods[-1].reply_markup.inline_keyboard for b in row)
+    assert "Администрирование" in (await feed(user=999, callback="admin_menu"))[-1].text
+
+
 async def test_invalid_upstream_pricing_is_not_reported_as_free(infai_settings):
     from app.providers.infai import InfaiClient, InfaiError
 
