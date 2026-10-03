@@ -590,11 +590,17 @@ async def admin_callback(event, db, dialog, data: str) -> None:
                 ("Платежи", "admin_payments:0"),
                 ("Казначейство", "admin_stw"),
                 ("Цены, возвраты и сверки", "admin_ops"),
+                ("InfAI: модели и цены", "admin_infai"),
                 ("Поддержка", "admin_support"),
                 ("Партнёры", "admin_partners:0"),
                 ("Состояние", "admin_health"),
             ),
         )
+    elif data == "admin_infai":
+        from app.telegram.infai import overview
+
+        reset(dialog)
+        await overview(event, db)
     elif data.startswith("admin_apps:"):
         page = page_number(data)
         rows = (

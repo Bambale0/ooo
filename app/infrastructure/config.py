@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     argolink_base_url: str = "https://argolink.io"
     argolink_api_key: str | None = None
     provider_notification_webhook_secret: SecretStr | None = None
+    infai_system_token: SecretStr | None = None
+    infai_user_id: int | None = Field(default=None, gt=0)
     provider_credentials_master_key: str | None = Field(default=None, min_length=32)
     opening_working_capital_usdt: Decimal = Field(default=Decimal("0"), ge=0)
     required_provider_float_usdt: Decimal = Field(default=Decimal("0"), ge=0)
