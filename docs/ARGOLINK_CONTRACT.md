@@ -216,3 +216,14 @@ another generation or alter billing.
 Actions are admin-only and stored in the request audit snapshot. Conflicting
 repeat actions fail. Do not release an uncertain request solely because the
 client disconnected or a proxy returned 5xx.
+
+
+## Nano Banana 2 Lite resolution correction (2026-10-03)
+
+The live ArgoLink image catalog advertises `nano-banana-2-lite` at **1K only**,
+with procurement **USD 0.01 per image**. The earlier 2K tier was incorrect and
+has been removed. Both native image routes reject 2K/4K before submission;
+1K requests, including image references, retain the existing contract.
+Nano Banana 2 and Pro keep their existing 1K/2K/4K contracts.
+
+Source: https://argolink.io/api/catalog/v1/models?category=image&sort=provider&page_size=100

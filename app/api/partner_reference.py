@@ -283,11 +283,11 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
                 "resolution",
                 "string · optional",
                 t(
-                    "Nano Banana Pro: 1k (по умолчанию), 2k или 4k. Другие Nano/Grok: 1k или 2k; "
-                    "доступность зависит от модели/режима. Для Nano Banana 2 Lite используйте 1k. "
+                    "Nano Banana 2/Pro: 1k (по умолчанию), 2k или 4k. Grok: 1k или 2k; "
+                    "доступность зависит от модели/режима. Nano Banana 2 Lite поддерживает только 1k. "
                     "GPT, включая Sunburst: размер задаётся через size, например 3840x2160 для 4K.",
-                    "Nano Banana Pro: 1k (default), 2k or 4k. Other Nano/Grok: 1k or 2k; availability depends "
-                    "on model/mode. Use 1k for Nano Banana 2 Lite. GPT, including Sunburst: set dimensions "
+                    "Nano Banana 2/Pro: 1k (default), 2k or 4k. Grok: 1k or 2k; availability depends "
+                    "on model/mode. Nano Banana 2 Lite supports only 1k. GPT, including Sunburst: set dimensions "
                     "using size, e.g. 3840x2160 for 4K.",
                 ),
             ),
