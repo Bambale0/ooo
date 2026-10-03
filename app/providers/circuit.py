@@ -152,7 +152,15 @@ async def recovery_tick(db, provider="argolink", *, health_check=None):
     if health_check is None:
         from app.providers.registry import get_provider_adapter
 
-        health_check = get_provider_adapter(provider).health_check
+        if provider == "infai":
+            from app.providers.service import get_active_provider_credential, get_partner_provider_adapter
+
+            if await get_active_provider_credential(db, "", provider) is None:
+                row.last_check_at = now
+                return
+            health_check = (await get_partner_provider_adapter(db, "", provider)).health_check
+        else:
+            health_check = get_provider_adapter(provider).health_check
     row.last_check_at = now
     try:
         healthy = await health_check()

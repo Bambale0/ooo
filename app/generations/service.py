@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.billing.service import (
     apply_cost_coverage_change,
     lock_partner_for_update,
+    release_generation_cost_reserve,
     release_generation_reserve,
     release_generation_reserves,
     settle_generation_reserves,
@@ -19,6 +20,7 @@ from app.infrastructure.retry import is_due, is_older_than, next_poll_at, next_r
 from app.media.service import create_provider_ready_asset
 from app.providers.asale import asale_supports_request
 from app.providers.base import ProviderAdapterError, ProviderGenerationRequest, ProviderPollResult
+from app.providers.infai_video import INFAI_CREDENTIAL_LABEL, infai_cost_ceiling, infai_supports_request
 from app.providers.models import ProviderAttempt, ProviderCredential, ProviderModelCapability
 from app.providers.rate_limit import get_provider_rate_limiter
 from app.providers.service import (
@@ -29,7 +31,7 @@ from app.providers.service import (
 from app.webhooks.service import ensure_terminal_webhook_event
 
 PRIMARY_PROVIDER = "argolink"
-FALLBACK_PROVIDERS = ("asale",)
+FALLBACK_PROVIDERS = ("infai", "asale")
 
 
 def _provider_request_for_generation(generation: Generation) -> ProviderGenerationRequest:
@@ -59,15 +61,9 @@ def _provider_request_for_generation(generation: Generation) -> ProviderGenerati
         prompt=str(normalized.get("prompt", generation.prompt)),
         duration_seconds=int(normalized.get("duration", generation.duration_seconds)),
         aspect_ratio=normalized.get("aspect_ratio", generation.aspect_ratio),
-        start_image=media_url(normalized.get("start_image"))
-        or media_url(request_payload.get("start_image")),
-        end_image=media_url(normalized.get("end_image"))
-        or media_url(request_payload.get("end_image")),
-        reference_images=tuple(
-            url
-            for item in references
-            if (url := media_url(item)) is not None
-        ),
+        start_image=media_url(normalized.get("start_image")) or media_url(request_payload.get("start_image")),
+        end_image=media_url(normalized.get("end_image")) or media_url(request_payload.get("end_image")),
+        reference_images=tuple(url for item in references if (url := media_url(item)) is not None),
     )
 
 
@@ -80,6 +76,8 @@ async def fallback_cost_ceiling_for_request(
 ) -> tuple[str, Decimal] | None:
     capability_mode = "default" if request.mode == "videos/generations" else request.mode
     for provider in FALLBACK_PROVIDERS:
+        if provider == "infai" and not infai_supports_request(request):
+            continue
         if provider == "asale" and not asale_supports_request(request):
             continue
         capability = (
@@ -93,15 +91,18 @@ async def fallback_cost_ceiling_for_request(
                 )
             )
         ).scalar_one_or_none()
-        if (
-            capability is None
-            or capability.provider_cost_ceiling_usdt is None
-            or capability.billing_unit is None
-        ):
+        if capability is None or capability.provider_cost_ceiling_usdt is None or capability.billing_unit is None:
             continue
         if not await has_provider_runtime_credential(db, partner_id, provider):
             continue
-        if capability.billing_unit == "second":
+        rate = Decimal(capability.provider_cost_ceiling_usdt)
+        if not rate.is_finite() or rate < 0:
+            continue
+        if provider == "infai":
+            if capability.billing_unit != "million_video_tokens":
+                continue
+            total_cost = infai_cost_ceiling(request, rate)
+        elif capability.billing_unit == "second":
             total_cost = Decimal(capability.provider_cost_ceiling_usdt) * Decimal(request.duration_seconds)
         elif capability.billing_unit == "generation":
             total_cost = Decimal(capability.provider_cost_ceiling_usdt)
@@ -231,7 +232,28 @@ async def dispatch_generation_to_provider(
 
     if not await admit(db, generation.id, provider=provider):
         return None
-    if retrying_failed_task:
+    if provider == "infai":
+        # Pin the group-specific credential chosen with the procurement quote.
+        # Rotation/revocation must not move a queued request to another group.
+        pinned_id = (generation.request_payload or {}).get("fallback_credential_id")
+        credential = (
+            await db.execute(
+                select(ProviderCredential)
+                .where(
+                    ProviderCredential.id == pinned_id,
+                    ProviderCredential.provider == "infai",
+                    ProviderCredential.partner_id.is_(None),
+                    ProviderCredential.label == INFAI_CREDENTIAL_LABEL,
+                    ProviderCredential.is_active.is_(True),
+                    ProviderCredential.encrypted_api_key.is_not(None),
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if credential is None:
+            return await cancel_before_submit(db, generation, provider=provider)
+        adapter = await get_partner_provider_adapter(db, generation.partner_id, provider, credential_id=credential.id)
+    elif retrying_failed_task:
         # Retrying on another account could orphan billing/reconciliation. A
         # revoked original credential must not silently switch to a newer key.
         credential = (
@@ -361,7 +383,11 @@ async def poll_generation_provider(
         )
         generation.status = "timeout"
         generation.public_error_code = "generation_timeout"
-        if provider == "asale":
+        if provider == "infai":
+            # Accepted work can still complete: release retail, retain unknown
+            # procurement reserve for a later definitive poll/reconciliation.
+            await release_generation_reserve(db, generation, reason="Released reserve after fallback timeout")
+        elif provider == "asale":
             await release_generation_reserve(
                 db,
                 generation,
@@ -432,7 +458,7 @@ async def poll_generation_provider(
         else:
             _mark_attempt_error(attempt, generation, normalized)
             if generation.status == "failed":
-                if provider == "asale" and attempt.provider_task_id:
+                if provider in FALLBACK_PROVIDERS and attempt.provider_task_id:
                     attempt.status = generation.status = "reconciliation_required"
                     generation.public_error_code = "submission_outcome_unknown"
                     attempt.next_attempt_at = attempt.next_poll_at = None
@@ -458,7 +484,12 @@ async def poll_generation_provider(
         generation.status = "completed"
         generation.public_error_code = None
         attempt.next_poll_at = None
-        if (generation.request_payload or {}).get("rates"):
+        if provider == "infai":
+            if not await _settle_infai_success(db, generation, result):
+                attempt.status = "reconciliation_required"
+                await db.flush()
+                return generation
+        elif (generation.request_payload or {}).get("rates"):
             from app.inference.accounting import settle_actual
 
             seconds = (result.usage or {}).get("billed_seconds")
@@ -497,6 +528,20 @@ async def poll_generation_provider(
         if reconciling_late_success:
             generation.status = "timeout"
             generation.public_error_code = "generation_timeout"
+            if provider == "infai":
+                await release_generation_cost_reserve(
+                    db,
+                    generation,
+                    reason="Released fallback procurement reserve after definitive late failure",
+                )
+        elif result.retryable_failure and await _queue_fallback_after_safe_failure(
+            db,
+            generation,
+            attempt,
+            result,
+            preferred_only="infai",
+        ):
+            pass
         elif result.retryable_failure and _schedule_generation_retry(generation, attempt, result):
             pass
         elif result.retryable_failure and await _queue_fallback_after_safe_failure(
@@ -548,6 +593,8 @@ async def _queue_fallback_after_safe_failure(
     generation: Generation,
     attempt: ProviderAttempt,
     result: ProviderPollResult,
+    *,
+    preferred_only: str | None = None,
 ) -> bool:
     if attempt.provider != PRIMARY_PROVIDER:
         return False
@@ -555,6 +602,28 @@ async def _queue_fallback_after_safe_failure(
     if selected is None:
         return False
     provider, cost_ceiling = selected
+    if preferred_only is not None and provider != preferred_only:
+        return False
+    infai_snapshot = {}
+    if provider == "infai":
+        capability = (
+            await db.execute(
+                select(ProviderModelCapability).where(
+                    ProviderModelCapability.provider == provider,
+                    ProviderModelCapability.model_id == generation.model_id,
+                    ProviderModelCapability.mode == "default",
+                    ProviderModelCapability.resolution == generation.resolution,
+                )
+            )
+        ).scalar_one()
+        credential = await get_active_provider_credential(db, generation.partner_id, provider)
+        if credential is None:
+            return False
+        infai_snapshot = {
+            "infai_price_per_million_usd": str(capability.provider_cost_ceiling_usdt),
+            "infai_group": "Seedance-1",
+            "fallback_credential_id": credential.id,
+        }
     failed_at = utc_now()
     payload = generation.request_payload or {}
     history = payload.get("provider_failed_tasks", [])
@@ -570,11 +639,12 @@ async def _queue_fallback_after_safe_failure(
                 "error": result.raw_error,
                 "usage": result.usage,
                 "failed_at": failed_at.isoformat(),
-                "cost_status": "safe_retry_eligible",
+                "cost_status": "unknown",
             },
         ],
         "fallback_provider": provider,
         "fallback_provider_cost_ceiling_usdt": str(cost_ceiling),
+        **infai_snapshot,
     }
     attempt.status = "failed"
     attempt.next_attempt_at = None
@@ -582,6 +652,37 @@ async def _queue_fallback_after_safe_failure(
     attempt.last_error = result.raw_error
     generation.status = "queued"
     generation.public_error_code = None
+    return True
+
+
+async def _settle_infai_success(db: AsyncSession, generation: Generation, result: ProviderPollResult) -> bool:
+    from app.inference.accounting import settle_actual
+
+    payload = generation.request_payload or {}
+    usage = result.usage or {}
+    tokens, seconds = usage.get("completion_tokens"), usage.get("billed_seconds")
+    try:
+        if (
+            isinstance(tokens, bool)
+            or not isinstance(tokens, int)
+            or tokens <= 0
+            or isinstance(seconds, bool)
+            or not isinstance(seconds, int)
+            or seconds != generation.duration_seconds
+        ):
+            raise ValueError("invalid_usage")
+        rate = Decimal(payload["infai_price_per_million_usd"])
+        cost = rate * Decimal(tokens) / Decimal(1_000_000)
+        ceiling = Decimal(payload["fallback_provider_cost_ceiling_usdt"])
+        if not cost.is_finite() or cost < 0 or cost > ceiling:
+            raise ValueError("invalid_cost")
+    except (KeyError, ValueError, ArithmeticError):
+        generation.status = "reconciliation_required"
+        generation.public_error_code = "usage_reconciliation_required"
+        return False
+    # Retail still comes exclusively from the immutable accepted ArgoLink schedule.
+    await settle_actual(db, generation, {"seconds": generation.duration_seconds}, provider_cost=cost)
+    generation.usage_snapshot = {"seconds": seconds, "completion_tokens": tokens}
     return True
 
 

@@ -60,6 +60,8 @@ def reset_provider_rate_limiters() -> None:
 
 def _configured_rate(provider: str, operation: str) -> float:
     settings = get_settings()
+    if provider == "infai" and operation in {"submit", "poll"}:
+        return 1.0 if operation == "submit" else 5.0
     if provider in {"argolink", "asale"}:
         if operation == "submit":
             return getattr(settings, f"{provider}_submit_rps")

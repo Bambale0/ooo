@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.generations.models import Generation
 from app.generations.service import (
+    FALLBACK_PROVIDERS,
     PRIMARY_PROVIDER,
     dispatch_generation_to_provider,
     poll_generation_provider,
@@ -67,7 +68,7 @@ async def process_generation_work_concurrently_once(
     from app.providers.circuit import recovery_tick
 
     async with session_factory() as db:
-        for recovery_provider in ([provider] if provider else [PRIMARY_PROVIDER, "asale"]):
+        for recovery_provider in [provider] if provider else [PRIMARY_PROVIDER, *FALLBACK_PROVIDERS]:
             await recovery_tick(db, recovery_provider)
         await db.commit()
 
