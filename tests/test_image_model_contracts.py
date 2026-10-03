@@ -76,10 +76,12 @@ def test_nano_banana_2_serves_every_reviewed_resolution(resolution):
     assert body["resolution"] == resolution
 
 
-def test_nano_banana_2_lite_has_no_4k():
+@pytest.mark.parametrize("protocol", ["images/generations", "images/edits"])
+@pytest.mark.parametrize("resolution", ["2k", "2K", "4k", "4K"])
+def test_nano_banana_2_lite_rejects_unsupported_resolutions(protocol, resolution):
     with pytest.raises(ValueError, match="unsupported_resolution"):
         validate_request(
-            "images/generations", {"model": "nano-banana-2-lite", "prompt": "A lighthouse", "resolution": "4k"}
+            protocol, {"model": "nano-banana-2-lite", "prompt": "A lighthouse", "resolution": resolution}
         )
 
 
@@ -101,3 +103,16 @@ def test_sunburst_keeps_documented_sizes_and_maximum_batch_and_references(size):
 def test_sunburst_rejects_more_than_seven_results_or_sixteen_references(controls):
     with pytest.raises(ValueError):
         validate_request("images/edits", {"model": "gpt-image-2.5-sunburst", "prompt": "Edit", **controls})
+
+
+@pytest.mark.parametrize("protocol", ["images/generations", "images/edits"])
+@pytest.mark.parametrize("resolution", ["1k", "1K"])
+def test_nano_banana_2_lite_preserves_supported_reference_requests(protocol, resolution):
+    body = {
+        "model": "nano-banana-2-lite",
+        "prompt": "Preserve the reference object",
+        "resolution": resolution,
+        "images": [{"image_url": "https://example.org/reference.jpg"}],
+        "n": 1,
+    }
+    assert validate_request(protocol, body) == body

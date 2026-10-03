@@ -572,13 +572,11 @@
           {
             "label": "1K",
             "price": 0.01
-          },
-          {
-            "label": "2K",
-            "price": 0.01
           }
         ]
-      }
+      },
+      "checked_at": "2026-10-03",
+      "source": "https://argolink.io/api/catalog/v1/models?category=image&sort=provider&page_size=100"
     },
     "nano-banana-pro": {
       "category": "image",
