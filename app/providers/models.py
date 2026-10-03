@@ -1,10 +1,10 @@
 from decimal import Decimal
 
-from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.database import Base
-from app.infrastructure.types import utc_created_at, uuid_pk
+from app.infrastructure.types import ExactNumeric, utc_created_at, uuid_pk
 
 
 class ProviderCredential(Base):
@@ -60,6 +60,10 @@ class ProviderAttempt(Base):
     next_poll_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), index=True)
     poll_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_error: Mapped[str | None] = mapped_column(Text)
+    usage_snapshot: Mapped[dict[str, object] | None] = mapped_column(JSON)
+    cost_status: Mapped[str | None] = mapped_column(String(32), index=True)
+    provider_cost_usdt: Mapped[Decimal | None] = mapped_column(ExactNumeric(36, 18))
+    cost_reserve_usdt: Mapped[Decimal | None] = mapped_column(ExactNumeric(36, 18))
     created_at: Mapped[object] = utc_created_at()
 
 
@@ -79,6 +83,6 @@ class ProviderCircuit(Base):
 class ProviderOutcome(Base):
     __tablename__ = "provider_outcomes"
     generation_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    provider: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    provider: Mapped[str] = mapped_column(String(80), primary_key=True, index=True)
     outcome: Mapped[str] = mapped_column(String(20), nullable=False)
     created_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False, index=True)

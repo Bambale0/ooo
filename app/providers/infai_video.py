@@ -16,10 +16,39 @@ from app.providers.base import (
 from app.providers.http_client import get_provider_http_client
 
 INFAI_CREDENTIAL_LABEL = "infai-seedance-1"
-MODEL = "doubao-seedance-2-5-260628"
+MODELS = {
+    "seedance-2.0": "doubao-seedance-2-0-260128",
+    "seedance-2.5": "doubao-seedance-2-5-260628",
+}
 BASE = "https://infai.cc"
 TASKS = "/api/v3/contents/generations/tasks"
 _RATIOS = {"16:9", "9:16", "4:3", "3:4", "1:1", "21:9"}
+_NATIVE_FIELDS = {
+    "model",
+    "prompt",
+    "duration",
+    "seconds",
+    "resolution",
+    "aspect_ratio",
+    "ratio",
+    "size",
+    "generate_audio",
+    "watermark",
+    "omni_reference_task_type",
+    "reference_images",
+    "image_urls",
+    "reference_videos",
+    "video_urls",
+    "reference_audios",
+    "audio_urls",
+    "input_references",
+    "start_image",
+    "image_url",
+    "end_image",
+    "end_image_url",
+    "frame_images",
+    "n",
+}
 _CDN_HOSTS = {
     # Authenticated InfAI task result: public DNS, valid TLS, MP4 Range 206 verified.
     "videos.tpkcur.xyz",
@@ -29,53 +58,113 @@ _CDN_HOSTS = {
 }
 
 
+def _effective_ratio(payload: ProviderGenerationRequest) -> str | None:
+    # Seedance 2.0/2.5 define an omitted ratio as the provider's adaptive mode.
+    # Make that default explicit when routing between providers so the fallback
+    # preserves the accepted request instead of being rejected as incompatible.
+    return payload.aspect_ratio or "adaptive"
+
+
 def infai_supports_request(payload: ProviderGenerationRequest) -> bool:
-    if (
-        payload.model_slug != "seedance-2.5"
-        or payload.mode != "videos/generations"
-        or payload.resolution not in {"480p", "720p"}
-        or payload.aspect_ratio not in _RATIOS
-        or not 4 <= payload.duration_seconds <= 30
-        or not payload.prompt.strip()
-        or payload.start_image
-        or payload.end_image
-    ):
+    if payload.model_slug not in MODELS or payload.mode != "videos/generations":
         return False
     native = payload.native_body
-    allowed = {
-        "model",
-        "prompt",
-        "duration",
-        "seconds",
-        "resolution",
-        "aspect_ratio",
-        "ratio",
-        "generate_audio",
-        "omni_reference_task_type",
-        "reference_images",
-        "n",
-    }
-    if not isinstance(native, dict) or set(native) - allowed:
+    if not isinstance(native, dict) or set(native) - _NATIVE_FIELDS:
         return False
     if native.get("model") != payload.model_slug or native.get("n", 1) != 1:
         return False
-    if native.get("omni_reference_task_type", "reference") != "reference":
-        return False
     if "generate_audio" in native and not isinstance(native["generate_audio"], bool):
         return False
-    references = native.get("reference_images", [])
-    if not isinstance(references, list) or len(references) > 30:
-        return False
-    urls = []
-    for item in references:
-        if isinstance(item, str):
-            urls.append(item)
-        elif isinstance(item, dict) and set(item) == {"url"} and isinstance(item["url"], str):
-            urls.append(item["url"])
-        else:
+    ratio = _effective_ratio(payload)
+    if payload.model_slug == "seedance-2.5":
+        if (
+            payload.resolution not in {"480p", "720p"}
+            or ratio not in _RATIOS | {"adaptive"}
+            or not 4 <= payload.duration_seconds <= 30
+            or not payload.prompt.strip()
+            or payload.start_image
+            or payload.end_image
+            or payload.reference_videos
+            or payload.reference_audios
+            or "watermark" in native
+            or native.get("omni_reference_task_type", "reference") != "reference"
+        ):
             return False
-    # Avoid stripping unrecognized media metadata or dropping normalization failures.
-    return tuple(urls) == payload.reference_images
+        limit = 30
+    else:
+        if (
+            payload.resolution not in {"480p", "720p", "1080p", "4k"}
+            or ratio not in _RATIOS | {"adaptive"}
+            or not 4 <= payload.duration_seconds <= 15
+            or native.get("omni_reference_task_type", "auto") not in {"auto", "reference"}
+        ):
+            return False
+        if payload.start_image or payload.end_image:
+            if payload.reference_images or payload.reference_videos or payload.reference_audios:
+                return False
+            if not payload.start_image:
+                return False
+        elif not payload.prompt.strip() and not (payload.reference_images or payload.reference_videos):
+            return False
+        if len(payload.reference_videos) > 3 or len(payload.reference_audios) > 3:
+            return False
+        if payload.reference_audios and not (payload.reference_images or payload.reference_videos):
+            return False
+        if len(payload.reference_images) + len(payload.reference_videos) + len(payload.reference_audios) > 12:
+            return False
+        limit = 9
+    if len(payload.reference_images) > limit:
+        return False
+    try:
+        from app.contracts.registry import normalized_video
+
+        normalized = normalized_video(native)
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+    def urls(field):
+        items = normalized.get(field, [])
+        if not isinstance(items, list):
+            raise ValueError
+        values = []
+        for item in items:
+            if not isinstance(item, dict) or set(item) != {"url"} or not isinstance(item["url"], str):
+                raise ValueError
+            values.append(item["url"])
+        return tuple(values)
+
+    def media_url(field):
+        item = normalized.get(field)
+        if item is None:
+            return None
+        if not isinstance(item, dict) or set(item) != {"url"} or not isinstance(item["url"], str):
+            raise ValueError
+        return item["url"]
+
+    try:
+        return (
+            urls("reference_images") == payload.reference_images
+            and urls("reference_videos") == payload.reference_videos
+            and urls("reference_audios") == payload.reference_audios
+            and media_url("start_image") == payload.start_image
+            and media_url("end_image") == payload.end_image
+        )
+    except ValueError:
+        return False
+
+
+def infai_price_per_million(payload: ProviderGenerationRequest, no_video_rate: Decimal) -> Decimal:
+    """Select the exact Seedance-1 rate; capability stores the no-video row."""
+    if payload.model_slug != "seedance-2.0" or not payload.reference_videos:
+        return no_video_rate
+    factors = {
+        "480p": (Decimal(430), Decimal(700)),
+        "720p": (Decimal(430), Decimal(700)),
+        "1080p": (Decimal(470), Decimal(770)),
+        "4k": (Decimal(240), Decimal(400)),
+    }
+    numerator, denominator = factors[payload.resolution]
+    return no_video_rate * numerator / denominator
 
 
 def infai_cost_ceiling(payload: ProviderGenerationRequest, price_per_million: Decimal) -> Decimal:
@@ -85,8 +174,11 @@ def infai_cost_ceiling(payload: ProviderGenerationRequest, price_per_million: De
     24,000 (480p: 11,000) allows raster/frame rounding. Exceeding this bound
     requires reconciliation, never an additional partner charge.
     """
-    tokens_per_second = {"480p": 11000, "720p": 24000}[payload.resolution]
-    return price_per_million * Decimal(tokens_per_second * payload.duration_seconds) / Decimal(1_000_000)
+    tokens_per_second = {"480p": 11000, "720p": 24000, "1080p": 50000, "4k": 200000}[
+        payload.resolution
+    ]
+    billable_seconds = payload.duration_seconds + (15 if payload.reference_videos else 0)
+    return price_per_million * Decimal(tokens_per_second * billable_seconds) / Decimal(1_000_000)
 
 
 class InfaiVideoAdapter:
@@ -167,19 +259,41 @@ class InfaiVideoAdapter:
     async def submit_generation(self, payload: ProviderGenerationRequest) -> ProviderSubmitResult:
         if not infai_supports_request(payload):
             raise ProviderAdapterError("provider_rejected_request", "infai_capability_mismatch", retryable=False)
-        content = [{"type": "text", "text": payload.prompt}]
-        content.extend(
-            {"type": "image_url", "image_url": {"url": url}, "role": "reference_image"}
-            for url in payload.reference_images
-        )
+        content = ([{"type": "text", "text": payload.prompt}] if payload.prompt else [])
+        if payload.start_image:
+            content.append(
+                {"type": "image_url", "image_url": {"url": payload.start_image}, "role": "first_frame"}
+            )
+            if payload.end_image:
+                content.append(
+                    {"type": "image_url", "image_url": {"url": payload.end_image}, "role": "last_frame"}
+                )
+        else:
+            content.extend(
+                {"type": "image_url", "image_url": {"url": url}, "role": "reference_image"}
+                for url in payload.reference_images
+            )
+            content.extend(
+                {"type": "video_url", "video_url": {"url": url}, "role": "reference_video"}
+                for url in payload.reference_videos
+            )
+            content.extend(
+                {"type": "audio_url", "audio_url": {"url": url}, "role": "reference_audio"}
+                for url in payload.reference_audios
+            )
         body = {
-            "model": MODEL,
+            "model": MODELS[payload.model_slug],
             "content": content,
             "duration": payload.duration_seconds,
             "resolution": payload.resolution,
-            "ratio": payload.aspect_ratio,
+            "ratio": _effective_ratio(payload),
         }
-        for field in ("generate_audio", "omni_reference_task_type"):
+        fields = (
+            ("generate_audio", "omni_reference_task_type")
+            if payload.model_slug == "seedance-2.5"
+            else ("generate_audio", "watermark")
+        )
+        for field in fields:
             if field in payload.native_body:
                 body[field] = payload.native_body[field]
         data = await self._request("POST", TASKS, body=body)

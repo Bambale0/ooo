@@ -1,6 +1,6 @@
 import asyncio
 import os
-from datetime import UTC, timedelta
+from datetime import timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -116,62 +116,33 @@ async def _ledger(db, generation):
     return sorted((entry.operation_type, Decimal(entry.amount_rub)) for entry in rows)
 
 
-async def test_failed_task_restarts_with_pinned_credential_and_one_charge(db_session, adapter):
-    partner, generation, attempt, original_key = await _seed(db_session)
-    generation_id, attempt_id, credential_id = generation.id, attempt.id, attempt.credential_id
-    before = utc_now()
+async def test_failed_accepted_task_is_never_resubmitted_to_same_provider(db_session, adapter):
+    partner, generation, attempt, _ = await _seed(db_session)
     await poll_generation_provider(db_session, generation)
-    assert (generation.status, attempt.status, attempt.provider_task_id) == ("queued", "retry_pending", None)
-    deadline = attempt.next_attempt_at.replace(tzinfo=UTC)
-    assert 4.5 <= (deadline - before).total_seconds() <= 6
-    history = generation.request_payload["provider_failed_tasks"]
-    assert len(history) == 1
-    assert history[0]["provider_task_id"] == "original-failed-task"
-    assert history[0]["credential_id"] == credential_id
-    assert history[0]["cost_status"] == "unknown"
-    assert history[0]["error_code"] == "internal_error"
-    assert history[0]["failed_at"]
-    assert await _ledger(db_session, generation) == [("generation_reserve", Decimal("-80"))]
+    assert (generation.status, attempt.status, attempt.provider_task_id) == (
+        "failed",
+        "failed",
+        "original-failed-task",
+    )
+    assert attempt.cost_status == "unknown"
     await dispatch_generation_to_provider(db_session, generation)
     adapter.submit_generation.assert_not_awaited()
-
-    newer = _credential(partner.id, f"new-key-{uuid4()}")
-    newer.created_at = utc_now() + timedelta(seconds=1)
-    db_session.add(newer)
-    attempt.next_attempt_at = utc_now() - timedelta(seconds=1)
-    await db_session.commit()
-    db_session.expunge_all()
-    generation = await db_session.get(Generation, generation_id)
-    assert generation.request_payload["provider_failed_tasks"] == history
-    attempt = await dispatch_generation_to_provider(db_session, generation)
-    assert (attempt.id, attempt.credential_id) == (attempt_id, credential_id)
-    assert adapter.keys[-1] == original_key
-    assert adapter.submit_generation.await_args.args[0].generation_id == generation_id
-    attempt.next_poll_at = None
-    adapter.poll_generation.return_value = ProviderPollResult(status="completed")
-    await poll_generation_provider(db_session, generation)
-    await poll_generation_provider(db_session, generation)
-    assert generation.status == "completed"
-    assert adapter.submit_generation.await_count == 1
-    assert await _ledger(db_session, generation) == [("generation_reserve", Decimal("-80"))]
+    assert await _ledger(db_session, generation) == [
+        ("generation_reserve", Decimal("-80")),
+        ("generation_reserve_release", Decimal("80")),
+    ]
+    await db_session.refresh(partner)
+    assert partner.balance_rub == Decimal("100")
 
 
-async def test_retry_cap_releases_reserve_once_and_does_not_reopen_terminal_failure(db_session, adapter):
+async def test_terminal_failed_task_stays_terminal_and_releases_retail_once(db_session, adapter):
     partner, generation, attempt, _ = await _seed(db_session)
-    for index in range(3):
-        attempt.next_poll_at = None
-        before = utc_now()
+    for _ in range(3):
         await poll_generation_provider(db_session, generation)
-        if index < 2:
-            assert generation.status == "queued"
-            delay = (attempt.next_attempt_at.replace(tzinfo=UTC) - before).total_seconds()
-            assert (5, 15)[index] - 0.5 <= delay <= (5, 15)[index] + 1
-            attempt.next_attempt_at = utc_now() - timedelta(seconds=1)
-            await dispatch_generation_to_provider(db_session, generation)
+        await dispatch_generation_to_provider(db_session, generation)
     assert generation.status == "failed"
-    await poll_generation_provider(db_session, generation)
-    await dispatch_generation_to_provider(db_session, generation)
-    assert adapter.submit_generation.await_count == 2
+    assert attempt.provider_task_id == "original-failed-task"
+    adapter.submit_generation.assert_not_awaited()
     assert await _ledger(db_session, generation) == [
         ("generation_reserve", Decimal("-80")),
         ("generation_reserve_release", Decimal("80")),
@@ -193,35 +164,37 @@ async def test_nonretryable_failure_or_disabled_retry_remains_terminal(db_sessio
     adapter.submit_generation.assert_not_awaited()
 
 
-async def test_unknown_retry_submit_outcome_is_quarantined_without_another_post_or_refund(db_session, adapter):
+async def test_terminal_failed_task_never_enters_a_second_submit_path(db_session, adapter):
     _, generation, attempt, _ = await _seed(db_session)
     await poll_generation_provider(db_session, generation)
-    attempt.next_attempt_at = None
     adapter.submit_generation.side_effect = ProviderAdapterError(
         "provider_temporarily_unavailable", "argolink_submit_outcome_unknown", retryable=False
     )
     await dispatch_generation_to_provider(db_session, generation)
     await dispatch_generation_to_provider(db_session, generation)
-    assert generation.status == "reconciliation_required"
-    assert adapter.submit_generation.await_count == 1
-    assert generation.request_payload["provider_failed_tasks"][0]["provider_task_id"] == "original-failed-task"
-    assert await _ledger(db_session, generation) == [("generation_reserve", Decimal("-80"))]
+    assert generation.status == "failed"
+    adapter.submit_generation.assert_not_awaited()
+    assert attempt.provider_task_id == "original-failed-task"
+    assert await _ledger(db_session, generation) == [
+        ("generation_reserve", Decimal("-80")),
+        ("generation_reserve_release", Decimal("80")),
+    ]
 
 
-async def test_expired_original_deadline_prevents_retry_submission(db_session, adapter):
+async def test_terminal_failure_has_no_retry_deadline(db_session, adapter):
     _, generation, attempt, _ = await _seed(db_session)
     await poll_generation_provider(db_session, generation)
-    attempt.next_attempt_at = None
     generation.created_at = attempt.created_at = utc_now() - timedelta(minutes=31)
     await dispatch_generation_to_provider(db_session, generation)
     adapter.submit_generation.assert_not_awaited()
-    assert generation.status == "timeout"
+    assert generation.status == "failed"
+    assert attempt.next_attempt_at is None
     candidates = list(await db_session.scalars(_fair_due_active_candidate_ids_query(provider="argolink", limit=10)))
     polled = await _poll_active_generations(db_session, provider="argolink", limit=10)
     assert (candidates, polled) == ([], 0)
 
 
-async def test_revoked_original_credential_cancels_without_switching_keys_or_claiming_zero_provider_cost(
+async def test_revoked_original_credential_does_not_change_terminal_failure_or_switch_keys(
     db_session, adapter
 ):
     partner, generation, attempt, _ = await _seed(db_session)
@@ -229,17 +202,16 @@ async def test_revoked_original_credential_cancels_without_switching_keys_or_cla
     original = await db_session.get(ProviderCredential, attempt.credential_id)
     original.is_active = False
     db_session.add(_credential(partner.id, f"replacement-key-{uuid4()}"))
-    attempt.next_attempt_at = None
     await db_session.commit()
 
     await dispatch_generation_to_provider(db_session, generation)
     await dispatch_generation_to_provider(db_session, generation)
 
     adapter.submit_generation.assert_not_awaited()
-    assert (generation.status, attempt.status) == ("cancelled", "cancelled")
-    assert generation.actual_charge_rub == Decimal("0")
+    assert (generation.status, attempt.status) == ("failed", "failed")
+    assert generation.actual_charge_rub is None
     assert generation.actual_provider_cost_usdt is None
-    assert generation.request_payload["provider_failed_tasks"][0]["cost_status"] == "unknown"
+    assert attempt.cost_status == "unknown"
     assert await _ledger(db_session, generation) == [
         ("generation_reserve", Decimal("-80")),
         ("generation_reserve_release", Decimal("80")),
@@ -248,7 +220,7 @@ async def test_revoked_original_credential_cancels_without_switching_keys_or_cla
     assert partner.balance_rub == Decimal("100")
 
 
-async def test_native_retry_settles_actual_usage_once_and_emits_only_one_completed_webhook(db_session, adapter):
+async def test_native_terminal_failure_keeps_unknown_cost_and_emits_one_failed_webhook(db_session, adapter):
     partner, generation, attempt, _ = await _seed(db_session)
     partner.cost_coverage_rub = Decimal("100")
     generation.request_payload = {
@@ -270,37 +242,29 @@ async def test_native_retry_settles_actual_usage_once_and_emits_only_one_complet
     )
     await poll_generation_provider(db_session, generation)
     events = select(WebhookEvent).where(WebhookEvent.generation_id == generation.id)
-    assert list(await db_session.scalars(events)) == []
-    assert await _ledger(db_session, generation) == [("generation_reserve", Decimal("-80"))]
-    attempt.next_attempt_at = None
+    assert [event.event_type for event in await db_session.scalars(events)] == ["failed"]
     await dispatch_generation_to_provider(db_session, generation)
-    assert list(await db_session.scalars(events)) == []
-    attempt.next_poll_at = None
-    adapter.poll_generation.return_value = ProviderPollResult(status="completed", usage={"billed_seconds": 5})
-    await poll_generation_provider(db_session, generation)
-    await poll_generation_provider(db_session, generation)
-    assert generation.actual_charge_rub == Decimal("80")
-    assert generation.actual_provider_cost_usdt == Decimal("0.5")
-    assert generation.usage_snapshot == {"seconds": 5}
-    assert generation.request_payload["provider_failed_tasks"][0]["cost_status"] == "unknown"
-    assert [event.event_type for event in await db_session.scalars(events)] == ["completed"]
+    adapter.submit_generation.assert_not_awaited()
+    assert generation.status == "failed"
+    assert generation.actual_charge_rub is None
+    assert generation.actual_provider_cost_usdt is None
+    assert attempt.cost_status == "unknown"
     assert await _ledger(db_session, generation) == [
         ("generation_reserve", Decimal("-80")),
-        ("generation_usage_adjustment", Decimal("0")),
+        ("generation_reserve_release", Decimal("80")),
     ]
     coverage = await db_session.scalars(
         select(CoverageLedgerEntry).where(CoverageLedgerEntry.generation_id == generation.id)
     )
     assert sorted((entry.operation_type, entry.amount_rub) for entry in coverage) == [
         ("provider_cost_reserve", Decimal("-50")),
-        ("provider_usage_adjustment", Decimal("0")),
     ]
     await db_session.refresh(partner)
-    assert (partner.balance_rub, partner.cost_coverage_rub) == (Decimal("20"), Decimal("50"))
+    assert (partner.balance_rub, partner.cost_coverage_rub) == (Decimal("100"), Decimal("50"))
 
 
 @pytest.mark.integration
-async def test_postgres_workers_claim_one_retry_submission_after_restart(adapter):
+async def test_postgres_workers_do_not_resubmit_terminal_provider_task_after_restart(adapter):
     database_url = os.getenv("TEST_POSTGRES_DATABASE_URL")
     if not database_url:
         pytest.skip("TEST_POSTGRES_DATABASE_URL is not configured")
@@ -312,14 +276,8 @@ async def test_postgres_workers_claim_one_retry_submission_after_restart(adapter
             partner, generation, attempt, _ = await _seed(db)
             partner_id, generation_id = partner.id, generation.id
             await poll_generation_provider(db, generation)
-            attempt.next_attempt_at = utc_now() - timedelta(seconds=1)
             await db.commit()
 
-        async def delayed_submit(payload):
-            await asyncio.sleep(0.05)
-            return ProviderSubmitResult("one-retry-task")
-
-        adapter.submit_generation.side_effect = delayed_submit
         await asyncio.gather(
             *[
                 _dispatch_generation_candidate(
@@ -328,12 +286,14 @@ async def test_postgres_workers_claim_one_retry_submission_after_restart(adapter
                 for _ in range(2)
             ]
         )
-        assert adapter.submit_generation.await_count == 1
+        adapter.submit_generation.assert_not_awaited()
         async with sessions() as db:
             generation = await db.get(Generation, generation_id)
-            assert generation.status == "sent_to_provider"
-            assert len(generation.request_payload["provider_failed_tasks"]) == 1
-            assert await _ledger(db, generation) == [("generation_reserve", Decimal("-80"))]
+            assert generation.status == "failed"
+            assert await _ledger(db, generation) == [
+                ("generation_reserve", Decimal("-80")),
+                ("generation_reserve_release", Decimal("80")),
+            ]
     finally:
         if generation_id:
             async with sessions() as db:

@@ -90,17 +90,32 @@ async def capital_state(db):
     if missing:
         return {"available": None, "safe": None, "freshness": "unreconciled_payments", "wallet_age_seconds": age}
     received, pending = Decimal(received), Decimal(pending)
-    completed_cost = Decimal(
+    recorded_actual_cost = Decimal(
         (
             await db.execute(
-                select(
-                    func.coalesce(
-                        func.sum(
-                            func.coalesce(Generation.actual_provider_cost_usdt, Generation.provider_cost_usdt_snapshot)
-                        ),
-                        0,
-                    )
-                ).where(Generation.status == "completed")
+                select(func.coalesce(func.sum(Generation.actual_provider_cost_usdt), 0)).where(
+                    Generation.actual_provider_cost_usdt.is_not(None)
+                )
+            )
+        ).scalar()
+    )
+    legacy_completed_cost = Decimal(
+        (
+            await db.execute(
+                select(func.coalesce(func.sum(Generation.provider_cost_usdt_snapshot), 0)).where(
+                    Generation.status == "completed",
+                    Generation.actual_provider_cost_usdt.is_(None),
+                )
+            )
+        ).scalar()
+    )
+    completed_cost = recorded_actual_cost + legacy_completed_cost
+    terminal_hold = Decimal(
+        (
+            await db.execute(
+                select(func.coalesce(func.sum(Generation.provider_cost_hold_usdt), 0)).where(
+                    Generation.status.not_in(ACTIVE)
+                )
             )
         ).scalar()
     )
@@ -141,7 +156,7 @@ async def capital_state(db):
     )
     historical = Decimal((await db.execute(select(func.coalesce(func.sum(Partner.cost_coverage_rub), 0)))).scalar())
     future = balances * ratio if ratio is not None else Decimal(0) if balances == 0 else None
-    book_cash = settings.opening_working_capital_usdt + received - completed_cost - withdrawals
+    book_cash = settings.opening_working_capital_usdt + received - completed_cost - terminal_hold - withdrawals
     liquid = min(wallet, book_cash) if wallet is not None else None
     available = liquid - active - pending - settings.required_provider_float_usdt if liquid is not None else None
     safe = available - future if available is not None and future is not None else None
@@ -158,6 +173,7 @@ async def capital_state(db):
             "paid_pending_credit_usdt": pending,
             "required_provider_float_usdt": settings.required_provider_float_usdt,
             "historical_coverage_rub": historical,
+            "unresolved_provider_cost_hold_usdt": terminal_hold,
             "partner_balance_rub": balances,
             "recorded_withdrawals_usdt": withdrawals,
         },

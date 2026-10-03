@@ -39,10 +39,15 @@ class WebhookDeliveryOutcome:
     error: str | None = None
 
 
-async def ensure_terminal_webhook_event(db: AsyncSession, generation: Generation) -> WebhookEvent | None:
+async def ensure_terminal_webhook_event(
+    db: AsyncSession,
+    generation: Generation,
+    *,
+    provider: str = "argolink",
+) -> WebhookEvent | None:
     from app.providers.circuit import observe
 
-    await observe(db, generation)
+    await observe(db, generation, provider=provider)
     trial_user = (generation.request_payload or {}).get("trial_telegram_id")
     if trial_user and generation.status in _TERMINAL_STATUSES:
         from app.accounts.models import Partner

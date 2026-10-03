@@ -106,13 +106,13 @@ async def create_generation(
     if fallback is not None:
         fallback_cost = fallback[1]
         if fallback_cost * rub_per_usdt <= price_rub:
-            provider_cost_reserve_usdt = max(provider_cost_reserve_usdt, fallback_cost)
+            provider_cost_reserve_usdt += fallback_cost
     provider_cost_reserve_rub = (provider_cost_reserve_usdt * rub_per_usdt).quantize(
         _RUB_QUANTUM,
         rounding=ROUND_HALF_UP,
     )
 
-    if price_rub < provider_cost_reserve_rub:
+    if price_rub < provider_cost_usdt * rub_per_usdt:
         raise HTTPException(status_code=503, detail="provider_temporarily_unavailable")
 
     if not await has_active_provider_credential(db, partner.id):

@@ -1,11 +1,14 @@
 """Explicit reconciliation of uncertain paid requests; no automatic submit replay."""
 
+from decimal import ROUND_HALF_UP, Decimal
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, StrictInt
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 
 from app.api.dependencies import DbSession, require_admin
-from app.billing.service import release_generation_reserves
+from app.billing.models import CoverageLedgerEntry
+from app.billing.service import apply_cost_coverage_change, lock_partner_for_update, release_generation_reserves
 from app.generations.models import Generation
 from app.inference.accounting import settle_actual
 from app.providers.models import ProviderAttempt
@@ -22,18 +25,43 @@ class Reconciliation(BaseModel):
     provider_task_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,255}$")
 
 
+class AttemptCostReconciliation(BaseModel):
+    outcome: str = Field(pattern="^(charged|free)$")
+    provider_cost_usdt: Decimal | None = Field(default=None, ge=0)
+    reason: str = Field(min_length=10, max_length=2000)
+
+
 @router.get("/reconciliation")
 async def pending(db: DbSession):
+    unknown_generation_ids = select(ProviderAttempt.generation_id).where(ProviderAttempt.cost_status == "unknown")
     rows = (
         await db.execute(
             select(Generation)
             .where(
-                Generation.status.in_(["submitting", "reconciliation_required"]),
+                or_(
+                    Generation.status.in_(["submitting", "reconciliation_required"]),
+                    Generation.id.in_(unknown_generation_ids),
+                ),
             )
             .order_by(Generation.created_at)
             .limit(100)
         )
     ).scalars()
+    generations = list(rows)
+    obligations: dict[str, list[ProviderAttempt]] = {}
+    if generations:
+        unknown_attempts = (
+            await db.execute(
+                select(ProviderAttempt)
+                .where(
+                    ProviderAttempt.generation_id.in_([g.id for g in generations]),
+                    ProviderAttempt.cost_status == "unknown",
+                )
+                .order_by(ProviderAttempt.created_at, ProviderAttempt.id)
+            )
+        ).scalars()
+        for attempt in unknown_attempts:
+            obligations.setdefault(attempt.generation_id, []).append(attempt)
     return [
         {
             "id": g.id,
@@ -42,9 +70,113 @@ async def pending(db: DbSession):
             "status": g.status,
             "reserved_rub": str(g.partner_price_rub),
             "created_at": g.created_at,
+            "provider_cost_obligations": [
+                {
+                    "attempt_id": attempt.id,
+                    "provider": attempt.provider,
+                    "cost_status": attempt.cost_status,
+                    "reserved_usdt": str(attempt.cost_reserve_usdt or Decimal(0)),
+                }
+                for attempt in obligations.get(g.id, [])
+            ],
         }
-        for g in rows
+        for g in generations
     ]
+
+
+@router.post("/reconciliation/{generation_id}/attempts/{attempt_id}/cost")
+async def reconcile_attempt_cost(
+    generation_id: str,
+    attempt_id: str,
+    payload: AttemptCostReconciliation,
+    db: DbSession,
+):
+    generation = (
+        await db.execute(select(Generation).where(Generation.id == generation_id).with_for_update())
+    ).scalar_one_or_none()
+    if generation is None:
+        raise HTTPException(404, "generation_not_found")
+    attempt = (
+        await db.execute(
+            select(ProviderAttempt)
+            .where(ProviderAttempt.id == attempt_id, ProviderAttempt.generation_id == generation_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if attempt is None:
+        raise HTTPException(404, "provider_attempt_not_found")
+
+    if payload.outcome == "free":
+        if payload.provider_cost_usdt not in (None, Decimal(0)):
+            raise HTTPException(422, "free_attempt_cost_must_be_zero")
+        actual_cost = Decimal(0)
+        final_status = "confirmed_free"
+    else:
+        if payload.provider_cost_usdt is None:
+            raise HTTPException(422, "provider_cost_usdt_required")
+        actual_cost = Decimal(payload.provider_cost_usdt)
+        final_status = "settled"
+
+    if attempt.cost_status != "unknown":
+        if attempt.cost_status == final_status and Decimal(attempt.provider_cost_usdt or 0) == actual_cost:
+            return {"id": generation.id, "attempt_id": attempt.id, "cost_status": attempt.cost_status}
+        raise HTTPException(409, "provider_attempt_cost_already_reconciled")
+
+    held_usdt = Decimal(attempt.cost_reserve_usdt or 0)
+    fx = Decimal(generation.rub_per_usdt_snapshot)
+    held_rub = (held_usdt * fx).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    total_actual_cost = Decimal(generation.actual_provider_cost_usdt or 0) + actual_cost
+    desired_coverage_net = -(total_actual_cost * fx).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    current_coverage_net = Decimal(
+        await db.scalar(
+            select(func.coalesce(func.sum(CoverageLedgerEntry.amount_rub), 0)).where(
+                CoverageLedgerEntry.generation_id == generation.id
+            )
+        )
+        or 0
+    )
+    coverage_delta = desired_coverage_net - current_coverage_net
+    owner = await lock_partner_for_update(db, generation.partner_id)
+    if coverage_delta:
+        await apply_cost_coverage_change(
+            db,
+            owner,
+            coverage_delta,
+            "provider_attempt_cost_reconciliation",
+            f"provider-attempt-cost:{attempt.id}",
+            generation.id,
+            payload.reason,
+            allow_negative=True,
+        )
+    attempt.provider_cost_usdt = actual_cost
+    attempt.cost_status = final_status
+    generation.provider_cost_hold_usdt = max(
+        Decimal(0),
+        Decimal(generation.provider_cost_hold_usdt or 0) - held_usdt,
+    )
+    generation.provider_cost_hold_rub = max(
+        Decimal("0.00"),
+        Decimal(generation.provider_cost_hold_rub or 0) - held_rub,
+    )
+    generation.actual_provider_cost_usdt = total_actual_cost
+    snapshot = generation.request_payload or {}
+    history = snapshot.get("provider_cost_reconciliation_history", [])
+    generation.request_payload = {
+        **snapshot,
+        "provider_cost_reconciliation_history": [
+            *history,
+            {
+                "attempt_id": attempt.id,
+                "provider": attempt.provider,
+                "outcome": payload.outcome,
+                "provider_cost_usdt": str(actual_cost),
+                "reason": payload.reason,
+                "actor": "admin_api",
+            },
+        ],
+    }
+    await db.flush()
+    return {"id": generation.id, "attempt_id": attempt.id, "cost_status": attempt.cost_status}
 
 
 @router.post("/reconciliation/{generation_id}")
@@ -65,7 +197,12 @@ async def reconcile(generation_id: str, payload: Reconciliation, db: DbSession):
     if g.status not in {"submitting", "reconciliation_required", "sent_to_provider"}:
         raise HTTPException(409, "request_not_reconcilable")
     attempt = (
-        await db.execute(select(ProviderAttempt).where(ProviderAttempt.generation_id == g.id))
+        await db.execute(
+            select(ProviderAttempt)
+            .where(ProviderAttempt.generation_id == g.id)
+            .order_by(ProviderAttempt.created_at.desc(), ProviderAttempt.id.desc())
+            .limit(1)
+        )
     ).scalar_one_or_none()
     if attempt is None:
         raise HTTPException(409, "submission_not_found")
