@@ -3,6 +3,7 @@ import hmac
 import json
 from datetime import timedelta
 from decimal import Decimal
+from urllib.parse import urlsplit
 
 import httpx
 from sqlalchemy import select
@@ -22,6 +23,46 @@ from app.webhooks.service import (
     request_manual_resend,
     send_prepared_delivery,
 )
+
+
+async def test_completed_video_webhook_returns_shareable_neironych_url(db_session):
+    partner = Partner(
+        telegram_id="shareable-webhook",
+        company_name="Shareable",
+        project_name="Video webhook",
+        status="active",
+    )
+    db_session.add(partner)
+    await db_session.flush()
+    generation = Generation(
+        partner_id=partner.id,
+        model_id="shareable-model",
+        model_slug="seedance-2.5",
+        mode="videos/generations",
+        resolution="720p",
+        duration_seconds=5,
+        idempotency_key="shareable-video-webhook",
+        partner_price_rub=Decimal("100.00"),
+        prompt="",
+        request_payload={
+            "native_body": {"model": "seedance-2.5"},
+            "client_request_id": "partner-job-8223",
+        },
+        result_url="http://localhost:8000/api/v1/media/asset-id/content",
+        status="completed",
+        webhook_url_snapshot="https://partner.example.test/hooks/video",
+    )
+    db_session.add(generation)
+    await db_session.flush()
+
+    event = await ensure_terminal_webhook_event(db_session, generation)
+
+    assert event is not None
+    path = urlsplit(event.payload["result_url"]).path
+    assert path.startswith(f"/api/v1/media/results/{generation.id}/")
+    assert event.payload["result_url_expires_at"] > 0
+    assert "asset-id" not in event.payload["result_url"]
+    assert event.payload["client_request_id"] == "partner-job-8223"
 
 
 class RecordingWebhookClient:

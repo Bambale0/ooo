@@ -2,7 +2,7 @@ import logging
 from decimal import ROUND_HALF_UP, Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.accounts.models import Partner
 from app.api.dependencies import DbSession, PartnerAuth, get_current_partner, get_partner_auth, require_admin
@@ -312,11 +312,60 @@ async def read_generation(
     generation_id: str,
     db: DbSession,
     partner: Partner = Depends(get_current_partner),
-) -> Generation:
+) -> GenerationRead:
     generation = await db.get(Generation, generation_id)
     if generation is None or generation.partner_id != partner.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="generation_not_found")
-    return generation
+    view = GenerationRead.model_validate(generation)
+    from app.inference.correlation import generation_client_request_id
+    from app.media.service import build_result_download_url, is_internal_partner_media_url
+
+    view = view.model_copy(update={"client_request_id": generation_client_request_id(generation)})
+
+    if generation.status == "completed" and is_internal_partner_media_url(generation.result_url):
+        share_url, expires_at = build_result_download_url(generation)
+        return view.model_copy(
+            update={
+                "result_url": share_url,
+                "authenticated_result_url": generation.result_url,
+                "result_url_expires_at": expires_at,
+                "result_urls": [share_url],
+            }
+        )
+    return view
+
+
+@router.get("/by-client-request-id/{client_request_id}", response_model=GenerationRead)
+async def read_generation_by_client_request_id(
+    client_request_id: str,
+    db: DbSession,
+    partner: Partner = Depends(get_current_partner),
+) -> GenerationRead:
+    if not 8 <= len(client_request_id) <= 160 or not all(
+        character.isalnum() or character in "._:/-" for character in client_request_id
+    ):
+        raise HTTPException(status_code=422, detail="invalid_client_request_id")
+    escaped_client_request_id = client_request_id.replace("_", r"\_")
+    generation = (
+        await db.execute(
+            select(Generation)
+            .where(
+                Generation.partner_id == partner.id,
+                or_(
+                    Generation.idempotency_key == client_request_id,
+                    Generation.idempotency_key.like(
+                        f"generation:{escaped_client_request_id}:provider:%", escape="\\"
+                    ),
+                    Generation.request_payload["client_request_id"].as_string() == client_request_id,
+                ),
+            )
+            .order_by(Generation.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if generation is None:
+        raise HTTPException(status_code=404, detail="generation_not_found")
+    return await read_generation(generation.id, db, partner)
 
 
 async def _find_generation_by_idempotency_key(

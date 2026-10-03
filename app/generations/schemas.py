@@ -26,6 +26,7 @@ class GenerationCreate(BaseModel):
 
 class GenerationRead(BaseModel):
     id: str
+    client_request_id: str | None = None
     model_slug: str
     mode: str
     resolution: str
@@ -36,6 +37,8 @@ class GenerationRead(BaseModel):
     partner_price_rub: Decimal
     actual_charge_rub: Decimal | None = None
     result_url: str | None
+    authenticated_result_url: str | None = None
+    result_url_expires_at: int | None = None
     result_urls: list[str] = Field(default_factory=list)
     public_error_code: str | None
 

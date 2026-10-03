@@ -68,6 +68,7 @@ class Settings(BaseSettings):
     media_storage_backend: str = "local"
     media_local_storage_dir: str = "./var/media"
     media_retention_hours: int = 24
+    media_share_link_ttl_seconds: int = Field(default=7 * 24 * 60 * 60, ge=300, le=30 * 24 * 60 * 60)
     media_max_download_bytes: int = 500 * 1024 * 1024
     s3_endpoint_url: str | None = None
     s3_region_name: str = "auto"
