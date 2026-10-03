@@ -1,12 +1,34 @@
 """Administrator-only provider inventory; credentials never enter Telegram."""
 
+import asyncio
+
 from app.providers.infai import InfaiError, catalog_with_retail
 from app.telegram.ui import keyboard, show
 
+OVERVIEW_TIMEOUT_SECONDS = 10
+
 
 async def overview(event, db) -> None:
+    await show(
+        event,
+        "Запрашиваем модели, группы и цены InfAI…\n\n"
+        "Пожалуйста, подождите до 10 секунд. Розничные цены при обновлении не меняются.",
+        keyboard(back="admin_menu"),
+    )
     try:
-        report = await catalog_with_retail(db)
+        async with asyncio.timeout(OVERVIEW_TIMEOUT_SECONDS):
+            report = await catalog_with_retail(db)
+    except TimeoutError:
+        # Cancellation may have interrupted a DB read after the provider fetch.
+        await db.rollback()
+        await show(
+            event,
+            "InfAI не успел передать данные за 10 секунд.\n\n"
+            "Можно вернуться в меню и продолжить работу или попробовать обновить раздел позже. "
+            "Текущие цены и настройки сохранены.",
+            keyboard(("Попробовать снова", "admin_infai"), back="admin_menu"),
+        )
+        return
     except InfaiError as error:
         text = {
             "infai_not_configured": (
