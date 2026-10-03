@@ -16,6 +16,18 @@ async def test_root_is_a_working_public_entry(client):
     assert (await client.get("/price")).text == (await client.get("/prices")).text
 
 
+async def test_public_entry_links_application_ctas_to_the_live_telegram_bot(client):
+    root = await client.get("/")
+    deep_link = "https://t.me/apineurobrobot?start=apply"
+    assert root.text.count(f'href="{deep_link}"') == 2
+    assert "Подать заявку" in root.text
+    assert 'class="button primary telegram-button"' in root.text
+    assert 'class="telegram-link"' in root.text
+    assert 'target="_blank" rel="noopener noreferrer"' in root.text
+    assert '<svg viewBox="0 0 24 24" aria-hidden="true"' in root.text
+    assert "8692549118:" not in root.text
+
+
 @pytest.mark.parametrize(
     "asset,mime",
     [
