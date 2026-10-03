@@ -64,7 +64,7 @@ def upgrade() -> None:
         )
     )
 
-    op.drop_constraint("provider_outcomes_pkey", "provider_outcomes", type_="primary")
+    op.drop_constraint("pk_provider_outcomes", "provider_outcomes", type_="primary")
     op.create_primary_key(
         "pk_provider_outcomes_generation_provider",
         "provider_outcomes",
@@ -96,7 +96,7 @@ def downgrade() -> None:
         "provider_outcomes",
         type_="primary",
     )
-    op.create_primary_key("provider_outcomes_pkey", "provider_outcomes", ["generation_id"])
+    op.create_primary_key("pk_provider_outcomes", "provider_outcomes", ["generation_id"])
 
     op.drop_index("ix_provider_attempts_cost_status", table_name="provider_attempts")
     op.drop_column("provider_attempts", "cost_reserve_usdt")
