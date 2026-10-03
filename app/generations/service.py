@@ -1,4 +1,3 @@
-from datetime import timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy import select
@@ -20,7 +19,12 @@ from app.infrastructure.retry import is_due, is_older_than, next_poll_at, next_r
 from app.media.service import create_provider_ready_asset
 from app.providers.asale import asale_supports_request
 from app.providers.base import ProviderAdapterError, ProviderGenerationRequest, ProviderPollResult
-from app.providers.infai_video import INFAI_CREDENTIAL_LABEL, infai_cost_ceiling, infai_supports_request
+from app.providers.infai_video import (
+    INFAI_CREDENTIAL_LABEL,
+    infai_cost_ceiling,
+    infai_price_per_million,
+    infai_supports_request,
+)
 from app.providers.models import ProviderAttempt, ProviderCredential, ProviderModelCapability
 from app.providers.rate_limit import get_provider_rate_limiter
 from app.providers.service import (
@@ -52,6 +56,8 @@ def _provider_request_for_generation(generation: Generation) -> ProviderGenerati
         return None
 
     references = normalized.get("reference_images", request_payload.get("reference_images", []))
+    reference_videos = normalized.get("reference_videos", request_payload.get("reference_videos", []))
+    reference_audios = normalized.get("reference_audios", request_payload.get("reference_audios", []))
     return ProviderGenerationRequest(
         generation_id=generation.id,
         native_body=native_body if isinstance(native_body, dict) else None,
@@ -64,6 +70,8 @@ def _provider_request_for_generation(generation: Generation) -> ProviderGenerati
         start_image=media_url(normalized.get("start_image")) or media_url(request_payload.get("start_image")),
         end_image=media_url(normalized.get("end_image")) or media_url(request_payload.get("end_image")),
         reference_images=tuple(url for item in references if (url := media_url(item)) is not None),
+        reference_videos=tuple(url for item in reference_videos if (url := media_url(item)) is not None),
+        reference_audios=tuple(url for item in reference_audios if (url := media_url(item)) is not None),
     )
 
 
@@ -101,7 +109,7 @@ async def fallback_cost_ceiling_for_request(
         if provider == "infai":
             if capability.billing_unit != "million_video_tokens":
                 continue
-            total_cost = infai_cost_ceiling(request, rate)
+            total_cost = infai_cost_ceiling(request, infai_price_per_million(request, rate))
         elif capability.billing_unit == "second":
             total_cost = Decimal(capability.provider_cost_ceiling_usdt) * Decimal(request.duration_seconds)
         elif capability.billing_unit == "generation":
@@ -286,6 +294,8 @@ async def dispatch_generation_to_provider(
         if attempt is None:
             attempt = ProviderAttempt(generation_id=generation.id, provider=provider, status="submitting")
             db.add(attempt)
+        if attempt.cost_reserve_usdt is None:
+            attempt.cost_reserve_usdt = _attempt_cost_reserve(generation, provider)
         if credential is not None:
             attempt.credential_id = credential.id
         attempt.status = "submitting"
@@ -340,7 +350,7 @@ async def dispatch_generation_to_provider(
                 generation,
                 reason="Released partner reserve after provider submit failure",
             )
-            await ensure_terminal_webhook_event(db, generation)
+            await ensure_terminal_webhook_event(db, generation, provider=provider)
     await db.flush()
     await db.refresh(attempt)
     return attempt
@@ -400,7 +410,7 @@ async def poll_generation_provider(
                 generation,
                 reason="Released partner reserve after provider processing timeout",
             )
-        await ensure_terminal_webhook_event(db, generation)
+        await ensure_terminal_webhook_event(db, generation, provider=provider)
         await db.flush()
         await db.refresh(generation)
         return generation
@@ -468,7 +478,7 @@ async def poll_generation_provider(
                         generation,
                         reason="Released partner reserve after terminal provider polling failure",
                     )
-                    await ensure_terminal_webhook_event(db, generation)
+                    await ensure_terminal_webhook_event(db, generation, provider=provider)
         await db.flush()
         await db.refresh(generation)
         return generation
@@ -479,13 +489,14 @@ async def poll_generation_provider(
     attempt.last_error = None
     attempt.next_attempt_at = None
     attempt.retry_count = 0
+    _record_attempt_result_accounting(generation, attempt, result)
 
     if result.status == "completed":
         generation.status = "completed"
         generation.public_error_code = None
         attempt.next_poll_at = None
         if provider == "infai":
-            if not await _settle_infai_success(db, generation, result):
+            if not await _settle_infai_success(db, generation, attempt, result):
                 attempt.status = "reconciliation_required"
                 await db.flush()
                 return generation
@@ -520,7 +531,7 @@ async def poll_generation_provider(
                 provider=provider,
                 provider_content_url=result.result_url,
             )
-        await ensure_terminal_webhook_event(db, generation)
+        await ensure_terminal_webhook_event(db, generation, provider=provider)
     elif result.status == "failed":
         attempt.public_error_code = "provider_generation_failed"
         attempt.raw_error = result.raw_error
@@ -529,20 +540,28 @@ async def poll_generation_provider(
             generation.status = "timeout"
             generation.public_error_code = "generation_timeout"
             if provider == "infai":
-                await release_generation_cost_reserve(
-                    db,
-                    generation,
-                    reason="Released fallback procurement reserve after definitive late failure",
+                unresolved_prior = await db.scalar(
+                    select(ProviderAttempt.id)
+                    .where(
+                        ProviderAttempt.generation_id == generation.id,
+                        ProviderAttempt.id != attempt.id,
+                        ProviderAttempt.cost_status == "unknown",
+                    )
+                    .limit(1)
                 )
-        elif result.retryable_failure and await _queue_fallback_after_safe_failure(
+                if unresolved_prior is None:
+                    await release_generation_cost_reserve(
+                        db,
+                        generation,
+                        reason="Released fallback procurement reserve after definitive late failure",
+                    )
+        elif provider == PRIMARY_PROVIDER and await _queue_fallback_after_safe_failure(
             db,
             generation,
             attempt,
             result,
             preferred_only="infai",
         ):
-            pass
-        elif result.retryable_failure and _schedule_generation_retry(generation, attempt, result):
             pass
         elif result.retryable_failure and await _queue_fallback_after_safe_failure(
             db,
@@ -554,7 +573,27 @@ async def poll_generation_provider(
         else:
             generation.status = "failed"
             generation.public_error_code = "provider_generation_failed"
-            if provider == "asale":
+            if attempt.provider_cost_usdt is not None:
+                await release_generation_reserve(
+                    db,
+                    generation,
+                    reason="Released partner reserve after charged provider generation failure",
+                )
+                await _settle_provider_cost_reserve(
+                    db,
+                    generation,
+                    provider=provider,
+                    actual_cost=Decimal(attempt.provider_cost_usdt),
+                )
+            elif attempt.cost_status == "unknown":
+                # The accepted task may still have been billed. Return the retail
+                # reserve, but retain procurement coverage until reconciliation.
+                await release_generation_reserve(
+                    db,
+                    generation,
+                    reason="Released partner reserve with unresolved provider cost",
+                )
+            elif provider == "asale":
                 await release_generation_reserve(
                     db,
                     generation,
@@ -567,7 +606,7 @@ async def poll_generation_provider(
                     generation,
                     reason="Released partner reserve after provider generation failure",
                 )
-            await ensure_terminal_webhook_event(db, generation)
+            await ensure_terminal_webhook_event(db, generation, provider=provider)
     elif result.status == "processing":
         if reconciling_late_success:
             generation.status = "timeout"
@@ -588,6 +627,58 @@ async def poll_generation_provider(
     return generation
 
 
+def _attempt_cost_reserve(generation: Generation, provider: str) -> Decimal | None:
+    if provider == PRIMARY_PROVIDER:
+        return Decimal(generation.provider_cost_usdt_snapshot)
+    raw = (generation.request_payload or {}).get("fallback_provider_cost_ceiling_usdt")
+    if not isinstance(raw, str):
+        return None
+    try:
+        value = Decimal(raw)
+    except ArithmeticError:
+        return None
+    return value if value.is_finite() and value >= 0 else None
+
+
+def _record_attempt_result_accounting(
+    generation: Generation,
+    attempt: ProviderAttempt,
+    result: ProviderPollResult,
+) -> None:
+    prior_cost_status = attempt.cost_status
+    if isinstance(result.usage, dict):
+        attempt.usage_snapshot = dict(result.usage)
+    if attempt.cost_reserve_usdt is None:
+        attempt.cost_reserve_usdt = _attempt_cost_reserve(generation, attempt.provider)
+    if result.status != "failed":
+        return
+
+    raw_cost = None
+    if isinstance(result.usage, dict):
+        for field in ("provider_cost_usdt", "provider_charge_usdt", "cost_usdt"):
+            if field in result.usage:
+                raw_cost = result.usage[field]
+                break
+    try:
+        cost = Decimal(str(raw_cost)) if raw_cost is not None and not isinstance(raw_cost, bool) else None
+    except (ArithmeticError, ValueError):
+        cost = None
+    if cost is not None and cost.is_finite() and cost >= 0:
+        attempt.provider_cost_usdt = cost
+        attempt.cost_status = "reported"
+    else:
+        # A terminal status proves completion of the task, not that the provider
+        # waived its charge. Keep a queryable obligation until reconciliation.
+        attempt.provider_cost_usdt = None
+        attempt.cost_status = "unknown"
+        if prior_cost_status != "unknown":
+            hold_usdt = Decimal(attempt.cost_reserve_usdt or 0)
+            generation.provider_cost_hold_usdt = Decimal(generation.provider_cost_hold_usdt or 0) + hold_usdt
+            generation.provider_cost_hold_rub = Decimal(generation.provider_cost_hold_rub or 0) + (
+                hold_usdt * Decimal(generation.rub_per_usdt_snapshot)
+            ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
 async def _queue_fallback_after_safe_failure(
     db: AsyncSession,
     generation: Generation,
@@ -606,6 +697,7 @@ async def _queue_fallback_after_safe_failure(
         return False
     infai_snapshot = {}
     if provider == "infai":
+        infai_request = _provider_request_for_generation(generation)
         capability = (
             await db.execute(
                 select(ProviderModelCapability).where(
@@ -620,7 +712,9 @@ async def _queue_fallback_after_safe_failure(
         if credential is None:
             return False
         infai_snapshot = {
-            "infai_price_per_million_usd": str(capability.provider_cost_ceiling_usdt),
+            "infai_price_per_million_usd": str(
+                infai_price_per_million(infai_request, Decimal(capability.provider_cost_ceiling_usdt))
+            ),
             "infai_group": "Seedance-1",
             "fallback_credential_id": credential.id,
         }
@@ -652,10 +746,18 @@ async def _queue_fallback_after_safe_failure(
     attempt.last_error = result.raw_error
     generation.status = "queued"
     generation.public_error_code = None
+    from app.providers.circuit import observe
+
+    await observe(db, generation, outcome="error", provider=attempt.provider)
     return True
 
 
-async def _settle_infai_success(db: AsyncSession, generation: Generation, result: ProviderPollResult) -> bool:
+async def _settle_infai_success(
+    db: AsyncSession,
+    generation: Generation,
+    attempt: ProviderAttempt,
+    result: ProviderPollResult,
+) -> bool:
     from app.inference.accounting import settle_actual
 
     payload = generation.request_payload or {}
@@ -680,9 +782,32 @@ async def _settle_infai_success(db: AsyncSession, generation: Generation, result
         generation.status = "reconciliation_required"
         generation.public_error_code = "usage_reconciliation_required"
         return False
+    prior_attempts = list(
+        await db.scalars(
+            select(ProviderAttempt).where(
+                ProviderAttempt.generation_id == generation.id,
+                ProviderAttempt.id != attempt.id,
+            )
+        )
+    )
+    known_prior_cost = sum(
+        (Decimal(item.provider_cost_usdt) for item in prior_attempts if item.provider_cost_usdt is not None),
+        Decimal(0),
+    )
     # Retail still comes exclusively from the immutable accepted ArgoLink schedule.
-    await settle_actual(db, generation, {"seconds": generation.duration_seconds}, provider_cost=cost)
+    # Known provider costs are cumulative. An unresolved earlier task keeps its
+    # own primary hold while unused fallback ceiling is returned.
+    await settle_actual(
+        db,
+        generation,
+        {"seconds": generation.duration_seconds},
+        provider_cost=cost + known_prior_cost,
+        provider_cost_hold_rub=Decimal(generation.provider_cost_hold_rub or 0),
+    )
     generation.usage_snapshot = {"seconds": seconds, "completion_tokens": tokens}
+    attempt.usage_snapshot = dict(usage)
+    attempt.provider_cost_usdt = cost
+    attempt.cost_status = "settled"
     return True
 
 
@@ -756,42 +881,6 @@ async def _settle_fallback_provider_cost(
     )
 
 
-def _schedule_generation_retry(generation: Generation, attempt: ProviderAttempt, result: ProviderPollResult) -> bool:
-    payload = generation.request_payload or {}
-    history = payload.get("provider_failed_tasks", [])
-    retry_count = sum(item.get("provider") == attempt.provider for item in history)
-    if retry_count >= get_settings().worker_generation_max_retries:
-        return False
-    failed_at = utc_now()
-    generation.request_payload = {
-        **payload,
-        "provider_failed_tasks": [
-            *history,
-            {
-                "provider": attempt.provider,
-                "provider_task_id": attempt.provider_task_id,
-                "credential_id": attempt.credential_id,
-                "error_code": result.error_code,
-                "error": result.raw_error,
-                "usage": result.usage,
-                "failed_at": failed_at.isoformat(),
-                "cost_status": "unknown",
-            },
-        ],
-    }
-    # The worker holds the generation row lock. History and the new submit
-    # eligibility commit together; restart cannot forget an already-paid task.
-    attempt.provider_task_id = None
-    attempt.status = "retry_pending"
-    attempt.next_attempt_at = failed_at + timedelta(seconds=(5, 15)[retry_count])
-    attempt.next_poll_at = None
-    attempt.last_error = result.raw_error
-    attempt.public_error_code = None
-    generation.status = "queued"
-    generation.public_error_code = None
-    return True
-
-
 async def _expire_generation_retry(db: AsyncSession, generation: Generation, attempt: ProviderAttempt) -> bool:
     if not is_older_than(attempt.created_at, get_settings().worker_provider_processing_timeout_seconds):
         return False
@@ -800,7 +889,7 @@ async def _expire_generation_retry(db: AsyncSession, generation: Generation, att
     attempt.last_error = "provider_processing_timeout"
     attempt.next_attempt_at = attempt.next_poll_at = None
     await release_generation_reserves(db, generation, reason="Released partner reserve after retry deadline")
-    await ensure_terminal_webhook_event(db, generation)
+    await ensure_terminal_webhook_event(db, generation, provider=attempt.provider)
     await db.flush()
     return True
 
@@ -869,6 +958,6 @@ async def cancel_before_submit(
     )
     attempt.next_attempt_at = attempt.next_poll_at = None
     await release_generation_reserves(db, generation, reason="Cancelled before provider submission")
-    await ensure_terminal_webhook_event(db, generation)
+    await ensure_terminal_webhook_event(db, generation, provider=provider)
     await db.flush()
     return attempt

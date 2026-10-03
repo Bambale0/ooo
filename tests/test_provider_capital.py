@@ -418,8 +418,8 @@ async def test_generation_admission_reserves_profitable_asale_fallback_ceiling(c
     generation = await db_session.get(Generation, response.json()["id"])
     assert generation is not None
     assert Decimal(generation.provider_cost_usdt_snapshot) == Decimal("0.850000")
-    assert Decimal(generation.provider_cost_reserve_usdt) == Decimal("0.950000")
-    assert Decimal(generation.provider_cost_reserve_rub) == Decimal("95.00")
+    assert Decimal(generation.provider_cost_reserve_usdt) == Decimal("1.800000")
+    assert Decimal(generation.provider_cost_reserve_rub) == Decimal("180.00")
 
 
 async def test_native_video_admission_reserves_profitable_asale_fallback_ceiling(client, db_session, monkeypatch):
@@ -461,7 +461,7 @@ async def test_native_video_admission_reserves_profitable_asale_fallback_ceiling
         generation = await db_session.get(Generation, response.json()["request_id"])
         assert generation is not None
         assert Decimal(generation.provider_cost_usdt_snapshot) == Decimal("0.312000")
-        assert Decimal(generation.provider_cost_reserve_usdt) == Decimal("0.360000")
-        assert Decimal(generation.provider_cost_reserve_rub) == Decimal("36.00")
+        assert Decimal(generation.provider_cost_reserve_usdt) == Decimal("0.672000")
+        assert Decimal(generation.provider_cost_reserve_rub) == Decimal("67.20")
     finally:
         await upstream.aclose()

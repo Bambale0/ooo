@@ -6,7 +6,7 @@ from sqlalchemy import select
 from app.api.dependencies import DbSession, require_admin
 from app.catalog.access import grant_model_access, revoke_model_access
 from app.catalog.models import Model, PartnerModelGrant, PartnerPrice, PartnerPriceHistory
-from app.catalog.pricing import snapshot_price_for_existing_partners
+from app.catalog.pricing import publish_global_partner_price, snapshot_price_for_existing_partners
 from app.catalog.procurement import supports_free_rate
 from app.catalog.schemas import (
     ModelCreate,
@@ -248,7 +248,7 @@ async def upsert_price(payload: PartnerPriceUpsert, db: DbSession) -> None:
     else:
         old_price_rub = price.price_rub
         old_provider_cost_usdt = price.provider_cost_usdt
-        price.price_rub = payload.price_rub
+        await publish_global_partner_price(db, price, payload.price_rub)
         price.provider_cost_usdt = payload.provider_cost_usdt
         price.billing_unit = payload.billing_unit
         db.add(

@@ -6,7 +6,7 @@ from app.accounts.models import Partner
 from app.billing.incidents import financial_tick
 from app.billing.models import FinancialIncident
 from app.catalog.models import Model, PartnerPrice, PartnerPriceSnapshot
-from app.catalog.pricing import effective_partner_price, snapshot_partner_prices
+from app.catalog.pricing import effective_partner_price, publish_global_partner_price, snapshot_partner_prices
 from app.infrastructure.config import get_settings
 
 
@@ -81,6 +81,37 @@ async def test_new_partner_snapshots_current_template_price(db_session):
         )
     ).scalar_one()
     assert snapshot.price_rub == Decimal("120.00")
+
+
+async def test_confirmed_global_price_publication_updates_existing_partner_for_new_generations(db_session):
+    partner = Partner(telegram_id="snapshot-publish", company_name="Publish", project_name="Publish", status="active")
+    model = Model(slug="seedance-2.0", name="Seedance 2.0", modality="video", status="production")
+    db_session.add_all([partner, model])
+    await db_session.flush()
+    price = PartnerPrice(
+        model_id=model.id,
+        mode="default",
+        resolution="720p",
+        price_rub=Decimal("20.00"),
+        provider_cost_usdt=Decimal("0.10"),
+        billing_unit="second",
+    )
+    db_session.add(price)
+    await db_session.flush()
+    await snapshot_partner_prices(db_session, partner.id)
+
+    updated = await publish_global_partner_price(db_session, price, Decimal("22.00"))
+    effective = await effective_partner_price(
+        db_session,
+        partner_id=partner.id,
+        model_id=model.id,
+        mode="default",
+        resolution="720p",
+    )
+
+    assert updated == 1
+    assert price.price_rub == Decimal("22.00")
+    assert effective is not None and effective.price_rub == Decimal("22.00")
 
 
 async def test_partner_negative_margin_creates_incident(db_session, monkeypatch):

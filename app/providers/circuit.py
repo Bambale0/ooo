@@ -87,7 +87,7 @@ async def observe(db, generation, *, outcome=None, provider="argolink"):
         else:
             return
     row = await locked(db, provider)
-    if await db.get(ProviderOutcome, generation.id):
+    if await db.get(ProviderOutcome, (generation.id, provider)):
         return
     now = utc_now()
     db.add(ProviderOutcome(generation_id=generation.id, provider=provider, outcome=outcome, created_at=now))

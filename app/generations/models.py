@@ -28,6 +28,12 @@ class Generation(Base):
     provider_cost_reserve_usdt: Mapped[Decimal | None] = mapped_column(ExactNumeric(36, 18))
     rub_per_usdt_snapshot: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False, default=Decimal("0"))
     provider_cost_reserve_rub: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=Decimal("0.00"))
+    provider_cost_hold_usdt: Mapped[Decimal] = mapped_column(
+        ExactNumeric(36, 18), nullable=False, default=Decimal("0")
+    )
+    provider_cost_hold_rub: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), nullable=False, default=Decimal("0.00")
+    )
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
     request_payload: Mapped[dict[str, object] | None] = mapped_column(JSON)
     actual_charge_rub: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))

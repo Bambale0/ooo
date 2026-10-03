@@ -2,14 +2,14 @@
 
 ## Purpose
 
-Retail prices for existing partners are frozen independently from the live procurement template.
+Global partner prices are published atomically for every partner and apply to new generations.
 
 - `partner_prices.price_rub` is the retail template for future partners and newly introduced variants.
-- `partner_price_snapshots.price_rub` is the retail price actually used by an existing partner.
+- `partner_price_snapshots.price_rub` is the live global retail price used at admission for an existing partner.
 - `partner_prices.provider_cost_usdt` remains live procurement cost for every partner.
 - Generation admission compares the frozen partner retail price against the current procurement cost and current FX rate.
 
-This split prevents existing partners from silently moving to a new retail price while still surfacing negative margin when procurement or FX becomes worse.
+Every generation stores its accepted price, so in-flight and historical operations remain immutable after publication.
 
 ## Deployment sequence
 
@@ -33,7 +33,7 @@ This split prevents existing partners from silently moving to a new retail price
 
 Migration `20261002_0025` atomically inserts one retail snapshot for every non-deleted partner and every existing `partner_prices` row.
 
-An existing snapshot is never overwritten by a normal global price update.
+An existing snapshot changes only through the confirmed global publication transaction.
 
 ### New partner approval
 
@@ -45,7 +45,7 @@ Changing the global template later does not alter that partner's snapshot.
 
 When a brand-new `model/mode/resolution` pricing variant is created through the admin pricing endpoint, its initial retail price is snapshotted for all existing non-deleted partners.
 
-Later updates of that same variant change only the global template for future partners. Existing snapshots remain unchanged.
+Later confirmed updates of that same variant change the template and every existing partner snapshot atomically.
 
 A safe lazy enrollment exists only for variants whose `created_at` is newer than the partner. A missing snapshot for a variant older than the partner is treated as a rollout/data-integrity problem and pricing stays fail-closed.
 
@@ -56,24 +56,24 @@ A safe lazy enrollment exists only for variants whose `created_at` is newer than
 3. Approve the partner only after the intended global retail templates are correct.
 4. Approval snapshots those retail prices for the partner.
 5. Verify the partner has the expected snapshot count before issuing production traffic.
-6. If a custom commercial price is required, change the partner snapshot explicitly; do not edit the global template expecting it to affect only one partner.
+6. Partner-specific commercial prices are not supported; confirmed publication is global.
 7. Run the financial incident tick and verify no `partner-economics` incident exists for the partner.
 
 ## Changing global prices
 
-A global retail update is a template change for future partners.
+A global retail update applies to all new generation requests after publication.
 
 Before changing it:
 
 - inspect current partner snapshots;
 - check current procurement and FX;
 - record the commercial reason;
-- confirm whether existing partners should remain grandfathered.
+- prepare the exact old/new diff for every affected variant.
 
 After changing it:
 
-- verify existing snapshot values did not change;
-- create/approve a test partner and verify the new partner receives the new template;
+- verify every existing snapshot changed to the published value;
+- verify in-flight and historical generation snapshots did not change;
 - run the financial incident tick.
 
 ## Margin monitoring

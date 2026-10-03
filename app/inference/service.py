@@ -175,6 +175,8 @@ async def reserve(
             return None
 
         references = video_body.get("reference_images", [])
+        reference_videos = video_body.get("reference_videos", [])
+        reference_audios = video_body.get("reference_audios", [])
         fallback_request = ProviderGenerationRequest(
             generation_id="reserve",
             native_body=body,
@@ -189,6 +191,16 @@ async def reserve(
                 for item in references
                 if (url := media_url(item)) is not None
             ),
+            reference_videos=tuple(
+                url
+                for item in reference_videos
+                if (url := media_url(item)) is not None
+            ),
+            reference_audios=tuple(
+                url
+                for item in reference_audios
+                if (url := media_url(item)) is not None
+            ),
             start_image=media_url(video_body.get("start_image")),
             end_image=media_url(video_body.get("end_image")),
         )
@@ -199,9 +211,9 @@ async def reserve(
             request=fallback_request,
         )
         if fallback is not None and fallback[1] * fx <= charge:
-            provider_cost_reserve_usdt = max(provider_cost_reserve_usdt, fallback[1])
+            provider_cost_reserve_usdt += fallback[1]
     coverage = (provider_cost_reserve_usdt * fx).quantize(Decimal(".01"), rounding=ROUND_HALF_UP)
-    if trial_telegram_id is None and charge < coverage:
+    if trial_telegram_id is None and charge < cost * fx:
         raise InferenceAdmissionError(503, "provider_temporarily_unavailable", failure_stage="pricing")
     try:
         await require_sufficient_balance(partner, charge)

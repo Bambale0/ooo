@@ -77,6 +77,7 @@ async def settle_actual(
     units: dict,
     *,
     provider_cost: Decimal | None = None,
+    provider_cost_hold_rub: Decimal = Decimal("0.00"),
 ) -> None:
     """Append only compensations, once, using the immutable accepted price schedule.
 
@@ -110,10 +111,14 @@ async def settle_actual(
         generation.id,
         "Actual usage settlement",
     )
+    hold_rub = Decimal(provider_cost_hold_rub)
+    if not hold_rub.is_finite() or hold_rub < 0:
+        raise ValueError("invalid_provider_cost_hold")
+    provider_adjustment = generation.provider_cost_reserve_rub - covered - hold_rub
     await apply_cost_coverage_change(
         db,
         partner,
-        generation.provider_cost_reserve_rub - covered,
+        provider_adjustment,
         "provider_usage_adjustment",
         f"provider-usage:{generation.id}",
         generation.id,

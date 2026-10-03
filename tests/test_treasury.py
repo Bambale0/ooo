@@ -11,6 +11,7 @@ from app.billing.capital import wallet_balance as actual_wallet_balance
 from app.billing.models import WalletSnapshot
 from app.billing.safe_to_withdraw import record_profit_withdrawal
 from app.catalog.models import Model, PartnerPrice
+from app.generations.models import Generation
 from app.infrastructure.config import get_settings
 from app.infrastructure.retry import utc_now
 from app.payments.crypto_pay import CryptoPayError
@@ -67,6 +68,42 @@ async def test_wallet_stale_fallback_is_visible_and_cannot_fund_new_requests(db_
     assert state["safe"] == Decimal("17.12")
     with pytest.raises(HTTPException):
         await require_current_capital(db_session, Decimal(".01"))
+
+
+async def test_terminal_unknown_provider_cost_hold_reduces_safe_to_withdraw(db_session, monkeypatch):
+    monkeypatch.setattr(get_settings(), "opening_working_capital_usdt", Decimal("100"))
+
+    async def wallet(db):
+        return Decimal("100"), 0, "fresh"
+
+    monkeypatch.setattr("app.billing.capital.wallet_balance", wallet)
+    partner = Partner(telegram_id="held-cost", company_name="Held", project_name="Held")
+    db_session.add(partner)
+    await db_session.flush()
+    db_session.add(
+        Generation(
+            partner_id=partner.id,
+            model_id="held-cost-model",
+            model_slug="seedance-2.5",
+            mode="videos/generations",
+            resolution="720p",
+            status="completed",
+            idempotency_key="held-cost",
+            partner_price_rub=Decimal("100"),
+            provider_cost_usdt_snapshot=Decimal("2"),
+            provider_cost_reserve_usdt=Decimal("5"),
+            provider_cost_reserve_rub=Decimal("425"),
+            provider_cost_hold_usdt=Decimal("2"),
+            provider_cost_hold_rub=Decimal("170"),
+            actual_provider_cost_usdt=Decimal("3"),
+            prompt="test",
+        )
+    )
+    await db_session.flush()
+
+    state = await capital_state(db_session)
+    assert state["safe"] == Decimal("95")
+    assert state["components"]["unresolved_provider_cost_hold_usdt"] == Decimal("2")
 
 
 async def test_withdrawals_idempotent_override_and_partial_compensations(db_session, monkeypatch):

@@ -8,11 +8,16 @@ from app.accounts.models import Partner
 from app.billing.models import LedgerEntry
 from app.billing.service import apply_cost_coverage_change, apply_partner_balance_change
 from app.generations.models import Generation
-from app.generations.service import dispatch_generation_with_routing, poll_generation_provider
+from app.generations.service import (
+    _provider_request_for_generation,
+    dispatch_generation_with_routing,
+    fallback_cost_ceiling_for_request,
+    poll_generation_provider,
+)
 from app.infrastructure.config import get_settings
 from app.infrastructure.retry import utc_now
 from app.infrastructure.security import encrypt_secret, hash_secret
-from app.providers.base import ProviderAdapterError, ProviderPollResult, ProviderSubmitResult
+from app.providers.base import ProviderAdapterError, ProviderGenerationRequest, ProviderPollResult, ProviderSubmitResult
 from app.providers.models import ProviderAttempt, ProviderCredential, ProviderModelCapability
 
 
@@ -56,8 +61,8 @@ async def seed(db):
         idempotency_key="infai-fallback",
         partner_price_rub=Decimal("327"),
         provider_cost_usdt_snapshot=Decimal("2.5"),
-        provider_cost_reserve_usdt=Decimal("3.254940"),
-        provider_cost_reserve_rub=Decimal("276.67"),
+        provider_cost_reserve_usdt=Decimal("5.754940"),
+        provider_cost_reserve_rub=Decimal("489.17"),
         rub_per_usdt_snapshot=Decimal("85"),
         status="processing",
         request_payload={
@@ -97,7 +102,7 @@ async def seed(db):
     await apply_cost_coverage_change(
         db,
         partner,
-        Decimal("-276.67"),
+        Decimal("-489.17"),
         "provider_cost_reserve",
         f"provider-cost-reserve:{generation.id}",
         generation.id,
@@ -113,6 +118,109 @@ class PrimaryFailure:
 
     def normalize_error(self, error):
         raise error
+
+
+async def test_nonretryable_argolink_failure_still_queues_equivalent_infai(db_session, monkeypatch):
+    _, generation, primary, _ = await seed(db_session)
+
+    class NonRetryableFailure(PrimaryFailure):
+        async def poll_generation(self, task_id):
+            return ProviderPollResult(
+                status="failed",
+                error_code="internal_error",
+                retryable_failure=False,
+            )
+
+    async def adapter(*args, **kwargs):
+        return NonRetryableFailure()
+
+    monkeypatch.setattr("app.generations.service.get_partner_provider_adapter", adapter)
+
+    await poll_generation_provider(db_session, generation, "argolink")
+
+    assert generation.status == "queued"
+    assert generation.request_payload["fallback_provider"] == "infai"
+    assert primary.status == "failed"
+    assert primary.provider_task_id == "failed-argo"
+    assert primary.cost_status == "unknown"
+
+
+async def test_seedance20_fallback_quote_uses_video_input_group_rate(db_session):
+    partner, generation, _, _ = await seed(db_session)
+    db_session.add(
+        ProviderModelCapability(
+            provider="infai",
+            model_id=generation.model_id,
+            mode="default",
+            resolution="1080p",
+            provider_cost_ceiling_usdt=Decimal("6.506500"),
+            billing_unit="million_video_tokens",
+            is_active=True,
+        )
+    )
+    await db_session.flush()
+    request = ProviderGenerationRequest(
+        generation_id="seedance20-quote",
+        model_slug="seedance-2.0",
+        mode="videos/generations",
+        resolution="1080p",
+        prompt="Reference the camera movement",
+        duration_seconds=12,
+        aspect_ratio="16:9",
+        reference_videos=("https://example.com/reference.mp4",),
+        native_body={
+            "model": "seedance-2.0",
+            "prompt": "Reference the camera movement",
+            "duration": 12,
+            "resolution": "1080p",
+            "aspect_ratio": "16:9",
+            "reference_videos": [{"url": "https://example.com/reference.mp4"}],
+        },
+    )
+
+    selected = await fallback_cost_ceiling_for_request(
+        db_session,
+        partner_id=partner.id,
+        model_id=generation.model_id,
+        request=request,
+    )
+
+    assert selected == ("infai", Decimal("5.3615250000"))
+
+
+def test_seedance20_durable_generation_restores_every_reference_for_fallback():
+    generation = Generation(
+        partner_id="partner",
+        model_id="model",
+        model_slug="seedance-2.0",
+        mode="videos/generations",
+        resolution="720p",
+        duration_seconds=8,
+        aspect_ratio="16:9",
+        idempotency_key="seedance20-all-references",
+        partner_price_rub=Decimal("100"),
+        provider_cost_usdt_snapshot=Decimal("1"),
+        rub_per_usdt_snapshot=Decimal("90"),
+        status="queued",
+        request_payload={
+            "native_body": {
+                "model": "seedance-2.0",
+                "prompt": "Use the references",
+                "duration": 8,
+                "resolution": "720p",
+                "aspect_ratio": "16:9",
+                "reference_images": [{"url": "https://example.com/image.png"}],
+                "reference_videos": [{"url": "https://example.com/video.mp4"}],
+                "reference_audios": [{"url": "https://example.com/audio.mp3"}],
+            }
+        },
+    )
+
+    request = _provider_request_for_generation(generation)
+
+    assert request.reference_images == ("https://example.com/image.png",)
+    assert request.reference_videos == ("https://example.com/video.mp4",)
+    assert request.reference_audios == ("https://example.com/audio.mp3",)
 
 
 async def test_infai_fallback_precedes_primary_retry_and_charges_once(db_session, monkeypatch):
@@ -160,7 +268,7 @@ async def test_infai_fallback_precedes_primary_retry_and_charges_once(db_session
     assert generation.actual_charge_rub == Decimal("327")
     assert generation.actual_provider_cost_usdt == Decimal("2.929446")
     assert partner.balance_rub == Decimal("673")
-    assert partner.cost_coverage_rub == Decimal("751.00")
+    assert partner.cost_coverage_rub == Decimal("538.50")
     entries = list(await db_session.scalars(select(LedgerEntry).where(LedgerEntry.generation_id == generation.id)))
     assert sum((e.amount_rub for e in entries), Decimal(0)) == Decimal("-327")
 
@@ -274,7 +382,7 @@ async def test_infai_failed_task_releases_retail_without_another_provider_submit
     await poll_generation_provider(db_session, generation, "infai")
     assert generation.status == "failed"
     assert partner.balance_rub == Decimal("1000")
-    assert partner.cost_coverage_rub == Decimal("1000")
+    assert partner.cost_coverage_rub == Decimal("510.83")
     assert generation.actual_provider_cost_usdt is None
 
 
@@ -306,13 +414,13 @@ async def test_infai_timeout_then_definitive_outcome_settles_once(db_session, mo
     await poll_generation_provider(db_session, generation, "infai")
     assert generation.status == "timeout"
     assert partner.balance_rub == Decimal("1000")
-    assert partner.cost_coverage_rub == Decimal("723.33")
+    assert partner.cost_coverage_rub == Decimal("510.83")
     attempt.next_poll_at = utc_now()
     await db_session.commit()
     await poll_generation_provider(db_session, generation, "infai")
     await db_session.commit()
     await poll_generation_provider(db_session, generation, "infai")
     assert partner.balance_rub == (Decimal("1000") if terminal == "failed" else Decimal("673"))
-    assert partner.cost_coverage_rub == (Decimal("1000") if terminal == "failed" else Decimal("751"))
+    assert partner.cost_coverage_rub == (Decimal("510.83") if terminal == "failed" else Decimal("538.50"))
     assert attempt.status == terminal
     assert attempt.next_poll_at is None

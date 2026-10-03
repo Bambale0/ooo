@@ -33,6 +33,38 @@ def request(**changes):
     )
 
 
+def seedance20_request(**changes):
+    native = {
+        "model": "seedance-2.0",
+        "prompt": "Use every supplied reference",
+        "duration": 12,
+        "resolution": "1080p",
+        "aspect_ratio": "adaptive",
+        "generate_audio": True,
+        "reference_images": [{"url": "https://example.com/reference.png"}],
+        "reference_videos": [{"url": "https://example.com/reference.mp4"}],
+        "reference_audios": [{"url": "https://example.com/reference.mp3"}],
+    }
+    native.update(changes)
+
+    def urls(field):
+        return tuple(item["url"] for item in native.get(field, []))
+
+    return ProviderGenerationRequest(
+        generation_id="seedance20-test",
+        model_slug=native["model"],
+        mode="videos/generations",
+        prompt=native["prompt"],
+        resolution=native["resolution"],
+        duration_seconds=native["duration"],
+        aspect_ratio=native["aspect_ratio"],
+        reference_images=urls("reference_images"),
+        reference_videos=urls("reference_videos"),
+        reference_audios=urls("reference_audios"),
+        native_body=native,
+    )
+
+
 def test_infai_inference_registered_separately_from_management():
     assert get_provider_adapter("infai", api_key="business-key").provider_name == "infai"
 
@@ -62,6 +94,24 @@ async def test_infai_preserves_audio_and_six_ordered_references():
     async with httpx.AsyncClient(base_url="https://infai.cc", transport=httpx.MockTransport(handler)) as client:
         result = await InfaiVideoAdapter(api_key="business-key", client=client).submit_generation(request())
     assert result.provider_task_id == "cgt-example"
+
+
+async def test_infai_preserves_omitted_seedance_ratio_as_adaptive_default():
+    from app.providers.infai_video import InfaiVideoAdapter, infai_supports_request
+
+    payload = request()
+    payload.native_body.pop("aspect_ratio")
+    payload = ProviderGenerationRequest(**{**payload.__dict__, "aspect_ratio": None})
+
+    def handler(req):
+        body = json.loads(req.content)
+        assert body["ratio"] == "adaptive"
+        return httpx.Response(200, json={"id": "cgt-adaptive"})
+
+    assert infai_supports_request(payload)
+    async with httpx.AsyncClient(base_url="https://infai.cc", transport=httpx.MockTransport(handler)) as client:
+        result = await InfaiVideoAdapter(api_key="business-key", client=client).submit_generation(payload)
+    assert result.provider_task_id == "cgt-adaptive"
 
 
 @pytest.mark.parametrize(
@@ -158,6 +208,110 @@ def test_infai_token_ceiling_is_a_procurement_bound_not_retail():
     from app.providers.infai_video import infai_cost_ceiling
 
     assert infai_cost_ceiling(request(), Decimal("9.0415")) == Decimal("3.254940")
+
+
+@pytest.mark.parametrize("resolution", ["480p", "720p", "1080p", "4k"])
+def test_infai_seedance20_supports_every_published_resolution(resolution):
+    from app.providers.infai_video import infai_supports_request
+
+    assert infai_supports_request(seedance20_request(resolution=resolution))
+
+
+async def test_infai_seedance20_preserves_multimodal_references():
+    from app.providers.infai_video import InfaiVideoAdapter
+
+    seen = []
+
+    def handler(req):
+        seen.append(json.loads(req.content))
+        return httpx.Response(200, json={"id": "seedance20-job"})
+
+    async with httpx.AsyncClient(base_url="https://infai.cc", transport=httpx.MockTransport(handler)) as client:
+        result = await InfaiVideoAdapter(api_key="business-key", client=client).submit_generation(seedance20_request())
+
+    assert result.provider_task_id == "seedance20-job"
+    assert seen == [
+        {
+            "model": "doubao-seedance-2-0-260128",
+            "content": [
+                {"type": "text", "text": "Use every supplied reference"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "https://example.com/reference.png"},
+                    "role": "reference_image",
+                },
+                {
+                    "type": "video_url",
+                    "video_url": {"url": "https://example.com/reference.mp4"},
+                    "role": "reference_video",
+                },
+                {
+                    "type": "audio_url",
+                    "audio_url": {"url": "https://example.com/reference.mp3"},
+                    "role": "reference_audio",
+                },
+            ],
+            "duration": 12,
+            "resolution": "1080p",
+            "ratio": "adaptive",
+            "generate_audio": True,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "expected_roles"),
+    [
+        ("https://example.com/first.png", None, ["first_frame"]),
+        (
+            "https://example.com/first.png",
+            "https://example.com/last.png",
+            ["first_frame", "last_frame"],
+        ),
+    ],
+)
+async def test_infai_seedance20_preserves_frame_roles(start, end, expected_roles):
+    from app.providers.infai_video import InfaiVideoAdapter
+
+    payload = seedance20_request(
+        aspect_ratio="16:9",
+        reference_images=[],
+        reference_videos=[],
+        reference_audios=[],
+        start_image={"url": start},
+        **({"end_image": {"url": end}} if end else {}),
+    )
+    payload = ProviderGenerationRequest(**{**payload.__dict__, "start_image": start, "end_image": end})
+    seen = []
+
+    def handler(req):
+        seen.append(json.loads(req.content))
+        return httpx.Response(200, json={"id": "frame-job"})
+
+    async with httpx.AsyncClient(base_url="https://infai.cc", transport=httpx.MockTransport(handler)) as client:
+        await InfaiVideoAdapter(api_key="business-key", client=client).submit_generation(payload)
+    assert [item["role"] for item in seen[0]["content"] if item["type"] == "image_url"] == expected_roles
+
+
+@pytest.mark.parametrize(
+    ("resolution", "base_rate", "expected_no_video", "expected_with_video"),
+    [
+        ("480p", "5.915", "0.780780", "1.0791495"),
+        ("720p", "5.915", "1.703520", "2.354508"),
+        ("1080p", "6.5065", "3.903900", "5.361525"),
+        ("4k", "3.38", "8.112000", "10.9512"),
+    ],
+)
+def test_infai_seedance20_group_price_and_video_input_ceiling(
+    resolution, base_rate, expected_no_video, expected_with_video
+):
+    from app.providers.infai_video import infai_cost_ceiling, infai_price_per_million
+
+    no_video = seedance20_request(resolution=resolution, reference_videos=[], reference_audios=[])
+    with_video = seedance20_request(resolution=resolution)
+    assert infai_cost_ceiling(no_video, Decimal(base_rate)) == Decimal(expected_no_video)
+    selected = infai_price_per_million(with_video, Decimal(base_rate))
+    assert infai_cost_ceiling(with_video, selected) == Decimal(expected_with_video)
 
 
 @pytest.mark.parametrize(

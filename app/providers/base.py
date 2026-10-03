@@ -14,6 +14,8 @@ class ProviderGenerationRequest:
     duration_seconds: int = 1
     aspect_ratio: str | None = None
     reference_images: tuple[str, ...] = ()
+    reference_videos: tuple[str, ...] = ()
+    reference_audios: tuple[str, ...] = ()
     start_image: str | None = None
     end_image: str | None = None
     native_body: dict[str, object] | None = None
