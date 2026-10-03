@@ -256,7 +256,7 @@ async def test_response_body_bound(monkeypatch):
 
 
 def test_csv_export_keeps_all_group_rows_and_is_not_a_formula(tmp_path):
-    from ops.infai_catalog import write_report
+    from app.providers.infai_export import write_report
 
     report = {
         "models": [
