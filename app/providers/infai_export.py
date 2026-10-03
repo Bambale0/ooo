@@ -9,6 +9,7 @@ from pathlib import Path
 
 from fastapi.encoders import jsonable_encoder
 
+
 def write_report(report: dict, directory: Path) -> None:
     directory.mkdir(parents=True, exist_ok=False)
     directory.chmod(0o700)
