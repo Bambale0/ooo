@@ -1,4 +1,4 @@
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -7,12 +7,30 @@ def keyboard(*buttons: tuple[str, str], back: str | None = "main_menu") -> Inlin
     builder = InlineKeyboardBuilder()
     for label, data in buttons:
         if data.startswith("https://"):
-            builder.button(text=label, url=data)
+            builder.button(text=label, url=data, style="primary")
         else:
-            builder.button(text=label, callback_data=data)
+            builder.button(text=label, callback_data=data, style="primary")
     if back:
-        builder.button(text="← Назад", callback_data=back)
+        builder.button(text="← Назад", callback_data=back, style="primary")
     return builder.adjust(1).as_markup()
+
+
+async def highlight_pressed(event: CallbackQuery) -> None:
+    """Best-effort feedback; a Telegram edit failure must not cancel the action."""
+    if not isinstance(event.message, Message) or not event.message.reply_markup or not event.data:
+        return
+    markup = event.message.reply_markup.model_copy(deep=True)
+    matched = False
+    for row in markup.inline_keyboard:
+        for button in row:
+            pressed = button.callback_data == event.data
+            button.style = "success" if pressed else "primary"
+            matched |= pressed
+    if matched:
+        try:
+            await event.message.edit_reply_markup(reply_markup=markup)
+        except TelegramAPIError:
+            pass
 
 
 async def show(event: Message | CallbackQuery, text: str, markup: InlineKeyboardMarkup | None = None) -> None:

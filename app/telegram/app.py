@@ -14,7 +14,7 @@ from app.payments.crypto_pay import CryptoPayError
 from app.telegram.handlers import handle_callback, handle_message
 from app.telegram.security import CabinetAccessMiddleware
 from app.telegram.service import lock_dialog
-from app.telegram.ui import show
+from app.telegram.ui import highlight_pressed, show
 
 logger = logging.getLogger(__name__)
 ERRORS = {
@@ -34,6 +34,10 @@ ERRORS = {
     "telegram_id_already_assigned": "Этот Telegram ID уже привязан к другому аккаунту.",
     "payment_provider_temporarily_unavailable": "Платёжный сервис временно недоступен. Проверьте этот счёт позже.",
     "invalid_webhook_url": "Нужен доступный публичный HTTPS-адрес webhook.",
+    "consent_required": (
+        "Это подтверждение уже неактуально. Откройте /start или раздел «Документы», "
+        "ознакомьтесь с текущей версией и нажмите «Принимаю оба документа»."
+    ),
 }
 
 
@@ -43,6 +47,7 @@ class CabinetSessionMiddleware(BaseMiddleware):
             return None
         if isinstance(event, CallbackQuery):
             await event.answer()
+            await highlight_pressed(event)
         async with SessionLocal() as db:
             try:
                 dialog = await lock_dialog(db, str(event.from_user.id))
