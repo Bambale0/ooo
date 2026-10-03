@@ -13,6 +13,7 @@ from app.infrastructure.config import get_settings
 from app.telegram.models import BotDialog
 from app.telegram.ui import keyboard
 from tests.test_telegram_cabinet import cabinet as cabinet
+from tests.test_telegram_cabinet import partner
 
 
 async def test_start_shows_documents_before_collecting_application(cabinet, db_session, monkeypatch):
@@ -84,5 +85,87 @@ async def test_click_feedback_is_green_without_mutating_original_or_blocking_act
         buttons = [button for row in method.reply_markup.inline_keyboard for button in row]
         assert [button.style for button in buttons] == ["primary", "success", "primary"]
         assert all(button.style == "primary" for row in markup.inline_keyboard for button in row)
+    finally:
+        await bot.session.close()
+
+
+@pytest.mark.parametrize("callback, screen_text", [
+    ("trials", "тест"), ("legal_documents", "Документы вашего подключения"),
+    ("balance", "Баланс"), ("api_keys:0", "ключей"), ("history:0", "История"),
+    ("support", "обращени"), ("settings", "Документация и аккаунт"), ("admin_menu", "Администрирование"),
+])
+async def test_bound_menu_buttons_navigate(cabinet, db_session, monkeypatch, callback, screen_text):
+    from contextvars import copy_context
+
+    feed, bot = cabinet
+    # Incoming buttons are bound to this bot, including the live async context.
+    bot.session.active_context = copy_context()
+    await partner(db_session, user="999")
+    monkeypatch.setattr(get_settings(), "terms_url", "https://example.org/terms")
+    monkeypatch.setattr(get_settings(), "privacy_policy_url", "https://example.org/privacy")
+    home = (await feed(user=999, text="/start"))[-1]
+    methods = await feed(user=999, callback=callback, reply_markup=home.reply_markup)
+    assert screen_text.lower() in methods[-1].text.lower()
+    assert any(isinstance(method, EditMessageReplyMarkup) for method in methods)
+
+
+@pytest.mark.parametrize("failure", ["telegram", "timeout", "serialization"])
+async def test_feedback_failure_still_opens_requested_screen(cabinet, db_session, monkeypatch, failure):
+    import asyncio
+
+    from aiogram.types import InlineKeyboardMarkup
+
+    feed, bot = cabinet
+    await partner(db_session)
+    markup = keyboard(("Баланс", "balance"))
+
+    async def request(bot, method, **kwargs):
+        if isinstance(method, EditMessageReplyMarkup):
+            if failure == "telegram":
+                raise TelegramBadRequest(method=method, message="message is not modified")
+            if failure == "timeout":
+                await asyncio.Future()
+        return True
+
+    bot.session.side_effect = request
+    if failure == "serialization":
+        original = InlineKeyboardMarkup.model_dump
+
+        def dump(self, **kwargs):
+            if self.bot is not None:
+                raise TypeError("synthetic markup serialization failure")
+            return original(self, **kwargs)
+
+        monkeypatch.setattr(InlineKeyboardMarkup, "model_dump", dump)
+    async with asyncio.timeout(3):
+        methods = await feed(callback="balance", reply_markup=markup)
+    assert "баланс" in methods[-1].text.lower()
+
+
+async def test_click_feedback_handles_incoming_markup_bound_to_live_bot(monkeypatch):
+    from app.telegram.ui import highlight_pressed
+
+    bot = Bot(token="123456:TEST_TOKEN")
+    # A real session contains async state that cannot be deep-copied. No network I/O.
+    await bot.session.create_session()
+    request = AsyncMock()
+    monkeypatch.setattr(bot.session, "make_request", request)
+    event = CallbackQuery.model_validate({
+        "id": "click", "from": {"id": 123, "is_bot": False, "first_name": "Test"},
+        "chat_instance": "test", "data": "second",
+        "message": {
+            "message_id": 1, "date": int(datetime.now(UTC).timestamp()),
+            "chat": {"id": 123, "type": "private"},
+            "reply_markup": keyboard(("Первый", "first"), ("Второй", "second")).model_dump(),
+        },
+    }, context={"bot": bot})
+    try:
+        assert event.message.reply_markup.bot is bot
+        await highlight_pressed(event)
+        method = request.call_args.args[1]
+        assert [b.style for row in method.reply_markup.inline_keyboard for b in row] == [
+            "primary", "success", "primary",
+        ]
+        assert all(b.style == "primary" for row in event.message.reply_markup.inline_keyboard for b in row)
     finally:
         await bot.session.close()
