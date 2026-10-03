@@ -21,6 +21,8 @@ BASE = "https://infai.cc"
 TASKS = "/api/v3/contents/generations/tasks"
 _RATIOS = {"16:9", "9:16", "4:3", "3:4", "1:1", "21:9"}
 _CDN_HOSTS = {
+    # Authenticated InfAI task result: public DNS, valid TLS, MP4 Range 206 verified.
+    "videos.tpkcur.xyz",
     "ark-acg-cn-beijing.tos-cn-beijing.volces.com",
     "ark-acg-ap-southeast-1.tos-ap-southeast-1.volces.com",
     "ark-content-generation-ap-southeast-1.tos-ap-southeast-1.volces.com",

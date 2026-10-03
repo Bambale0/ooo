@@ -157,6 +157,13 @@ GET можно повторять. Timeout освобождает клиентс
 [официальный контракт](https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh),
 [video tokens](https://docs.volcengine.com/docs/ark/model-pricing?lang=zh).
 
+Production-проверка 03.10: реальный fallback завершился `succeeded`. InfAI выдал
+результат на `videos.tpkcur.xyz`, а не на TOS-хосте из примеров API. Для этого точного
+имени проверены публичные DNS-адреса, TLS, `206 video/mp4`, Range и MP4 header;
+оно добавлено в разрешённые CDN. Поддомены/суффиксы, userinfo и redirects по-прежнему
+запрещены. Уже завершённая upstream-задача восстанавливается штатным административным
+`poll-provider` (GET существующего task), без нового платного POST.
+
 Источники: [введение InfAI](https://docs.infai.cc/en/tutorials/00-intro),
 [системный API](https://docs.infai.cc/en/reference/system?op=get-api-user-self&leaf=303316036),
 [группы и коэффициенты](https://docs.infai.cc/en/tutorials/relay-intro-5459008),

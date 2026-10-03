@@ -129,7 +129,8 @@ async def test_infai_ambiguous_paid_submit_is_never_retryable(failure):
     assert "secret-body" not in error.value.raw_error
 
 
-async def test_infai_poll_reports_actual_tokens_and_duration():
+@pytest.mark.parametrize("cdn", ["ark-acg-cn-beijing.tos-cn-beijing.volces.com", "videos.tpkcur.xyz"])
+async def test_infai_poll_reports_actual_tokens_and_duration(cdn):
     from app.providers.infai_video import InfaiVideoAdapter
 
     async with httpx.AsyncClient(
@@ -141,7 +142,7 @@ async def test_infai_poll_reports_actual_tokens_and_duration():
                     "id": "cgt-example",
                     "status": "succeeded",
                     "duration": 15,
-                    "content": {"video_url": "https://ark-acg-cn-beijing.tos-cn-beijing.volces.com/result.mp4"},
+                    "content": {"video_url": f"https://{cdn}/result.mp4"},
                     "usage": {"completion_tokens": 324000, "total_tokens": 324000},
                 },
             )
@@ -166,6 +167,8 @@ def test_infai_token_ceiling_is_a_procurement_bound_not_retail():
         "https://169.254.169.254/result.mp4",
         "https://ark-acg-cn-beijing.tos-cn-beijing.volces.com.evil.example/result.mp4",
         "https://user@ark-acg-cn-beijing.tos-cn-beijing.volces.com/result.mp4",
+        "https://videos.tpkcur.xyz.evil.example/result.mp4",
+        "https://user@videos.tpkcur.xyz/result.mp4",
     ],
 )
 async def test_infai_result_rejects_untrusted_storage_without_fetch(url):
@@ -185,7 +188,8 @@ async def test_infai_result_rejects_untrusted_storage_without_fetch(url):
     assert len(calls) == 1
 
 
-async def test_infai_storage_receives_no_credentials_or_cookies_and_no_redirect():
+@pytest.mark.parametrize("cdn", ["ark-acg-cn-beijing.tos-cn-beijing.volces.com", "videos.tpkcur.xyz"])
+async def test_infai_storage_receives_no_credentials_or_cookies_and_no_redirect(cdn):
     from app.providers.infai_video import InfaiVideoAdapter
 
     calls = []
@@ -197,7 +201,7 @@ async def test_infai_storage_receives_no_credentials_or_cookies_and_no_redirect(
                 200,
                 json={
                     "status": "succeeded",
-                    "content": {"video_url": "https://ark-acg-cn-beijing.tos-cn-beijing.volces.com/result.mp4"},
+                    "content": {"video_url": f"https://{cdn}/result.mp4"},
                 },
             )
         assert "Authorization" not in req.headers and "Cookie" not in req.headers
