@@ -30,7 +30,7 @@ async def overview(event, db) -> None:
         f"Точных совпадений с нашим каталогом: {counts['exact_local_matches']}\n\n"
         "Коэффициенты и закупочные ставки различаются по группам и моделям. "
         "Подробная таблица доступна в административном API /api/v1/providers/infai/catalog "
-        "и через экспорт ops.infai_catalog. Каждая группа показана отдельно.\n\n"
+        "и через экспорт app.providers.infai_export. Каждая группа показана отдельно.\n\n"
         "Розничные цены сохранены на текущем уровне ArgoLink. "
         "Этот раздел читает данные; генерации через InfAI пока не включены.",
         keyboard(("Обновить", "admin_infai"), ("Прайс InfAI", "https://infai.cc/pricing"), back="admin_menu"),

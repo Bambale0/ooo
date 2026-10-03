@@ -156,4 +156,6 @@ jobs:
       - name: Build production image
         env:
           IMAGE_TAG: neironych-ci:${{ github.sha }}
-        run: docker build --tag "$IMAGE_TAG" .
+        run: |
+          docker build --tag "$IMAGE_TAG" .
+          docker run --rm --entrypoint python "$IMAGE_TAG" -m app.providers.infai_export --help
