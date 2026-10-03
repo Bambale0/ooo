@@ -10,6 +10,11 @@ async def test_root_is_a_working_public_entry(client):
     docs = await client.get("/docs")
     assert root.status_code == 200
     assert "В вашем продукте." in root.text
+    assert 'href="https://t.me/apineurobrobot?start=apply"' in root.text
+    assert 'class="button primary telegram-cta"' in root.text
+    assert 'target="_blank" rel="noopener noreferrer"' in root.text
+    assert '<svg class="telegram-icon"' in root.text
+    assert "Подать заявку" in root.text
     assert 'href="/guide?lang=ru#connect"' in root.text
     assert 'href="/price"' in root.text
     assert root.text != docs.text

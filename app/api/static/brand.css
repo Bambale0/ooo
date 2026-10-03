@@ -48,6 +48,8 @@ h1 span { color: var(--purple-soft); }
 .button.primary { background: var(--button); border-color: var(--purple); box-shadow: 0 0 25px rgba(137,63,226,.15); }
 .button:hover { background: var(--panel-raised); border-color: var(--purple-soft); }
 .button.primary:hover { background: #8545e2; }
+.telegram-cta { gap: 10px; }
+.telegram-icon { width: 20px; height: 20px; flex: none; }
 .hero-tags { display: flex; gap: 20px; margin-top: 24px; color: var(--muted); font: 11px ui-monospace,monospace; }
 .hero-tags span::before { content: "/ "; color: var(--purple); }
 .hero-art { position: relative; display: flex; align-items: end; justify-content: center; min-width: 0; background: radial-gradient(ellipse at 50% 65%,rgba(152,86,255,.16),transparent 65%); }

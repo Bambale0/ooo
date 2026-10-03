@@ -43,7 +43,12 @@ fs.mkdirSync(output, {recursive: true});
     await page.setViewportSize({width: 1440, height: 1000});
     await page.goto(base + '/');
     await page.screenshot({path: path.join(output, `${browserName}-home.png`), fullPage: true});
-    const promoLinks = await page.locator('.hero-actions a, .capability-card, .integration-section a, .marketing-cta a').evaluateAll(links => links.map(a => a.getAttribute('href')));
+    const application = page.locator('.telegram-cta');
+    assert.equal(await application.getAttribute('href'), 'https://t.me/apineurobrobot?start=apply');
+    assert.equal(await application.getAttribute('target'), '_blank');
+    assert.equal(await application.getAttribute('rel'), 'noopener noreferrer');
+    assert.equal(await application.locator('.telegram-icon').count(), 1);
+    const promoLinks = await page.locator('.hero-actions a:not(.telegram-cta), .capability-card, .integration-section a, .marketing-cta a').evaluateAll(links => links.map(a => a.getAttribute('href')));
     for (const href of promoLinks) {
       await page.goto(base + '/');
       await page.locator(`main a[href="${href}"]`).first().click();
@@ -51,7 +56,7 @@ fs.mkdirSync(output, {recursive: true});
       assert.equal(new URL(page.url()).pathname, expectedURL.pathname);
       if (expectedURL.hash) assert.equal(new URL(page.url()).hash, expectedURL.hash);
     }
-    checks.push('all promotional CTA and capability links reach guide/price sections');
+    checks.push('application CTA has the Telegram deep link; all local promotional links reach guide/price sections');
     await page.goto(base + '/docs');
     await page.screenshot({path: path.join(output, `${browserName}-docs.png`)});
     await page.keyboard.press('Tab');

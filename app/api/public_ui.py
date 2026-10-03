@@ -6,6 +6,20 @@ from fastapi.responses import HTMLResponse
 
 from app.infrastructure.config import get_settings
 
+TELEGRAM_APPLICATION_URL = "https://t.me/apineurobrobot?start=apply"
+
+
+def telegram_icon() -> str:
+    return (
+        '<svg class="telegram-icon" viewBox="0 0 24 24" aria-hidden="true">'
+        '<path fill="currentColor" d="M21.6 3.2a1.5 1.5 0 0 0-1.53-.18L2.91 9.64'
+        'c-1.17.45-1.15 1.12-.2 1.41l4.4 1.37 1.7 5.23c.2.57.1.8.68.8.45 0 .65-.2.9-.44'
+        'l2.12-2.06 4.42 3.27c.81.45 1.4.22 1.6-.75L21.27 5.6c.28-1.12-.42-1.63-1.15-1.3'
+        'L6.26 12.77l-.03-.17 11.4-7.27c.5-.3.96-.14.58.2l-9.42 8.5-.37 4.02 2.1-2.1'
+        ' 6.32 4.66c1.17.65 2.01.32 2.3-1.09l3.8-17.94c.4-1.84-.7-2.67-1.34-2.38Z"/>'
+        "</svg>"
+    )
+
 
 def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, landing: bool = False) -> HTMLResponse:
     ru = lang == "ru"
@@ -28,8 +42,12 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, land
             "Единый API, понятные контракты и расчёты в рублях.",
             "Build products with text, image and video generation. One API, clear contracts and billing in rubles.",
         )
+        application_label = t("Подать заявку", "Apply for access")
         action = (
-            f'<a class="button primary" href="{docs_url}#connect">{t("Начать интеграцию", "Start integrating")} ↗</a>'
+            f'<a class="button primary telegram-cta" href="{TELEGRAM_APPLICATION_URL}" target="_blank" '
+            f'rel="noopener noreferrer" aria-label="{application_label} — Telegram">'
+            f'{telegram_icon()}<span>{application_label}</span></a>'
+            f'<a class="button" href="{docs_url}#connect">{t("Начать интеграцию", "Start integrating")} ↗</a>'
             f'<a class="button" href="{price_url}">{t("Посмотреть цены", "View prices")}</a>'
         )
         side = ""
@@ -80,7 +98,7 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, land
         '<meta name="theme-color" content="#05070b">'
         f'<meta name="description" content="{escape(description, quote=True)}"><title>{escape(title)}</title>'
         '<link rel="icon" href="/ui/logo-mark.svg" type="image/svg+xml">'
-        '<link rel="stylesheet" href="/ui/brand.css?v=1"><script src="/ui/brand.js?v=1" defer></script>'
+        '<link rel="stylesheet" href="/ui/brand.css?v=2"><script src="/ui/brand.js?v=1" defer></script>'
         f'</head><body class="{"pricing-page" if pricing else "reference-page"}">'
         f'<a class="skip-link" href="#main">{t("К содержимому", "Skip to content")}</a>'
         '<header class="site-header"><div class="header-inner">'
