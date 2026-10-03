@@ -71,7 +71,13 @@ def charges(rates: dict, units: dict, *, divisor=Decimal(1)) -> tuple[Decimal, D
     )
 
 
-async def settle_actual(db: AsyncSession, generation: Generation, units: dict) -> None:
+async def settle_actual(
+    db: AsyncSession,
+    generation: Generation,
+    units: dict,
+    *,
+    provider_cost: Decimal | None = None,
+) -> None:
     """Append only compensations, once, using the immutable accepted price schedule.
 
     Caller holds the generation lock. A late successful job first restores the
@@ -88,6 +94,10 @@ async def settle_actual(db: AsyncSession, generation: Generation, units: dict) -
     snapshot = generation.request_payload or {}
     divisor = MILLION if snapshot.get("protocol") in {"responses", "chat/completions", "messages"} else Decimal(1)
     charge, cost = charges(snapshot["rates"], units, divisor=divisor)
+    if provider_cost is not None:
+        if not provider_cost.is_finite() or provider_cost < 0:
+            raise ValueError("invalid_provider_cost")
+        cost = provider_cost
     covered = (cost * generation.rub_per_usdt_snapshot).quantize(Decimal(".01"), rounding=ROUND_HALF_UP)
     await settle_generation_reserves(db, generation)
     partner = await lock_partner_for_update(db, generation.partner_id)

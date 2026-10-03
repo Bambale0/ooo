@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.infrastructure.config import get_settings
 from app.infrastructure.security import decrypt_secret
 from app.providers.base import ProviderAdapter
+from app.providers.infai_video import INFAI_CREDENTIAL_LABEL
 from app.providers.models import ProviderCredential
 from app.providers.registry import get_provider_adapter
 
@@ -14,10 +15,15 @@ async def get_active_provider_credential(
     partner_id: str,
     provider: str,
 ) -> ProviderCredential | None:
+    scope = (
+        (ProviderCredential.partner_id.is_(None) & (ProviderCredential.label == INFAI_CREDENTIAL_LABEL))
+        if provider == "infai"
+        else ProviderCredential.partner_id == partner_id
+    )
     result = await db.execute(
         select(ProviderCredential)
         .where(
-            ProviderCredential.partner_id == partner_id,
+            scope,
             ProviderCredential.provider == provider,
             ProviderCredential.is_active.is_(True),
             ProviderCredential.encrypted_api_key.is_not(None),
@@ -51,10 +57,15 @@ async def get_partner_provider_adapter(
         credential = await get_active_provider_credential(db, partner_id, provider)
     else:
         # Existing jobs belong to the original upstream account, even after key rotation.
+        scope = (
+            (ProviderCredential.partner_id.is_(None) & (ProviderCredential.label == INFAI_CREDENTIAL_LABEL))
+            if provider == "infai"
+            else ProviderCredential.partner_id == partner_id
+        )
         result = await db.execute(
             select(ProviderCredential).where(
                 ProviderCredential.id == credential_id,
-                ProviderCredential.partner_id == partner_id,
+                scope,
                 ProviderCredential.provider == provider,
             )
         )
