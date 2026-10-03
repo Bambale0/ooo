@@ -6,6 +6,17 @@ from fastapi.responses import HTMLResponse
 
 from app.infrastructure.config import get_settings
 
+TELEGRAM_APPLICATION_URL = "https://t.me/apineurobrobot?start=apply"
+
+
+def _telegram_icon() -> str:
+    return (
+        '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
+        '<path d="M21.8 3.1 18.7 20c-.2 1.2-.9 1.5-1.9.9l-4.7-3.5-2.3 2.2c-.3.3-.5.5-1 .5l.3-4.8 '
+        '8.8-8c.4-.4-.1-.6-.6-.2L6.4 14 1.7 12.5c-1-.3-1-1 .2-1.5L20.2 4c.8-.3 1.6.2 1.6-.9Z"/>'
+        "</svg>"
+    )
+
 
 def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, landing: bool = False) -> HTMLResponse:
     ru = lang == "ru"
@@ -29,8 +40,9 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, land
             "Build products with text, image and video generation. One API, clear contracts and billing in rubles.",
         )
         action = (
-            f'<a class="button primary" href="{docs_url}#connect">{t("Начать интеграцию", "Start integrating")} ↗</a>'
-            f'<a class="button" href="{price_url}">{t("Посмотреть цены", "View prices")}</a>'
+            f'<a class="button primary telegram-button" href="{TELEGRAM_APPLICATION_URL}" target="_blank" '
+            f'rel="noopener noreferrer">{_telegram_icon()}{t("Подать заявку", "Apply via Telegram")}</a>'
+            f'<a class="button" href="{docs_url}#connect">{t("Документация", "Documentation")} ↗</a>'
         )
         side = ""
     elif pricing:
@@ -80,7 +92,7 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, land
         '<meta name="theme-color" content="#05070b">'
         f'<meta name="description" content="{escape(description, quote=True)}"><title>{escape(title)}</title>'
         '<link rel="icon" href="/ui/logo-mark.svg" type="image/svg+xml">'
-        '<link rel="stylesheet" href="/ui/brand.css?v=1"><script src="/ui/brand.js?v=1" defer></script>'
+        '<link rel="stylesheet" href="/ui/brand.css?v=2"><script src="/ui/brand.js?v=1" defer></script>'
         f'</head><body class="{"pricing-page" if pricing else "reference-page"}">'
         f'<a class="skip-link" href="#main">{t("К содержимому", "Skip to content")}</a>'
         '<header class="site-header"><div class="header-inner">'
@@ -92,6 +104,9 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, land
         f'<a href="{docs_url}" {"aria-current=page" if not pricing and not landing else ""}>'
         f"{t('Документация', 'Documentation')}</a>"
         f'<a href="{price_url}" {"aria-current=page" if pricing else ""}>{t("Цены", "Pricing")}</a></nav>'
+        f'<a class="telegram-link" href="{TELEGRAM_APPLICATION_URL}" target="_blank" rel="noopener noreferrer" '
+        f'aria-label="{t("Подать заявку через Telegram", "Apply via Telegram")}">{_telegram_icon()}'
+        f'<span>{t("Подать заявку", "Apply")}</span></a>'
         f'{language}</div></header><main id="main" tabindex="-1" class="container">'
         '<section class="hero" aria-labelledby="page-title"><div class="hero-copy">'
         f'<p class="eyebrow">{t("Нейроныч для разработчиков", "Neironych for developers")}</p>'

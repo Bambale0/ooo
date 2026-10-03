@@ -37,6 +37,9 @@ button,a,input,summary { -webkit-tap-highlight-color: transparent; }
 .primary-nav a:hover,.language a:hover { background: var(--panel-raised); }
 .language { display: flex; gap: 2px; padding-left: 20px; border-left: 1px solid var(--line); }
 .language a { padding-inline: 12px; }
+.telegram-link { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 8px 13px; border: 1px solid var(--line-strong); border-radius: 8px; color: var(--text); text-decoration: none; font-size: 13px; font-weight: 650; white-space: nowrap; }
+.telegram-link:hover { border-color: var(--purple-soft); background: var(--panel-raised); }
+.telegram-link svg,.telegram-button svg { width: 19px; height: 19px; flex: none; fill: currentColor; }
 .hero { position: relative; display: grid; grid-template-columns: 1.6fr 1fr; min-height: 410px; margin: 32px 0 42px; overflow: hidden; border: 1px solid var(--line); border-radius: 18px; background: repeating-linear-gradient(118deg,transparent 0 100px,rgba(175,93,255,.022) 101px 102px),linear-gradient(125deg,#100c17,var(--bg) 72%); box-shadow: var(--shadow); }
 .hero-copy { padding: 42px 48px; z-index: 1; }
 .eyebrow { margin: 0 0 16px; color: var(--purple-soft); font-size: 11px; font-weight: 700; letter-spacing: 1.8px; text-transform: uppercase; }
@@ -125,6 +128,8 @@ input::placeholder { color: var(--muted); }
   .brand img { width: 36px; height: 36px; }
   .primary-nav { order: 3; width: 100%; justify-content: start; gap: 2px; }
   .primary-nav a { padding: 7px 14px; font-size: 13px; }
+  .telegram-link { padding-inline: 12px; }
+  .telegram-link span { display: none; }
   .language { padding-left: 0; border: 0; }
   .language a { font-size: 12px; padding: 8px 10px; }
   .hero { margin: 22px 0 26px; min-height: auto; grid-template-columns: 1fr; }
