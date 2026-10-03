@@ -1,6 +1,11 @@
+import asyncio
+import logging
+
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+logger = logging.getLogger(__name__)
 
 
 def keyboard(*buttons: tuple[str, str], back: str | None = "main_menu") -> InlineKeyboardMarkup:
@@ -19,18 +24,25 @@ async def highlight_pressed(event: CallbackQuery) -> None:
     """Best-effort feedback; a Telegram edit failure must not cancel the action."""
     if not isinstance(event.message, Message) or not event.message.reply_markup or not event.data:
         return
-    markup = event.message.reply_markup.model_copy(deep=True)
-    matched = False
-    for row in markup.inline_keyboard:
-        for button in row:
-            pressed = button.callback_data == event.data
-            button.style = "success" if pressed else "primary"
-            matched |= pressed
-    if matched:
-        try:
-            await event.message.edit_reply_markup(reply_markup=markup)
-        except TelegramAPIError:
-            pass
+    try:
+        # Incoming markup is bound to a live Bot. Copy only Telegram fields,
+        # never its private HTTP session / event loop state.
+        markup = InlineKeyboardMarkup.model_validate(event.message.reply_markup.model_dump())
+        matched = False
+        for row in markup.inline_keyboard:
+            for button in row:
+                pressed = button.callback_data == event.data
+                button.style = "success" if pressed else "primary"
+                matched |= pressed
+        if matched:
+            async with asyncio.timeout(1.5):
+                await event.message.edit_reply_markup(reply_markup=markup)
+    except (TelegramAPIError, TimeoutError):
+        pass
+    except Exception as exc:
+        # Cosmetic feedback must not suppress the requested action. Avoid
+        # logging the callback, message content, or raw transport exception.
+        logger.warning("cabinet_feedback_failed", extra={"error_type": type(exc).__name__})
 
 
 async def show(event: Message | CallbackQuery, text: str, markup: InlineKeyboardMarkup | None = None) -> None:
