@@ -1,7 +1,7 @@
 from decimal import Decimal
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     rub_per_usdt: Decimal = Field(default=Decimal("100.00"), gt=0)
     argolink_base_url: str = "https://argolink.io"
     argolink_api_key: str | None = None
+    provider_notification_webhook_secret: SecretStr | None = None
     provider_credentials_master_key: str | None = Field(default=None, min_length=32)
     opening_working_capital_usdt: Decimal = Field(default=Decimal("0"), ge=0)
     required_provider_float_usdt: Decimal = Field(default=Decimal("0"), ge=0)

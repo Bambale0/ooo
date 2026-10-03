@@ -740,3 +740,7 @@ Implementation epics и README не должны самовольно менят
 включённых моделей: для доступности используется `GET /v1/models`.
 
 Полный OpenAPI, Swagger/ReDoc, billing/admin/provider internals, webhook/retry/reconciliation детали публично не выдаются. Это отдельная граница безопасности продукта, а не отсутствие документации в коде.
+
+Уведомления провайдера принимаются через `POST /webhook/res/` с отдельным Bearer-секретом
+и доставляются администратору через существующую Telegram-очередь.
+Настройка и формат: [Provider notifications](docs/PROVIDER_NOTIFICATIONS.md).

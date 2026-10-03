@@ -31,6 +31,10 @@ def configure_logging() -> None:
     secrets = [
         settings.admin_api_token,
         settings.argolink_api_key,
+        (
+            settings.provider_notification_webhook_secret.get_secret_value()
+            if settings.provider_notification_webhook_secret else None
+        ),
         settings.crypto_pay_api_token,
         settings.telegram_bot_token,
         settings.provider_credentials_master_key,

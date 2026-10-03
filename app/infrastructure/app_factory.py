@@ -42,6 +42,9 @@ def create_app() -> FastAPI:
     from app.api.guide import router as guide_router
 
     app.include_router(guide_router)
+    from app.providers.notifications import router as provider_notifications_router
+
+    app.include_router(provider_notifications_router)
     from app.inference.router import router as inference_router
 
     app.include_router(inference_router, prefix="/v1", tags=["Native inference"])
