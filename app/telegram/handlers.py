@@ -37,6 +37,43 @@ async def ask_confirmation(event, db, kind: str, payload: dict, label: str) -> N
     await show(event, label, keyboard(("Подтвердить", f"confirm:{action.id}")))
 
 
+async def registration_documents(event, dialog) -> None:
+    settings = get_settings()
+    reset(dialog)
+    buttons = []
+    if is_admin(actor(event)):
+        buttons.append(("Администратор", "admin_menu"))
+    if not settings.terms_url or not settings.privacy_policy_url:
+        await show(
+            event,
+            "Добро пожаловать в Нейроныч!\n\n"
+            "Мы готовим документы для подключения партнёров. Приём заявок откроется, "
+            "когда здесь появятся условия и политика конфиденциальности. "
+            "Пожалуйста, загляните позже — команда /start обновит этот экран.",
+            keyboard(*buttons, back=None),
+        )
+        return
+    dialog.state, dialog.data = "consent", {"legal_version": settings.legal_document_version}
+    await show(
+        event,
+        "Добро пожаловать в Нейроныч! 👋\n\n"
+        "Здесь можно подключить API нейросетей к вашему проекту, управлять ключами, "
+        "пополнять баланс и обращаться в поддержку.\n\n"
+        "Перед подачей заявки, пожалуйста, откройте и прочитайте оба документа: "
+        "условия использования и политику конфиденциальности. "
+        f"Версия документов: {settings.legal_document_version}.\n\n"
+        "Нажимая «Принимаю оба документа», вы подтверждаете согласие с этой версией. "
+        "Затем попросим название компании и краткое описание проекта — это два шага анкеты. "
+        "После второго шага заявка отправится на рассмотрение. Решение сообщим в этом чате.",
+        keyboard(
+            ("Условия использования", settings.terms_url),
+            ("Политика конфиденциальности", settings.privacy_policy_url),
+            ("Принимаю оба документа", "accept_legal"),
+            *buttons, back=None,
+        ),
+    )
+
+
 async def home(event, db, dialog) -> None:
     if dialog.state == "admin_application_key":
         from app.telegram.admin_applications import cancel_approvals
@@ -56,7 +93,15 @@ async def home(event, db, dialog) -> None:
         ]
         if is_admin(actor(event)):
             buttons.append(("Администратор", "admin_menu"))
-        await show(event, f"Кабинет\nБаланс: {partner.balance_rub:.2f} ₽", keyboard(*buttons, back=None))
+        await show(
+            event,
+            f"Рады видеть вас в кабинете Нейроныча! 👋\nБаланс: {partner.balance_rub:.2f} ₽\n\n"
+            "Для первого знакомства выберите «Бесплатные видеотесты». "
+            "Для подключения своего приложения создайте API-ключ и откройте документацию.\n\n"
+            "В разделе баланса можно пополнить счёт и проверить оплату, в истории — найти операцию. "
+            "Если понадобится помощь, напишите в поддержку. Команда /start всегда возвращает сюда.",
+            keyboard(*buttons, back=None),
+        )
     else:
         pending = (
             (
@@ -69,14 +114,18 @@ async def home(event, db, dialog) -> None:
             .scalars()
             .first()
         )
-        buttons = [("Подать заявку", "register")]
+        if not pending:
+            await registration_documents(event, dialog)
+            return
+        buttons = [("Проверить статус заявки", "main_menu")]
         if is_admin(actor(event)):
             buttons.append(("Администратор", "admin_menu"))
         await show(
             event,
-            "Заявка рассматривается. Сообщим о решении здесь."
-            if pending
-            else "Для доступа к API подайте заявку на подключение.",
+            "Спасибо, ваша заявка уже на рассмотрении!\n\n"
+            f"Номер заявки: {pending.id}\n\n"
+            "Отправлять её повторно не нужно. Решение придёт в этот чат. "
+            "Вернуться к проверке статуса можно в любой момент по кнопке ниже или командой /start.",
             keyboard(*buttons, back=None),
         )
 
@@ -99,27 +148,19 @@ async def handle_callback(event, db, dialog) -> None:
         await confirm_action(event, db, user, str(UUID(data.split(":", 1)[1])))
         return
     if data == "register":
-        settings = get_settings()
-        if not settings.terms_url or not settings.privacy_policy_url:
-            await show(event, "Приём заявок ещё не открыт: документы подключения готовятся.")
-            return
-        dialog.state = "consent"
-        dialog.data = {"legal_version": settings.legal_document_version}
-        await show(
-            event,
-            "Ознакомьтесь с условиями и политикой. Нажимая «Принимаю», вы подтверждаете согласие с обоими документами.",
-            keyboard(
-                ("Условия", settings.terms_url),
-                ("Политика конфиденциальности", settings.privacy_policy_url),
-                ("Принимаю", "accept_legal"),
-            ),
-        )
+        await home(event, db, dialog)
         return
     if data == "accept_legal":
         if dialog.state != "consent" or dialog.data.get("legal_version") != get_settings().legal_document_version:
             raise HTTPException(409, "consent_required")
         dialog.state = "register_company"
-        await show(event, "Укажите название компании (2–255 символов).")
+        await show(
+            event,
+            "Спасибо! Переходим к заявке на подключение.\n\n"
+            "Шаг 1 из 2 — название компании.\n"
+            "Отправьте его одним сообщением, от 2 до 255 символов. Например: «Студия Север».\n\n"
+            "Чтобы начать заново или вернуться к документам, нажмите «Назад» или отправьте /cancel.",
+        )
         return
     if data.startswith("admin_"):
         await admin_callback(event, db, dialog, data)
@@ -143,10 +184,14 @@ async def handle_callback(event, db, dialog) -> None:
             dialog.state, dialog.data = "legal_review", {"version": settings.legal_document_version}
             await show(
                 event,
-                f"Условия и политика, версия {settings.legal_document_version}.",
+                "Документы вашего подключения\n\n"
+                "Здесь можно перечитать условия использования и политику конфиденциальности. "
+                f"Текущая версия: {settings.legal_document_version}.\n\n"
+                "Откройте оба документа по кнопкам ниже. Если вы согласны с текущей версией, "
+                "нажмите «Принимаю оба документа» — мы сохраним ваше подтверждение.",
                 keyboard(
                     ("Условия", settings.terms_url),
-                    ("Политика", settings.privacy_policy_url),
+                    ("Политика конфиденциальности", settings.privacy_policy_url),
                     ("Принимаю оба документа", "legal_accept_current"),
                 ),
             )
@@ -164,8 +209,11 @@ async def handle_callback(event, db, dialog) -> None:
         buttons = [(m.name, f"trial_model:{m.id}") for m in models] if remaining else []
         await show(
             event,
-            f"Осталось бесплатных запусков: {remaining} из 2. "
-            "Доступны все параметры включённых видеомоделей. Повторная регистрация не восстанавливает тесты.",
+            f"Попробуйте генерацию видео 🎬\nОсталось бесплатных запусков: {remaining} из 2.\n\n"
+            "Выберите модель ниже, опишите видео и подтвердите запуск. Стоимость для вас — 0 ₽. "
+            "Поддерживаются все параметры включённых видеомоделей, в том числе референсы через JSON.\n\n"
+            "Принятый запуск расходует попытку, даже если генерация завершилась ошибкой. "
+            "Повторная регистрация не восстанавливает тесты. Результат придёт в этот чат.",
             keyboard(*buttons),
         )
     elif data.startswith("trial_model:"):
@@ -177,21 +225,33 @@ async def handle_callback(event, db, dialog) -> None:
         dialog.state, dialog.data = "trial_prompt", {"model": model.slug}
         await show(
             event,
-            f"Модель: {model.name}. Отправьте описание видео. "
-            "Для любых настроек и референсов отправьте JSON запроса videos/generations "
-            "текстом или файлом .json до 1 МБ. Поля передаются без урезания; model уже выбран.",
+            f"Вы выбрали {model.name}.\n\n"
+            "Отправьте описание будущего видео: что происходит в кадре, какой нужен стиль, свет и движение камеры. "
+            "Перед запуском попросим подтвердить запрос.\n\n"
+            "Если нужны дополнительные настройки или референсы, отправьте полный JSON запроса "
+            "videos/generations текстом или файлом .json до 1 МБ. Параметры модели сохраняются; model уже выбран. "
+            "Чтобы выбрать другую модель, вернитесь в меню.",
         )
     elif data == "balance":
         reset(dialog)
         await show(
             event,
-            f"Баланс: {partner.balance_rub:.2f} ₽\nПополнение: от 1 000 ₽, USDT или TON. "
-            "Рубли зачисляются автоматически после подтверждения оплаты Crypto Pay.",
+            f"Ваш баланс: {partner.balance_rub:.2f} ₽\n\n"
+            "Для пополнения нажмите «Пополнить» и укажите сумму от 1 000 ₽. "
+            "После подтверждения создадим счёт Crypto Pay с оплатой в USDT или TON. "
+            "Рубли зачислятся автоматически после подтверждения платежа.\n\n"
+            "В разделе «Мои счета» доступны ссылки на оплату и текущие статусы. "
+            "Если вы уже оплатили счёт, откройте его и нажмите «Обновить».",
             keyboard(("Пополнить", "topup"), ("Мои счета", "payments:0")),
         )
     elif data == "topup":
         dialog.state, dialog.data = "topup", {}
-        await show(event, "Введите целую сумму в рублях, от 1 000 ₽.")
+        await show(
+            event, "На какую сумму пополнить баланс?\n\n"
+            "Введите целую сумму в рублях, от 1 000 ₽, без пробелов и знака валюты. Например: 3000. "
+            "На следующем шаге покажем сумму для подтверждения перед созданием счёта. "
+            "Отменить ввод можно командой /cancel.",
+        )
     elif data.startswith("payments:"):
         page = page_number(data)
         rows = (
@@ -209,7 +269,14 @@ async def handle_callback(event, db, dialog) -> None:
         )
         buttons = [(f"{r.requested_rub:.2f} ₽ · {status_label(r.status)}", f"payment:{r.id}") for r in rows[:4]]
         navigation(buttons, "payments", page, len(rows) > 4)
-        await show(event, "Ваши счета" if rows else "Счетов пока нет.", keyboard(*buttons))
+        await show(
+            event,
+            "Ваши счета\n\nВыберите счёт, чтобы открыть ссылку на оплату, проверить статус или отменить его. "
+            "Новые счета находятся в начале списка."
+            if rows else "Счетов пока нет.\n\nКогда будете готовы, вернитесь в раздел баланса и нажмите «Пополнить». "
+            "Перед созданием счёта вы сможете проверить сумму.",
+            keyboard(*buttons),
+        )
     elif data.startswith("payment:"):
         payment = await get_partner_payment(db, payment_id=str(UUID(data.split(":")[1])), partner_id=partner.id)
         if payment.status in {"creating", "creation_unknown"}:
@@ -231,7 +298,11 @@ async def handle_callback(event, db, dialog) -> None:
             buttons.append(("Отменить счёт", f"payment_cancel:{payment.id}"))
         await show(
             event,
-            f"Счёт {payment.id}\n{payment.requested_rub:.2f} ₽\n{status_label(payment.status)}",
+            f"Счёт {payment.id}\nСумма пополнения: {payment.requested_rub:.2f} ₽\n"
+            f"Статус: {status_label(payment.status)}\n\n"
+            "Кнопка «Обновить» проверяет текущее состояние счёта. "
+            "Если оплата ещё доступна, ниже появится кнопка перехода в Crypto Pay. "
+            "При обращении в поддержку можно указать номер этого счёта.",
             keyboard(*buttons),
         )
     elif data.startswith("payment_cancel:"):
@@ -273,10 +344,19 @@ async def handle_callback(event, db, dialog) -> None:
             )
         buttons = [("Поиск по UUID", "search_prompt")]
         navigation(buttons, "history", page, len(rows) > 8)
-        await show(event, "История\n\n" + ("\n".join(lines) or "Операций пока нет."), keyboard(*buttons))
+        await show(
+            event, "История операций\n\n"
+            "Здесь показаны пополнения, резервы, списания и возвраты. "
+            "Для проверки генерации или счёта выберите «Поиск по UUID».\n\n"
+            + ("\n".join(lines) or "Операций пока нет. После первого пополнения или запуска они появятся здесь."),
+            keyboard(*buttons),
+        )
     elif data == "search_prompt":
         dialog.state, dialog.data = "search", {}
-        await show(event, "Отправьте UUID генерации или платежа.")
+        await show(event, "Давайте найдём нужную операцию.\n\n"
+                   "Отправьте UUID генерации или платежа одним сообщением. "
+                   "Его можно скопировать из ответа API или карточки счёта. "
+                   "Покажем статус и сумму операции вашего аккаунта.")
     elif data.startswith("api_keys:"):
         reset(dialog)
         page = page_number(data)
@@ -296,10 +376,19 @@ async def handle_callback(event, db, dialog) -> None:
         buttons = [(f"{r.name[:40]} · {r.key_prefix}…", f"key:{r.id}") for r in rows[:4]]
         buttons.append(("Создать ключ", "key_create"))
         navigation(buttons, "api_keys", page, len(rows) > 4)
-        await show(event, "Действующие API-ключи" if rows else "Действующих ключей пока нет.", keyboard(*buttons))
+        await show(
+            event,
+            ("Ваши действующие API-ключи" if rows else "Действующих ключей пока нет.")
+            + "\n\nСоздайте отдельный ключ для каждого приложения, чтобы удобно управлять доступом. "
+            "В карточке ключа можно настроить уведомления о генерациях или отозвать доступ. "
+            "Полный новый ключ показывается при создании — сохраните его в защищённом хранилище.",
+            keyboard(*buttons),
+        )
     elif data == "key_create":
         dialog.state, dialog.data = "key_name", {}
-        await show(event, "Введите название ключа (2–120 символов).")
+        await show(event, "Как назовём новый API-ключ?\n\n"
+                   "Введите понятное вам название от 2 до 120 символов, например «Сайт — продакшен». "
+                   "Это поможет отличать приложения в списке. Затем попросим подтвердить создание.")
     elif data.startswith(("key:", "key_revoke:", "key_webhook:")):
         key = await db.get(ApiKey, str(UUID(data.split(":")[1])))
         if not key or key.partner_id != partner.id or not key.is_active:
@@ -316,7 +405,11 @@ async def handle_callback(event, db, dialog) -> None:
             dialog.state, dialog.data = "webhook", {"key_id": key.id}
             await show(
                 event,
-                "Отправьте публичный HTTPS-адрес webhook или «выключить». Секрет подписи будет создан автоматически.",
+                "Настроим уведомления для вашего приложения.\n\n"
+                "Отправьте публичный HTTPS-адрес, принимающий POST-запросы о состоянии генераций. "
+                "Секрет для проверки подписи создадим автоматически и покажем после сохранения. "
+                "Формат уведомлений описан в документации API.\n\n"
+                "Чтобы отключить отправку, напишите «выключить». Для отмены ввода — /cancel.",
             )
         else:
             await show(
@@ -325,9 +418,18 @@ async def handle_callback(event, db, dialog) -> None:
                 keyboard(("Webhook", f"key_webhook:{key.id}"), ("Отозвать", f"key_revoke:{key.id}"), back="api_keys:0"),
             )
     elif data == "settings":
-        await show(event, "Документация и аккаунт", keyboard(("Документация", "docs"), ("Удалить аккаунт", "delete")))
+        await show(event, "Документация и аккаунт\n\n"
+                   "В руководстве API описаны подключение, доступные запросы и получение результатов. "
+                   "Если нужна помощь с интеграцией, вернитесь в меню и откройте поддержку.\n\n"
+                   "Удаление аккаунта — отдельное действие с подтверждением. "
+                   "Перед ним покажем последствия для ключей, баланса и выполняющихся задач.",
+                   keyboard(("Документация", "docs"), ("Удалить аккаунт", "delete")))
     elif data == "docs":
-        await show(event, get_settings().public_api_base_url.rstrip("/") + "/guide")
+        await show(event, "Руководство по API Нейроныча\n\n"
+                   "Начните с авторизации и примеров запросов, затем выберите нужную модель. "
+                   "Для доступа понадобится API-ключ из соответствующего раздела кабинета.\n\n"
+                   + get_settings().public_api_base_url.rstrip("/") + "/guide",
+                   keyboard(("Открыть руководство", get_settings().public_api_base_url.rstrip("/") + "/guide")))
     elif data == "delete":
         await ask_confirmation(
             event,
@@ -377,7 +479,11 @@ async def support_callback(event, db, dialog, data: str, partner=None) -> None:
             buttons.append(("Новое обращение", "support_new"))
         navigation(buttons, "admin_support_page" if admin else "support_page", page, len(rows) > 4)
         reset(dialog)
-        await show(event, "Обращения в поддержку" if rows else "Обращений пока нет.", keyboard(*buttons))
+        await show(event, ("Обращения в поддержку" if rows else "Обращений пока нет.")
+                   + "\n\nПоможем разобраться с подключением, генерациями и оплатой. "
+                   "Откройте существующее обращение или создайте новое. "
+                   "Для быстрого разбора укажите номер генерации или счёта и что вы ожидали получить. "
+                   "Пожалуйста, не отправляйте API-ключи и другие секреты.", keyboard(*buttons))
     elif data == "support_new":
         dialog.state, dialog.data = "support_subject", {}
         await show(
@@ -683,12 +789,26 @@ async def handle_message(event, db, dialog) -> None:
     if state.startswith("admin_") and not is_admin(user):
         reset(dialog)
         raise HTTPException(403, "admin_required")
+    if state in {"register_company", "register_project"}:
+        settings = get_settings()
+        if (dialog.data.get("legal_version") != settings.legal_document_version
+                or not settings.terms_url or not settings.privacy_policy_url):
+            await registration_documents(event, dialog)
+            return
     if state == "register_company":
         if not 2 <= len(value) <= 255:
             raise ValueError("company length")
         dialog.data = {**dialog.data, "company": value}
         dialog.state = "register_project"
-        await show(event, "Укажите название и назначение проекта (2–255 символов).")
+        await show(
+            event,
+            "Отлично, название компании записано.\n\n"
+            "Шаг 2 из 2 — ваш проект.\n"
+            "Одним сообщением укажите название и кратко расскажите, для чего хотите использовать API "
+            "(от 2 до 255 символов). Например: «Север Видео — создание роликов для интернет-магазинов».\n\n"
+            "После этого сообщения отправим заявку на рассмотрение. "
+            "Если хотите исправить первый шаг, отправьте /cancel и заполните анкету заново.",
+        )
         return
     if state == "register_project":
         if not 2 <= len(value) <= 255:
@@ -713,7 +833,14 @@ async def handle_message(event, db, dialog) -> None:
         )
         reset(dialog)
         await db.commit()
-        await show(event, f"Заявка {app.id} принята. Решение придёт в этот чат.")
+        await show(
+            event,
+            f"Спасибо! Заявка {app.id} принята.\n\n"
+            "Мы получили данные компании, описание проекта и согласие с документами. "
+            "Решение придёт в этот чат — повторно заполнять анкету не нужно. "
+            "Проверить статус можно командой /start или кнопкой ниже.",
+            keyboard(("Проверить статус заявки", "main_menu"), back=None),
+        )
         return
     partner = await partner_for(db, user)
     if not partner and not state.startswith("admin_"):
