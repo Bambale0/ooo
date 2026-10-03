@@ -10,6 +10,7 @@ from app.accounts.models import ApiKey, Partner
 from app.billing.models import LedgerEntry
 from app.catalog.models import Model, PartnerModelGrant
 from app.generations.models import Generation
+from app.inference.correlation import generation_client_request_id
 from app.payments.models import PaymentInvoice
 from app.providers.models import ProviderAttempt, ProviderCredential
 from app.telegram.models import BotDialog
@@ -445,8 +446,10 @@ async def show_partner_generations(event, db, data: str) -> None:
         charge = row.actual_charge_rub if row.actual_charge_rub is not None else row.partner_price_rub
         attempt = attempts_by_generation.get(row.id)
         attempt_line = f"\nAttempt UUID: {attempt.id}" if attempt is not None else ""
+        client_request_id = generation_client_request_id(row)
+        client_request_line = f"\nClient request ID: {client_request_id}" if client_request_id else ""
         lines.append(
-            f"Generation UUID: {row.id}{attempt_line}\n"
+            f"Generation UUID: {row.id}{attempt_line}{client_request_line}\n"
             f"{row.model_slug} · {row.mode}/{row.resolution}\n"
             f"{row.status} · {charge:.2f} ₽ · {_date(row.created_at)}"
         )

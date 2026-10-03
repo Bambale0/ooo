@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import re
 from uuid import uuid4
 
 import httpx
@@ -15,6 +16,7 @@ from app.catalog.models import Model
 from app.contracts.registry import MODELS, PROTOCOLS, TEXT_PROTOCOLS, image_reference_limit, validate_request
 from app.generations.models import Generation
 from app.inference.accounting import settle_actual, token_usage
+from app.inference.correlation import derive_client_request_id, generation_client_request_id
 from app.inference.diagnostics import NativeRequestTrace, log_rejection
 from app.inference.images import image_usage, inspect_url_images
 from app.inference.service import reserve
@@ -22,6 +24,7 @@ from app.inference.streams import SSEDecoder, UsageCollector, event_data
 from app.infrastructure.config import get_settings
 from app.media.models import MediaAsset
 from app.media.router import read_media_content
+from app.media.service import build_result_download_url
 from app.providers.models import ProviderAttempt
 from app.providers.service import get_partner_provider_adapter
 from app.webhooks.service import ensure_terminal_webhook_event
@@ -89,9 +92,16 @@ async def video_status(generation_id: str, db: DbSession, auth: PartnerAuth = De
         generation.status, "pending"
     )
     result = {"request_id": generation.id, "status": status}
+    if client_request_id := generation_client_request_id(generation):
+        result["client_request_id"] = client_request_id
     if status == "done":
+        share_url, expires_at = build_result_download_url(generation)
         result["video"] = {
-            "url": get_settings().public_api_base_url.rstrip("/") + "/v1/videos/" + generation.id + "/content"
+            "url": share_url,
+            "expires_at": expires_at,
+            "authenticated_url": (
+                get_settings().public_api_base_url.rstrip("/") + "/v1/videos/" + generation.id + "/content"
+            ),
         }
         if generation.usage_snapshot:
             result["usage"] = {"billed_seconds": generation.usage_snapshot.get("seconds")}
@@ -237,8 +247,22 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
             http_status=422,
         )
         raise HTTPException(422, "invalid_idempotency_key", headers={"X-Request-Id": diagnostic_trace_id})
+    client_request_id_header = request.headers.get("x-client-request-id")
+    if client_request_id_header is not None and not re.fullmatch(
+        r"[A-Za-z0-9._:/-]{8,160}", client_request_id_header
+    ):
+        raise HTTPException(422, "invalid_client_request_id", headers={"X-Request-Id": diagnostic_trace_id})
+    client_request_id = client_request_id_header or derive_client_request_id(idem)
     try:
-        generation, attempt = await reserve(db, auth, protocol, body, idem, files_digest=digest)
+        generation, attempt = await reserve(
+            db,
+            auth,
+            protocol,
+            body,
+            idem,
+            files_digest=digest,
+            client_request_id=client_request_id,
+        )
     except HTTPException as exc:
         log_rejection(
             trace_id=diagnostic_trace_id,
@@ -256,7 +280,10 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
             headers={**(exc.headers or {}), "X-Request-Id": diagnostic_trace_id},
         ) from exc
     if protocol == "videos/generations":
-        return JSONResponse({"request_id": generation.id}, status_code=202)
+        response_body = {"request_id": generation.id}
+        if client_request_id is not None:
+            response_body["client_request_id"] = client_request_id
+        return JSONResponse(response_body, status_code=202)
     if attempt is None:
         log_rejection(
             trace_id=generation.id,

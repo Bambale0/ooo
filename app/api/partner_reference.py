@@ -171,7 +171,8 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
     )
     body += heading("connect", "Подключение", "Connection") + code(base_url)
     body += code(
-        "Authorization: Bearer <PARTNER_API_KEY>\nContent-Type: application/json\nIdempotency-Key: <unique-request-key>"
+        "Authorization: Bearer <PARTNER_API_KEY>\nContent-Type: application/json\n"
+        "Idempotency-Key: <unique-request-key>\nX-Client-Request-Id: <your-task-id>"
     )
     body += p(
         "Base URL выше не содержит /v1. Указывайте полный путь метода. Все операции, кроме GET /v1/models, "
@@ -190,6 +191,14 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
         "such as a UUID. A key identifies one request across the partner account, including its other API keys. "
         "Persist the key and original body before submitting. Status, download and upload-ticket "
         "operations do not need it.",
+    )
+    body += p(
+        "Необязательный X-Client-Request-Id сохраняет UUID задачи вашей системы и возвращается в статусе и callback. "
+        "Если ключ имеет вид generation:<UUID>:provider:<N>, UUID извлекается автоматически. Потерянный ответ "
+        "можно восстановить через GET /api/v1/generations/by-client-request-id/<UUID>.",
+        "Optional X-Client-Request-Id persists your system task UUID and returns it in status and callback payloads. "
+        "For generation:<UUID>:provider:<N> keys, the UUID is extracted automatically. Recover a lost response with "
+        "GET /api/v1/generations/by-client-request-id/<UUID>.",
     )
     body += code(
         f'export API_BASE="{base_url}"\nexport API_KEY="<PARTNER_API_KEY>"\ncurl --fail-with-body "$API_BASE/v1/models"'
@@ -341,12 +350,14 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
     body += p(
         "Ответ содержит data[] с b64_json или url в выбранном формате, возможен revised_prompt. "
         "Декодируйте base64 либо сразу скачайте URL. Ссылки временные; срок постоянного хранения не гарантирован. "
-        "На внешние ссылки изображений не отправляйте API-ключ. X-Request-Id содержит наш ID запроса. "
+        "На внешние ссылки изображений не отправляйте API-ключ. X-Request-Id содержит наш ID запроса. Потерянный "
+        "HTTP-ответ можно восстановить через статус по нашему ID или X-Client-Request-Id. "
         "У GPT размерный класс определяется фактическими пикселями: до 1024 по длинной стороне — 1K, "
         "до 2048 — 2K, выше — 4K. Учитывается каждое возвращённое изображение.",
         "The response contains data[] with b64_json or url in the chosen format, and may include revised_prompt. "
         "Decode base64 or download the URL promptly. Links are temporary; permanent retention is not guaranteed. "
-        "Never send your API key to external image URLs. X-Request-Id contains our request ID. "
+        "Never send your API key to external image URLs. X-Request-Id contains our request ID. Recover a lost "
+        "HTTP response through status lookup by our ID or X-Client-Request-Id. "
         "GPT size tiers use actual pixels: longest edge up to 1024 is 1K, up to 2048 is 2K, above is 4K. "
         "Each returned image counts.",
     )
@@ -563,7 +574,7 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
         "Prefer the primary fields above for new integrations.",
     )
     body += "<h3>" + t("Ответ и опрос статуса", "Response and status polling") + "</h3>"
-    body += code({"request_id": "<our-request-id>"})
+    body += code({"request_id": "<our-request-id>", "client_request_id": "<your-task-id>"})
     body += code('curl --fail-with-body "$API_BASE/v1/videos/$REQUEST_ID" \\\n  -H "Authorization: Bearer $API_KEY"')
     body += table(
         ("status", t("Значение", "Meaning")),
@@ -577,7 +588,10 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
             ),
             (
                 "done",
-                t("Готово: скачайте video.url с авторизацией.", "Complete: download video.url with authentication."),
+                t(
+                    "Готово: video.url временно доступен без авторизации; authenticated_url требует ключ.",
+                    "Complete: video.url is temporarily available without auth; authenticated_url requires the key.",
+                ),
             ),
             (
                 "failed",
@@ -595,8 +609,13 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
     body += code(
         {
             "request_id": "<our-request-id>",
+            "client_request_id": "<your-task-id>",
             "status": "done",
-            "video": {"url": base_url + "/v1/videos/<our-request-id>/content"},
+            "video": {
+                "url": base_url + "/api/v1/media/results/<request-id>/<expires>/<signature>",
+                "expires_at": 1791201600,
+                "authenticated_url": base_url + "/v1/videos/<our-request-id>/content",
+            },
             "usage": {"billed_seconds": 4},
         }
     )
@@ -615,13 +634,14 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
         '  -H "Authorization: Bearer $API_KEY" --output result.mp4'
     )
     body += p(
-        "Скачивание требует тот же аккаунт партнёра. Поддерживается Range: bytes=0-1023 с ответом 206 и "
+        "Постоянный authenticated_url требует тот же аккаунт партнёра; временный video.url можно передать "
+        "Telegram или клиенту без раскрытия API-ключа. Поддерживается Range: bytes=0-1023 с ответом 206 и "
         "Content-Range при частичной отдаче. До готовности файл недоступен. Сохраните готовый MP4 у себя: "
-        "постоянное хранение результата не гарантируется. Ссылка без заголовка авторизации не является "
-        "публичным плеером.",
-        "Downloading requires the same partner account. Range: bytes=0-1023 is supported, with 206 and "
+        "постоянное хранение результата не гарантируется.",
+        "The stable authenticated_url requires the same partner account; temporary video.url can be sent to "
+        "Telegram or a customer without exposing the API key. Range: bytes=0-1023 is supported, with 206 and "
         "Content-Range for partial responses. The file is unavailable before completion. Save the MP4 yourself: "
-        "permanent retention is not guaranteed. A link without the authorization header is not a public player.",
+        "permanent retention is not guaranteed.",
     )
     body += render_uploads(lang)
     body += heading(
@@ -891,15 +911,16 @@ def render_errors(lang):
         "<p>"
         + t(
             "Для видео повторите то же тело с тем же Idempotency-Key: вернётся исходный request_id. "
-            "При наличии ID достаточно GET статуса. Для текста/изображений повтор с тем же ключом возвращает 409, "
-            "не повтор результата. Новый ключ означает новую операцию и может привести к повторной оплате. "
+            "При наличии ID достаточно GET статуса. Для текста/изображений повтор с тем же ключом возвращает 409; "
+            "сохранённый статус изображения доступен по нашему ID или X-Client-Request-Id. Новый ключ означает новую "
+            "операцию и может привести к повторной оплате. "
             "При timeout, обрыве сети или 5xx не меняйте ключ для автоматической повторной отправки. "
             "У клиентов с автоматическими повторами POST отключите их; при однозначно отклонённом запросе "
             "исправленный новый запрос отправляют с новым ключом. Фиксированная общая квота RPS здесь не "
             "гарантируется.",
             "For video, resubmit the same body with the same Idempotency-Key to get the original request_id. "
-            "If you have the ID, simply GET its status. For text/images, the same key returns 409, not "
-            "the original result. "
+            "If you have the ID, simply GET its status. For text/images, the same key returns 409; retrieve saved "
+            "image status by our ID or X-Client-Request-Id. "
             "A new key means a new operation and may incur another charge. After a timeout, network "
             "interruption or 5xx, "
             "do not change the key for automatic resubmission. Disable automatic paid POST retries in clients. "

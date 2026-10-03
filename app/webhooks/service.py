@@ -112,6 +112,11 @@ async def request_manual_resend(
     if event is None:
         raise LookupError("webhook_event_not_found")
 
+    generation = await db.get(Generation, generation_id)
+    if generation is None or generation.partner_id != partner_id:
+        raise LookupError("generation_not_found")
+    event.payload = _build_terminal_payload(generation)
+
     event.status = "pending"
     event.next_attempt_at = utc_now()
     event.claimed_until = None
@@ -335,6 +340,8 @@ def _signature(secret_encrypted: str | None, timestamp: str, raw_body: bytes) ->
 
 
 def _build_terminal_payload(generation: Generation) -> dict[str, object]:
+    from app.inference.correlation import generation_client_request_id
+
     payload: dict[str, object] = {
         "generation_id": generation.id,
         "status": generation.status,
@@ -347,8 +354,16 @@ def _build_terminal_payload(generation: Generation) -> dict[str, object]:
             in {"duration_seconds", "aspect_ratio", "reference_images", "start_image", "end_image", "billing_unit"}
         },
     }
+    if client_request_id := generation_client_request_id(generation):
+        payload["client_request_id"] = client_request_id
     if generation.status == "completed":
-        payload["result_url"] = generation.result_url
+        from app.media.service import build_result_download_url, is_internal_partner_media_url
+
+        if is_internal_partner_media_url(generation.result_url):
+            payload["result_url"], payload["result_url_expires_at"] = build_result_download_url(generation)
+            payload["authenticated_result_url"] = generation.result_url
+        else:
+            payload["result_url"] = generation.result_url
         payload["charged_amount_rub"] = str(
             generation.actual_charge_rub if generation.actual_charge_rub is not None else generation.partner_price_rub
         )

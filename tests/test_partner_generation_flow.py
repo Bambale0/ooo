@@ -328,11 +328,12 @@ async def test_partner_can_create_idempotent_generation_after_manual_credit(
     )
     assert completed_generation.status_code == 200
     assert completed_generation.json()["status"] == "completed"
-    assert completed_generation.json()["result_url"].startswith("http://localhost:8000/api/v1/media/")
+    assert completed_generation.json()["result_url"].startswith("http://localhost:8000/api/v1/media/results/")
     assert "argolink" not in completed_generation.json()["result_url"]
+    assert completed_generation.json()["authenticated_result_url"].startswith("http://localhost:8000/api/v1/media/")
 
     media_path = urlsplit(completed_generation.json()["result_url"]).path
-    media_response = await client.get(media_path, headers=partner_headers)
+    media_response = await client.get(media_path)
     assert media_response.status_code == 200
     assert media_response.content == b"fake mp4 bytes"
 

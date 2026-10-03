@@ -87,7 +87,15 @@ def has_opaque_input(value) -> bool:
 
 
 async def reserve(
-    db, auth: PartnerAuth, protocol: str, body: dict, idempotency_key: str, *, files_digest="", trial_telegram_id=None
+    db,
+    auth: PartnerAuth,
+    protocol: str,
+    body: dict,
+    idempotency_key: str,
+    *,
+    files_digest="",
+    trial_telegram_id=None,
+    client_request_id: str | None = None,
 ):
     partner = await lock_partner_for_update(db, auth.partner.id)
     if partner.status != "active":
@@ -103,6 +111,11 @@ async def reserve(
     ).scalar_one_or_none()
     if existing:
         if (existing.request_payload or {}).get("request_hash") != request_hash:
+            raise InferenceAdmissionError(409, "idempotency_conflict", failure_stage="idempotency")
+        from app.inference.correlation import generation_client_request_id
+
+        stored_client_request_id = generation_client_request_id(existing)
+        if client_request_id is not None and stored_client_request_id != client_request_id:
             raise InferenceAdmissionError(409, "idempotency_conflict", failure_stage="idempotency")
         return existing, None
     from app.catalog.access import RESTRICTED_STATUS, has_model_grant
@@ -236,6 +249,8 @@ async def reserve(
         "reserved_units": units,
         "api_key_id": auth.api_key.id,
     }
+    if client_request_id is not None:
+        snapshot["client_request_id"] = client_request_id
     if video:
         snapshot["native_body"] = body
     if trial_telegram_id is not None:

@@ -2,6 +2,7 @@ import base64
 import io
 import json
 from decimal import Decimal
+from urllib.parse import urlsplit
 
 import httpx
 import pytest
@@ -524,10 +525,14 @@ async def test_seedance_reference_queue_content_and_settlement_are_idempotent(cl
     for target in ("app.generations.service", "app.media.router"):
         monkeypatch.setattr(target + ".get_partner_provider_adapter", AsyncMock(return_value=adapter))
     body = {"model": "seedance-2.5", "prompt": "Animate the poster", "duration": 4, "resolution": "480p", **media}
+    client_request_id = "8223eceb-447e-42a1-b9d3-3722293e9df9"
+    headers = {**headers, "Idempotency-Key": f"generation:{client_request_id}:provider:0"}
     response = await client.post("/v1/videos/generations", headers=headers, json=body)
     assert response.status_code == 202
+    assert response.json()["client_request_id"] == client_request_id
     identity = response.json()["request_id"]
     generation = await db_session.get(Generation, identity)
+    assert generation.request_payload["client_request_id"] == client_request_id
     assert generation.partner_price_rub == Decimal("80")  # image references add no video seconds
     attempt = await dispatch_generation_to_provider(db_session, generation)
     await db_session.commit()
@@ -539,11 +544,31 @@ async def test_seedance_reference_queue_content_and_settlement_are_idempotent(cl
     await poll_generation_provider(db_session, generation)
     duplicate = await client.post("/v1/videos/generations", headers=headers, json=body)
     assert duplicate.json()["request_id"] == identity and submitted == [body]
+    conflict = await client.post(
+        "/v1/videos/generations",
+        headers={**headers, "X-Client-Request-Id": "different-client-request-id"},
+        json=body,
+    )
+    assert conflict.status_code == 409 and conflict.json()["detail"] == "idempotency_conflict"
+    await db_session.refresh(generation)
+    await db_session.refresh(partner)
     assert generation.actual_charge_rub == Decimal("80")
     assert generation.actual_provider_cost_usdt == Decimal(".312")
     assert partner.balance_rub == Decimal("999920")
     status = await client.get(f"/v1/videos/{identity}", headers=headers)
     assert status.json()["status"] == "done" and "private-reference-job" not in status.text
+    assert status.json()["client_request_id"] == client_request_id
+    durable = await client.get(f"/api/v1/generations/{identity}", headers=headers)
+    assert durable.status_code == 200 and durable.json()["client_request_id"] == client_request_id
+    by_client_id = await client.get(
+        f"/api/v1/generations/by-client-request-id/{client_request_id}", headers=headers
+    )
+    assert by_client_id.status_code == 200 and by_client_id.json()["id"] == identity
+    video = status.json()["video"]
+    assert video["authenticated_url"] == f"http://localhost:8000/v1/videos/{identity}/content"
+    assert f"/api/v1/media/results/{identity}/" in video["url"]
+    shared = await client.get(urlsplit(video["url"]).path, headers={"Range": "bytes=0-1023"})
+    assert shared.status_code == 206 and shared.content == b"video-fixture"
     content = await client.get(f"/v1/videos/{identity}/content", headers={**headers, "Range": "bytes=0-1023"})
     assert content.status_code == 206 and content.content == b"video-fixture"
     await upstream.aclose()
