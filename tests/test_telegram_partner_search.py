@@ -196,6 +196,14 @@ async def test_admin_partner_management_lists_searches_and_opens_card(cabinet, d
     owner = await partner(db_session)
     owner.company_name = "Acme Studio"
     owner.project_name = "Video Factory"
+    paused = await partner(db_session, "456")
+    paused.company_name = "Paused Partner"
+    paused.balance_rub = Decimal("250.50")
+    paused.status = "disabled"
+    deleted = await partner(db_session, "789")
+    deleted.company_name = "Deleted Partner"
+    deleted.balance_rub = Decimal("9000")
+    deleted.status = "deleted"
     db_session.add(BotDialog(telegram_id=owner.telegram_id, telegram_username="acme_owner"))
     await db_session.commit()
 
@@ -205,6 +213,15 @@ async def test_admin_partner_management_lists_searches_and_opens_card(cabinet, d
     listing = await feed(user=999, callback="admin_partners:0")
     assert f"admin_partner_view:{owner.id}" in button_data(listing)
     assert "Поиск" in listing[-1].text
+    assert "На кошельках партнёров: 1250.50 ₽" in listing[-1].text
+    button_texts = [
+        button.text
+        for row in listing[-1].reply_markup.inline_keyboard
+        for button in row
+        if button.callback_data.startswith("admin_partner_view:")
+    ]
+    assert any("Acme Studio" in value and "1000.00 ₽" in value for value in button_texts)
+    assert any("Paused Partner" in value and "250.50 ₽" in value for value in button_texts)
 
     await feed(user=999, callback="admin_partners_search")
     card = await feed(user=999, text="Acme Studio")

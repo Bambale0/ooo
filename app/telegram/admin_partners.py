@@ -46,7 +46,7 @@ def recipient_label(partner: Partner, username: str | None) -> str:
 
 def admin_partner_label(partner: Partner, username: str | None) -> str:
     status_label = {"active": "✓", "disabled": "⏸", "deleted": "×"}.get(partner.status, "•")
-    return f"{status_label} {recipient_label(partner, username)}"
+    return f"{status_label} {recipient_label(partner, username)} · {partner.balance_rub:.2f} ₽"
 
 
 def _status(partner: Partner) -> str:
@@ -220,6 +220,9 @@ async def show_admin_partners(event, db, dialog, page: int = 0, *, search: dict 
             .limit(PAGE_SIZE + 1)
         )
     ).all()
+    wallet_total = await db.scalar(
+        select(func.coalesce(func.sum(Partner.balance_rub), 0)).where(Partner.status != "deleted")
+    )
     dialog.state, dialog.data = "admin_partner_browse", {"search": search}
     buttons = [
         (admin_partner_label(partner, username), f"admin_partner_view:{partner.id}")
@@ -233,8 +236,9 @@ async def show_admin_partners(event, db, dialog, page: int = 0, *, search: dict 
     if search:
         buttons.append(("Сбросить поиск", "admin_partners_all"))
     title = f"Партнёры · страница {page + 1}" if rows else "Партнёров не найдено."
+    wallet_line = f"\nНа кошельках партнёров: {wallet_total:.2f} ₽"
     hint = "\nПоиск: Telegram ID, @username, UUID, компания или проект." if rows else ""
-    await show(event, title + hint, keyboard(*buttons, back="admin_menu"))
+    await show(event, title + wallet_line + hint, keyboard(*buttons, back="admin_menu"))
 
 
 async def prompt_admin_partner_search(event, dialog) -> None:
