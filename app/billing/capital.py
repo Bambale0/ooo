@@ -1,6 +1,6 @@
 """Current cash cover is independent of historical partner coverage snapshots."""
 
-from datetime import UTC
+from datetime import UTC, timedelta
 from decimal import Decimal
 
 from fastapi import HTTPException
@@ -203,11 +203,20 @@ async def provider_capital_state(db, partner_id, provider="argolink"):
         Generation.provider_cost_reserve_usdt,
         Generation.provider_cost_usdt_snapshot,
     )
+    live_statuses = ("queued", "submitting", "sent_to_provider", "processing")
+    uncertain_statuses = ("timeout", "reconciliation_required")
+    uncertain_cutoff = utc_now() - timedelta(seconds=get_settings().worker_provider_processing_timeout_seconds)
     active = Decimal(
         (
             await db.execute(
                 select(func.coalesce(func.sum(active_reserve), 0)).where(
-                    Generation.status.in_(ACTIVE)
+                    (
+                        Generation.status.in_(live_statuses)
+                    )
+                    | (
+                        Generation.status.in_(uncertain_statuses)
+                        & (Generation.created_at >= uncertain_cutoff)
+                    )
                 )
             )
         ).scalar()

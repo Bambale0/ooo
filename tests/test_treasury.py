@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.accounts.models import Partner, ProfitWithdrawal
-from app.billing.capital import capital_state, require_current_capital
+from app.billing.capital import capital_state, provider_capital_state, require_current_capital
 from app.billing.capital import wallet_balance as actual_wallet_balance
 from app.billing.models import WalletSnapshot
 from app.billing.safe_to_withdraw import record_profit_withdrawal
@@ -205,3 +205,56 @@ async def test_postgres_serializes_cash_reservations_across_partners(monkeypatch
             await db.execute(delete(Partner).where(Partner.id.in_(ids)))
             await db.commit()
         await engine.dispose()
+
+
+async def test_provider_capital_expires_stale_uncertain_reserves(db_session, monkeypatch):
+    settings = get_settings()
+    monkeypatch.setattr(settings, "required_provider_float_usdt", Decimal("0"))
+    monkeypatch.setattr(settings, "worker_provider_processing_timeout_seconds", 30 * 60)
+
+    partner = Partner(telegram_id="provider-capital", company_name="Provider Capital", project_name="Provider Capital")
+    db_session.add(partner)
+    await db_session.flush()
+
+    async def prepaid_balance():
+        return Decimal("10")
+
+    class Adapter:
+        async def prepaid_balance_usdt(self):
+            return await prepaid_balance()
+
+    async def get_adapter(db, partner_id, provider):
+        return Adapter()
+
+    monkeypatch.setattr("app.billing.capital.get_partner_provider_adapter", get_adapter)
+
+    def generation(status, reserve, age_minutes, suffix):
+        return Generation(
+            partner_id=partner.id,
+            model_id=f"provider-capital-{suffix}",
+            model_slug="seedance-2.5",
+            mode="default",
+            resolution="480p",
+            status=status,
+            idempotency_key=f"provider-capital-{suffix}",
+            partner_price_rub=Decimal("100"),
+            provider_cost_usdt_snapshot=Decimal(str(reserve)),
+            provider_cost_reserve_usdt=Decimal(str(reserve)),
+            prompt="test",
+            created_at=utc_now() - timedelta(minutes=age_minutes),
+        )
+
+    db_session.add_all(
+        [
+            generation("processing", "3", 5, "processing"),
+            generation("reconciliation_required", "2", 5, "fresh-reconciliation"),
+            generation("reconciliation_required", "7", 120, "stale-reconciliation"),
+            generation("timeout", "5", 120, "stale-timeout"),
+        ]
+    )
+    await db_session.flush()
+
+    state = await provider_capital_state(db_session, partner.id)
+    assert state["balance"] == Decimal("10")
+    assert state["active"] == Decimal("5")
+    assert state["available"] == Decimal("5")
