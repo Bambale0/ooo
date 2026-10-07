@@ -40,6 +40,45 @@ def public_error(code, status=503, *, generation_id=None, headers=None):
     )
 
 
+def video_failure_error(public_code: str, raw_error: str | None) -> dict[str, object]:
+    """Return a stable, provider-agnostic public error for video polling."""
+    normalized = (raw_error or "").strip().lower()
+    if public_code == "provider_generation_failed":
+        if "at capacity" in normalized:
+            return {
+                "type": "provider_generation_failed",
+                "code": "model_capacity",
+                "message": "The video model is temporarily at capacity. Retry later.",
+                "retryable": True,
+            }
+        if "could not be generated" in normalized or "could not be processed" in normalized:
+            return {
+                "type": "provider_generation_failed",
+                "code": "generation_failed",
+                "message": "The video could not be generated. Retry the request or adjust the input.",
+                "retryable": True,
+            }
+        return {
+            "type": "provider_generation_failed",
+            "code": "generation_failed",
+            "message": "Video generation failed.",
+            "retryable": False,
+        }
+    if public_code == "generation_timeout":
+        return {
+            "type": "generation_timeout",
+            "code": "generation_timeout",
+            "message": "Video generation timed out before a final result was available.",
+            "retryable": True,
+        }
+    return {
+        "type": public_code,
+        "code": public_code,
+        "message": public_code,
+        "retryable": False,
+    }
+
+
 def scrub(data, generation_id):
     """Only protocol envelope metadata is private; never rewrite user model content."""
     if not isinstance(data, dict):
@@ -106,7 +145,18 @@ async def video_status(generation_id: str, db: DbSession, auth: PartnerAuth = De
         if generation.usage_snapshot:
             result["usage"] = {"billed_seconds": generation.usage_snapshot.get("seconds")}
     if generation.public_error_code:
-        result["error"] = {"type": generation.public_error_code, "message": generation.public_error_code}
+        attempt = (
+            await db.execute(
+                select(ProviderAttempt)
+                .where(ProviderAttempt.generation_id == generation.id)
+                .order_by(ProviderAttempt.created_at.desc(), ProviderAttempt.id.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        result["error"] = video_failure_error(
+            generation.public_error_code,
+            attempt.raw_error if attempt is not None else None,
+        )
     return result
 
 

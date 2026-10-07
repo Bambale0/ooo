@@ -537,8 +537,11 @@ async def poll_generation_provider(
         attempt.raw_error = result.raw_error
         attempt.next_poll_at = None
         if reconciling_late_success:
-            generation.status = "timeout"
-            generation.public_error_code = "generation_timeout"
+            # A processing timeout is provisional. If the provider later gives a
+            # definitive failed result, expose that terminal truth instead of
+            # leaving clients on "expired" forever.
+            generation.status = "failed"
+            generation.public_error_code = "provider_generation_failed"
             if provider == "infai":
                 unresolved_prior = await db.scalar(
                     select(ProviderAttempt.id)
@@ -555,6 +558,7 @@ async def poll_generation_provider(
                         generation,
                         reason="Released fallback procurement reserve after definitive late failure",
                     )
+            await ensure_terminal_webhook_event(db, generation, provider=provider)
         elif provider == PRIMARY_PROVIDER and await _queue_fallback_after_safe_failure(
             db,
             generation,
