@@ -194,6 +194,41 @@ async def test_terminal_failure_has_no_retry_deadline(db_session, adapter):
     assert (candidates, polled) == ([], 0)
 
 
+async def test_definitive_late_provider_failure_replaces_timeout_status(db_session, adapter):
+    partner, generation, attempt, _ = await _seed(db_session)
+    attempt.created_at = utc_now() - timedelta(minutes=31)
+    await db_session.commit()
+
+    await poll_generation_provider(db_session, generation)
+    assert (generation.status, attempt.status, generation.public_error_code) == (
+        "timeout",
+        "timeout",
+        "generation_timeout",
+    )
+
+    attempt.next_poll_at = utc_now() - timedelta(seconds=1)
+    adapter.poll_generation.return_value = ProviderPollResult(
+        status="failed",
+        raw_error="The result could not be generated.",
+    )
+    await db_session.commit()
+
+    await poll_generation_provider(db_session, generation)
+
+    assert (generation.status, attempt.status, generation.public_error_code) == (
+        "failed",
+        "failed",
+        "provider_generation_failed",
+    )
+    assert attempt.raw_error == "The result could not be generated."
+    assert await _ledger(db_session, generation) == [
+        ("generation_reserve", Decimal("-80")),
+        ("generation_reserve_release", Decimal("80")),
+    ]
+    await db_session.refresh(partner)
+    assert partner.balance_rub == Decimal("100")
+
+
 async def test_revoked_original_credential_does_not_change_terminal_failure_or_switch_keys(
     db_session, adapter
 ):
