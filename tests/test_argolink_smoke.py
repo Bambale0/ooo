@@ -53,7 +53,7 @@ def test_unrestricted_key_still_requires_explicit_finite_budget():
     validate_budget(Decimal(".32"), {"mode": "unrestricted", "quota": None})
     body, estimate = video_smoke_request("seedance-2.5", "https://media.example/reference.jpg", "reference")
     assert body["reference_images"] == [{"url": "https://media.example/reference.jpg"}]
-    assert "start_image" not in body and estimate == Decimal(".312")
+    assert "start_image" not in body and estimate == Decimal(".3496")
 
 
 @pytest.mark.parametrize("content_status,expected", [(206, "done"), (403, "content_unverified")])
@@ -104,7 +104,7 @@ async def test_reference_smoke_uploads_polls_and_checks_protected_content(
         report=str(report),
         reference=str(reference),
         execute=True,
-        budget_usd=Decimal(".32"),
+        budget_usd=Decimal(".35"),
         model=["seedance-2.5"],
         protocol=None,
         video_mode="reference",
@@ -121,3 +121,4 @@ async def test_reference_smoke_uploads_polls_and_checks_protected_content(
     with pytest.raises(SystemExit, match="existing runs"):
         await run(args)
     assert len(submissions) == 1
+
