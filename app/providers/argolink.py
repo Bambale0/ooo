@@ -218,7 +218,8 @@ class ArgoLinkAdapter:
                     retryable=True,
                 ) from exc
         try:
-            data = response.json()
+            # Preserve monetary decimal literals as JSON-safe strings, never float.
+            data = json.loads(response.content, parse_float=str)
         except ValueError as exc:
             raise ProviderAdapterError("provider_temporarily_unavailable", "invalid_provider_poll_response") from exc
         status = self._normalize_video_status(data)
@@ -454,3 +455,4 @@ class _BorrowedAsyncClient:
 
     async def __aexit__(self, exc_type: object, exc: object, traceback: object) -> None:
         return None
+

@@ -15,6 +15,7 @@ from app.infrastructure.retry import utc_now
 from app.payments.crypto_pay import CryptoPayError, get_crypto_pay_client
 from app.payments.models import PaymentInvoice
 from app.providers.base import ProviderAdapterError
+from app.providers.models import ProviderCredit
 from app.providers.service import get_partner_provider_adapter
 
 ACTIVE = ("queued", "sent_to_provider", "processing", "timeout", "submitting", "reconciliation_required")
@@ -157,6 +158,12 @@ async def capital_state(db):
     historical = Decimal((await db.execute(select(func.coalesce(func.sum(Partner.cost_coverage_rub), 0)))).scalar())
     future = balances * ratio if ratio is not None else Decimal(0) if balances == 0 else None
     book_cash = settings.opening_working_capital_usdt + received - completed_cost - terminal_hold - withdrawals
+    # Prepaid supplier compensation cannot be withdrawn from the cash wallet.
+    # A notice is evidence of a statement, not independent balance reconciliation.
+    supplier_credits = Decimal(await db.scalar(
+        select(func.coalesce(func.sum(ProviderCredit.amount_usdt), 0))
+        .where(ProviderCredit.status == "supplier_reported")
+    ))
     liquid = min(wallet, book_cash) if wallet is not None else None
     available = liquid - active - pending - settings.required_provider_float_usdt if liquid is not None else None
     safe = available - future if available is not None and future is not None else None
@@ -176,6 +183,7 @@ async def capital_state(db):
             "unresolved_provider_cost_hold_usdt": terminal_hold,
             "partner_balance_rub": balances,
             "recorded_withdrawals_usdt": withdrawals,
+            "supplier_reported_provider_credits_usdt": supplier_credits,
         },
     }
 
@@ -245,3 +253,4 @@ async def require_provider_capital(db, cost_usdt, *, partner_id, provider="argol
     state = await provider_capital_state(db, partner_id, provider)
     if state["available"] < cost_usdt:
         raise HTTPException(503, "provider_temporarily_unavailable")
+

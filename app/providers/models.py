@@ -67,6 +67,22 @@ class ProviderAttempt(Base):
     created_at: Mapped[object] = utc_created_at()
 
 
+class ProviderCredit(Base):
+    """Append-only supplier statements; never partner credit or withdrawable cash."""
+
+    __tablename__ = "provider_credits"
+    __table_args__ = (UniqueConstraint("provider", "reference", name="uq_provider_credit_reference"),)
+
+    id: Mapped[str] = uuid_pk()
+    provider: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    reference: Mapped[str] = mapped_column(String(160), nullable=False)
+    amount_usdt: Mapped[Decimal] = mapped_column(ExactNumeric(36, 18), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="supplier_reported")
+    evidence: Mapped[str] = mapped_column(Text, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[object] = utc_created_at()
+
+
 class ProviderCircuit(Base):
     __tablename__ = "provider_circuits"
     provider: Mapped[str] = mapped_column(String(80), primary_key=True)
@@ -86,3 +102,4 @@ class ProviderOutcome(Base):
     provider: Mapped[str] = mapped_column(String(80), primary_key=True, index=True)
     outcome: Mapped[str] = mapped_column(String(20), nullable=False)
     created_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+

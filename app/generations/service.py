@@ -512,7 +512,15 @@ async def poll_generation_provider(
                 await observe(db, generation, provider=provider)
                 await db.flush()
                 return generation
-            await settle_actual(db, generation, {"seconds": seconds})
+            if attempt.cost_status == "invalid":
+                generation.status = attempt.status = "reconciliation_required"
+                generation.public_error_code = "usage_reconciliation_required"
+                await db.flush()
+                return generation
+            await settle_actual(db, generation, {"seconds": seconds}, provider_cost=attempt.provider_cost_usdt)
+            if attempt.provider_cost_usdt is None:
+                attempt.provider_cost_usdt = generation.actual_provider_cost_usdt
+                attempt.cost_status = "estimated"
         else:
             await settle_generation_reserves(db, generation)
             if provider == "asale":
@@ -654,22 +662,32 @@ def _record_attempt_result_accounting(
         attempt.usage_snapshot = dict(result.usage)
     if attempt.cost_reserve_usdt is None:
         attempt.cost_reserve_usdt = _attempt_cost_reserve(generation, attempt.provider)
-    if result.status != "failed":
+    if result.status not in {"failed", "completed"}:
         return
 
     raw_cost = None
+    cost_present = False
     if isinstance(result.usage, dict):
         for field in ("provider_cost_usdt", "provider_charge_usdt", "cost_usdt"):
             if field in result.usage:
                 raw_cost = result.usage[field]
+                cost_present = True
                 break
     try:
-        cost = Decimal(str(raw_cost)) if raw_cost is not None and not isinstance(raw_cost, bool) else None
+        cost = (
+            Decimal(str(raw_cost))
+            if isinstance(raw_cost, (str, int, Decimal)) and not isinstance(raw_cost, bool)
+            else None
+        )
     except (ArithmeticError, ValueError):
         cost = None
-    if cost is not None and cost.is_finite() and cost >= 0:
+    if cost is not None and cost.is_finite() and Decimal(0) <= cost < Decimal("1e18"):
         attempt.provider_cost_usdt = cost
         attempt.cost_status = "reported"
+    elif result.status == "completed":
+        # Seconds * accepted procurement rate is an estimate, not proof of the
+        # supplier's cash debit. An explicit malformed debit cannot be ignored.
+        attempt.cost_status = "invalid" if cost_present else None
     else:
         # A terminal status proves completion of the task, not that the provider
         # waived its charge. Keep a queryable obligation until reconciliation.
