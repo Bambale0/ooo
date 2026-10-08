@@ -756,8 +756,7 @@
   "procurement_reviews": {
     "seedance-2.5": {
       "effective_at": "2026-10-06T12:17:00Z",
-      "live_revision": "a76fbbc1a12cf5cb",
-      "source": "ArgoLink supplier pricing notice 2026-10-06; live catalog revision a76fbbc1a12cf5cb",
+      "source": "ArgoLink supplier pricing notice 2026-10-06; independently checked live catalog",
       "expected_previous": {
         "480p": "0.078",
         "720p": "0.170",
