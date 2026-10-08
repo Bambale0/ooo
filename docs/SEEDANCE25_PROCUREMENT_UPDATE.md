@@ -2,7 +2,7 @@
 
 ArgoLink's supplier notice changes the procurement rates effective 2026-10-06T12:17:00Z to USD 0.0874 / 0.196 / 0.483 per output second for 480p / 720p / 1080p. These user-supplied rates are also present in the supplier's live model catalog. Only ordinary Seedance 2.5 is updated; other models and partner prices are unchanged.
 
-The reviewed update is stored in `app/contracts/catalog.json`, including its source revision, expected previous rates, effective timestamp and supplier-reported compensation. The overall catalog revision is not presented as a fresh review of every model.
+The reviewed update is stored in `app/contracts/catalog.json`, including its source notice, expected previous rates, effective timestamp and supplier-reported compensation. The overall catalog revision is not presented as a fresh review of every model.
 
 ## Apply after review and CI
 
