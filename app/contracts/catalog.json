@@ -578,6 +578,27 @@
       "checked_at": "2026-10-03",
       "source": "https://argolink.io/api/catalog/v1/models?category=image&sort=provider&page_size=100"
     },
+    "nano-banana-2.1": {
+      "category": "image",
+      "endpoint": "/v1/images/generations",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "image",
+        "unit": "generation",
+        "tiers": [
+          {
+            "label": "1K",
+            "price": 0.02
+          },
+          {
+            "label": "2K",
+            "price": 0.02
+          }
+        ]
+      },
+      "checked_at": "2026-10-08",
+      "source": "https://argolink.io/en/models/nano-banana-2.1"
+    },
     "nano-banana-pro": {
       "category": "image",
       "endpoint": "/v1/images/generations",
