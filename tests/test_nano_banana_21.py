@@ -3,11 +3,11 @@ from decimal import Decimal
 import httpx
 import pytest
 from sqlalchemy import select
+from test_image_price_schedule import rendered_image
+from test_native_inference import setup
 
 from app.contracts.registry import MODELS, image_reference_limit, validate_request
 from app.generations.models import Generation
-from test_image_price_schedule import rendered_image
-from test_native_inference import setup
 
 
 MODEL = "nano-banana-2.1"
