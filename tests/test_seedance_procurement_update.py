@@ -16,6 +16,28 @@ def test_reviewed_seedance25_procurement_matches_supplier_notice():
     assert rates == {"480p": Decimal(".0874"), "720p": Decimal(".196"), "1080p": Decimal(".483")}
 
 
+async def test_reviewed_rates_compare_equal_to_numeric_live_catalog(monkeypatch):
+    import httpx
+
+    from app.catalog.sync import check_catalog_drift
+
+    def handler(request):
+        return httpx.Response(
+            200,
+            content=(
+                b'{"revision":"reviewed","items":[{"id":"seedance-2.5","category":"video",'
+                b'"endpoint":"/v1/videos/generations","pricing":{"effective":'
+                b'{"currency":"USD","billing_mode":"video","unit":"second","generation_per_unit":0.0874,'
+                b'"tiers":[{"label":"480p","price":0.0874},{"label":"720p","price":0.196},'
+                b'{"label":"1080p","price":0.483}]}}}]}'
+            ),
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://argolink.io") as client:
+        monkeypatch.setattr("app.catalog.sync.get_provider_http_client", lambda provider: client)
+        assert "seedance-2.5" not in (await check_catalog_drift())["changed"]
+
+
 @pytest.mark.parametrize("reported", [None, "3.45", "0"])
 async def test_primary_success_records_attempt_cost_without_repricing(db_session, monkeypatch, reported):
     partner, generation, primary, _ = await seed(db_session)

@@ -205,19 +205,19 @@
         "currency": "USD",
         "billing_mode": "video",
         "unit": "second",
-        "generation_per_unit": "0.0874",
+        "generation_per_unit": 0.0874,
         "tiers": [
           {
             "label": "480p",
-            "price": "0.0874"
+            "price": 0.0874
           },
           {
             "label": "720p",
-            "price": "0.196"
+            "price": 0.196
           },
           {
             "label": "1080p",
-            "price": "0.483"
+            "price": 0.483
           }
         ]
       }
