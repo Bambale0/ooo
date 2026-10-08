@@ -9,7 +9,6 @@ from test_native_inference import setup
 from app.contracts.registry import MODELS, image_reference_limit, validate_request
 from app.generations.models import Generation
 
-
 MODEL = "nano-banana-2.1"
 RATIOS = ("1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9", "1:4", "4:1", "1:8", "8:1")
 
