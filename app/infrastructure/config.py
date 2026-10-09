@@ -68,6 +68,8 @@ class Settings(BaseSettings):
     public_api_base_url: str = "http://localhost:8000"
     public_media_base_url: str | None = None
     media_storage_backend: str = "local"
+    # Absent checker or resource pressure keeps the established maximum reserve.
+    media_probe_socket: str | None = None
     media_local_storage_dir: str = "./var/media"
     media_retention_hours: int = 24
     media_share_link_ttl_seconds: int = Field(default=7 * 24 * 60 * 60, ge=300, le=30 * 24 * 60 * 60)

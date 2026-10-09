@@ -11,6 +11,21 @@ class SecretRedactingFormatter(JsonFormatter):
         super().__init__(*args, **kwargs)
         self._secrets = tuple(value for value in secrets if isinstance(value, str) and len(value) >= 8)
 
+    def process_log_record(self, record):
+        # Signed URLs are ephemeral credentials, including capabilities in paths
+        # rather than query strings. Scrub BEFORE JSON escaping, recursively, so
+        # HTTPX messages, extra fields and exception traces cannot leak tickets.
+        def redact(value):
+            if isinstance(value, str):
+                return re.sub(r"https?://[^\s<>]+", "[URL_REDACTED]", value)
+            if isinstance(value, dict):
+                return {redact(key): redact(item) for key, item in value.items()}
+            if isinstance(value, (list, tuple)):
+                return [redact(item) for item in value]
+            return value
+
+        return redact(super().process_log_record(record))
+
     def format(self, record):
         # Redact the final formatted string, including exception tracebacks and extras.
         result = super().format(record)
@@ -54,3 +69,5 @@ def configure_logging() -> None:
         logger = logging.getLogger(name)
         logger.handlers.clear()
         logger.propagate = True
+        if name in {"httpx", "httpcore"}:
+            logger.setLevel(logging.WARNING)

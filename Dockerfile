@@ -5,6 +5,7 @@ COPY requirements.lock ./
 RUN pip install --no-cache-dir --require-hashes --prefix=/install -r requirements.lock
 COPY pyproject.toml README.md ./
 COPY app ./app
+COPY media_probe ./media_probe
 RUN pip install --no-cache-dir --prefix=/install --no-deps .
 
 FROM python:3.12-slim AS runtime

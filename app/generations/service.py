@@ -41,7 +41,7 @@ FALLBACK_PROVIDERS = ("infai", "asale")
 
 def _provider_request_for_generation(generation: Generation) -> ProviderGenerationRequest:
     request_payload = generation.request_payload or {}
-    native_body = request_payload.get("native_body")
+    native_body = request_payload.get("effective_native_body", request_payload.get("native_body"))
     normalized: dict = {}
     if isinstance(native_body, dict):
         try:
@@ -66,7 +66,9 @@ def _provider_request_for_generation(generation: Generation) -> ProviderGenerati
         mode=generation.mode,
         resolution=str(normalized.get("resolution", generation.resolution)),
         prompt=str(normalized.get("prompt", generation.prompt)),
-        duration_seconds=int(normalized.get("duration", generation.duration_seconds)),
+        duration_seconds=int(normalized.get(
+            "duration", 5 if request_payload.get("video_inputs") else generation.duration_seconds
+        )),
         aspect_ratio=normalized.get("aspect_ratio", generation.aspect_ratio),
         start_image=media_url(normalized.get("start_image")) or media_url(request_payload.get("start_image")),
         end_image=media_url(normalized.get("end_image")) or media_url(request_payload.get("end_image")),
@@ -206,6 +208,30 @@ async def has_active_provider_credential(
     return await get_active_provider_credential(db, partner_id, provider) is not None
 
 
+async def _guard_expired_video_inputs(db, generation, provider, attempt) -> bool:
+    input_snapshot = (generation.request_payload or {}).get("video_inputs")
+    if not input_snapshot:
+        return False
+    from app.media.video_inputs import snapshot_is_fresh
+
+    if snapshot_is_fresh(input_snapshot):
+        return False
+    prior = await db.scalar(select(ProviderAttempt.id).where(ProviderAttempt.generation_id == generation.id))
+    if prior is None:
+        generation.public_error_code = "input_media_expired"
+        await cancel_before_submit(db, generation, provider=provider)
+        return True
+    # Never refresh a mutable original, launch with expired assets, or
+    # discard an earlier provider's possibly charged obligation.
+    generation.status = "reconciliation_required"
+    generation.public_error_code = "input_media_expired"
+    if attempt is not None:
+        attempt.status = "reconciliation_required"
+        attempt.next_attempt_at = attempt.next_poll_at = None
+    await db.flush()
+    return True
+
+
 async def dispatch_generation_to_provider(
     db: AsyncSession,
     generation: Generation,
@@ -226,6 +252,11 @@ async def dispatch_generation_to_provider(
         attempt = existing
     else:
         attempt = None
+
+    if await _guard_expired_video_inputs(db, generation, provider, attempt):
+        return await db.scalar(select(ProviderAttempt).where(
+            ProviderAttempt.generation_id == generation.id, ProviderAttempt.provider == provider,
+        ))
 
     failed_tasks = (generation.request_payload or {}).get("provider_failed_tasks", [])
     retrying_failed_task = any(item.get("provider") == provider for item in failed_tasks)
@@ -289,6 +320,11 @@ async def dispatch_generation_to_provider(
         await get_provider_rate_limiter(provider, "submit").acquire()
         if retrying_failed_task and attempt and await _expire_generation_retry(db, generation, attempt):
             return attempt
+        # Pacing and database locks can outlive a staged object's safe lifetime.
+        if await _guard_expired_video_inputs(db, generation, provider, attempt):
+            return await db.scalar(select(ProviderAttempt).where(
+                ProviderAttempt.generation_id == generation.id, ProviderAttempt.provider == provider,
+            ))
         # Persist the submit intent BEFORE the external side effect. If the process
         # dies after acceptance, a restart must not blindly create a second paid job.
         # A submitting attempt without an ID requires operator reconciliation.
