@@ -36,6 +36,8 @@ class GenerationRead(BaseModel):
     idempotency_key: str
     partner_price_rub: Decimal
     actual_charge_rub: Decimal | None = None
+    financial_status: str | None = None
+    charged_rub: Decimal | None = None
     result_url: str | None
     authenticated_result_url: str | None = None
     result_url_expires_at: int | None = None

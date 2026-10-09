@@ -131,6 +131,8 @@ async def video_status(generation_id: str, db: DbSession, auth: PartnerAuth = De
         generation.status, "pending"
     )
     result = {"request_id": generation.id, "status": status}
+    if generation.client_reserve_released_at is not None:
+        result.update(financial_status="released_final", charged_rub="0.00")
     if client_request_id := generation_client_request_id(generation):
         result["client_request_id"] = client_request_id
     if status == "done":

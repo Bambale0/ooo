@@ -34,10 +34,11 @@ logger = logging.getLogger(__name__)
 class WorkerCycleResult:
     dispatched: int = 0
     polled: int = 0
+    released: int = 0
 
     @property
     def did_work(self) -> bool:
-        return any((self.dispatched, self.polled))
+        return any((self.dispatched, self.polled, self.released))
 
 
 async def process_generation_work_once(
@@ -47,10 +48,11 @@ async def process_generation_work_once(
     provider: str | None = None,
 ) -> WorkerCycleResult:
     """Single-session worker path kept for focused tests and admin/debug use."""
+    released = await _release_due_client_reserves(db, limit=limit)
     dispatched = await _dispatch_queued_generations(db, limit=limit, provider=provider)
     polled = await _poll_active_generations(db, limit=limit, provider=provider)
     await _refresh_generation_queue_metrics_with_session(db)
-    return WorkerCycleResult(dispatched=dispatched, polled=polled)
+    return WorkerCycleResult(dispatched=dispatched, polled=polled, released=released)
 
 
 async def process_generation_work_concurrently_once(
@@ -61,6 +63,16 @@ async def process_generation_work_concurrently_once(
     submit_concurrency: int = 10,
     poll_concurrency: int = 10,
 ) -> WorkerCycleResult:
+    # A DB-backed clock survives restarts and has no dependency on polling an
+    # unknown upstream identity. Each financial decision is rechecked under lock.
+    async with session_factory() as db:
+        release_ids = list(await db.scalars(_due_client_release_ids_query(limit=limit)))
+    released = await _run_bounded(
+        release_ids, concurrency=4,
+        handler=lambda generation_id: _release_client_reserve_candidate(
+            session_factory=session_factory, generation_id=generation_id,
+        ),
+    )
     queued_ids, active_ids = await _load_candidate_ids(
         session_factory=session_factory,
         limit=limit,
@@ -92,7 +104,7 @@ async def process_generation_work_concurrently_once(
         ),
     )
     await _refresh_generation_queue_metrics(session_factory)
-    return WorkerCycleResult(dispatched=dispatched, polled=polled)
+    return WorkerCycleResult(dispatched=dispatched, polled=polled, released=released)
 
 
 async def run_generation_worker_forever() -> None:
@@ -116,6 +128,7 @@ async def run_generation_worker_forever() -> None:
                     extra={
                         "dispatched": result.dispatched,
                         "polled": result.polled,
+                        "released": result.released,
                     },
                 )
                 await asyncio.sleep(0)
@@ -136,6 +149,77 @@ def _install_signal_handlers(stop_event: asyncio.Event) -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         with suppress(NotImplementedError, RuntimeError):
             loop.add_signal_handler(sig, stop_event.set)
+
+
+def _due_client_release_ids_query(*, limit: int):
+    from app.billing.client_release import CLIENT_RELEASE_POLICY
+    from app.billing.models import LedgerEntry
+
+    return (
+        select(Generation.id)
+        .where(
+            Generation.client_release_policy == CLIENT_RELEASE_POLICY,
+            Generation.client_release_due_at <= utc_now(),
+            Generation.client_reserve_released_at.is_(None),
+            Generation.actual_charge_rub.is_(None),
+            Generation.partner_price_rub > 0,
+            Generation.status.in_(("sent_to_provider", "reconciliation_required")),
+            select(ProviderAttempt.id).where(
+                ProviderAttempt.generation_id == Generation.id,
+                ProviderAttempt.status.in_(("submitting", "reconciliation_required")),
+                (ProviderAttempt.provider_task_id.is_(None)) | (ProviderAttempt.provider_task_id == ""),
+            ).exists(),
+            select(func.count(ProviderAttempt.id)).where(
+                ProviderAttempt.generation_id == Generation.id,
+                ProviderAttempt.status.not_in(("failed", "cancelled")),
+            ).scalar_subquery() == 1,
+            select(LedgerEntry.id).where(
+                LedgerEntry.generation_id == Generation.id,
+                LedgerEntry.operation_type == "generation_reserve",
+                LedgerEntry.amount_rub < 0,
+            ).exists(),
+        )
+        .order_by(Generation.client_release_due_at, Generation.id)
+        .limit(limit)
+    )
+
+
+async def _release_client_reserve_candidate(*, session_factory, generation_id: str) -> bool:
+    from app.billing.client_release import release_expired_client_reserve
+
+    # Never accumulate Partner locks across different generations/partners.
+    async with session_factory() as db:
+        try:
+            generation = await db.get(Generation, generation_id)
+            if generation is None:
+                return False
+            changed = await release_expired_client_reserve(db, generation)
+            await db.commit()
+            return changed
+        except Exception:
+            await db.rollback()
+            logger.exception("generation_client_release_failed", extra={"generation_id": generation_id})
+            return False
+
+
+async def _release_due_client_reserves(db: AsyncSession, *, limit: int) -> int:
+    """Single-session debug lane; each financial decision still commits alone."""
+    from app.billing.client_release import release_expired_client_reserve
+
+    ids = list(await db.scalars(_due_client_release_ids_query(limit=limit)))
+    released = 0
+    for generation_id in ids:
+        try:
+            generation = await db.get(Generation, generation_id)
+            changed = False
+            if generation is not None:
+                changed = await release_expired_client_reserve(db, generation)
+            await db.commit()
+            released += int(changed)
+        except Exception:
+            await db.rollback()
+            logger.exception("generation_client_release_failed", extra={"generation_id": generation_id})
+    return released
 
 
 async def _load_candidate_ids(

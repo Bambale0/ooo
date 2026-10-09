@@ -14,6 +14,18 @@ if TYPE_CHECKING:
     from app.generations.models import Generation
 
 
+async def lock_generation_for_update(db: AsyncSession, generation: Generation) -> Generation:
+    from app.generations.models import Generation
+
+    result = await db.execute(
+        select(Generation)
+        .where(Generation.id == generation.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    return result.scalar_one()
+
+
 async def lock_partner_for_update(db: AsyncSession, partner_id: str) -> Partner:
     result = await db.execute(
         select(Partner)
@@ -178,6 +190,11 @@ async def settle_generation_reserve(
     db: AsyncSession,
     generation: Generation,
 ) -> LedgerEntry | None:
+    from app.billing.client_release import is_client_reserve_final
+
+    generation = await lock_generation_for_update(db, generation)
+    if is_client_reserve_final(generation):
+        return None
     reserve = await _find_generation_ledger_entry(db, generation.id, "generation_reserve")
     if reserve is None:
         return None

@@ -34,12 +34,21 @@ class AttemptCostReconciliation(BaseModel):
 @router.get("/reconciliation")
 async def pending(db: DbSession):
     unknown_generation_ids = select(ProviderAttempt.generation_id).where(ProviderAttempt.cost_status == "unknown")
+    unconfirmed_ids = select(ProviderAttempt.generation_id).where(
+        ProviderAttempt.status.in_(("submitting", "reconciliation_required")),
+        (ProviderAttempt.provider_task_id.is_(None)) | (ProviderAttempt.provider_task_id == ""),
+    )
     rows = (
         await db.execute(
             select(Generation)
             .where(
                 or_(
                     Generation.status.in_(["submitting", "reconciliation_required"]),
+                    (
+                        Generation.client_reserve_released_at.is_not(None)
+                        & (Generation.status == "sent_to_provider")
+                        & Generation.id.in_(unconfirmed_ids)
+                    ),
                     Generation.id.in_(unknown_generation_ids),
                 ),
             )
@@ -68,7 +77,9 @@ async def pending(db: DbSession):
             "partner_id": g.partner_id,
             "model": g.model_slug,
             "status": g.status,
-            "reserved_rub": str(g.partner_price_rub),
+            "reserved_rub": "0.00" if g.client_reserve_released_at is not None else str(g.partner_price_rub),
+            "original_reserved_rub": str(g.partner_price_rub),
+            "financial_status": g.financial_status,
             "created_at": g.created_at,
             "provider_cost_obligations": [
                 {
@@ -216,6 +227,9 @@ async def reconcile(generation_id: str, payload: Reconciliation, db: DbSession):
         }:
             raise HTTPException(422, "video_task_required")
         attempt.provider_task_id = payload.provider_task_id
+        from app.billing.client_release import clear_client_release_deadline
+
+        clear_client_release_deadline(g)
         attempt.status = g.status = "processing"
         attempt.next_poll_at = attempt.next_attempt_at = None
     elif payload.outcome == "not_accepted":

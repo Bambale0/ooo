@@ -905,7 +905,7 @@ async def handle_message(event, db, dialog) -> None:
         if row:
             from app.telegram.trials import download_link
 
-            charge = row.actual_charge_rub if row.actual_charge_rub is not None else row.partner_price_rub
+            charge = row.charged_rub if row.charged_rub is not None else row.partner_price_rub
             result = (
                 "\n" + download_link(row)
                 if row.status == "completed" and (row.request_payload or {}).get("trial_telegram_id")
