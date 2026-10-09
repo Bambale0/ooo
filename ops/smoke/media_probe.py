@@ -16,7 +16,12 @@ import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-OFFICIAL_BASE = "python:3.12-slim-trixie"
+# Docker Official Images mirror; index and amd64/arm64 manifests were verified
+# against docker-library/repo-info on 2026-10-09. Keep this immutable pin reviewed.
+OFFICIAL_BASE = (
+    "public.ecr.aws/docker/library/python:3.12-slim-trixie@"
+    "sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1"
+)
 
 # Generated wholly inside a networkless container; native parsers on the host are
 # never given any customer inputs. A short video and longer audio create the
@@ -341,9 +346,9 @@ def main():
     if not args.image:
         metadata = run(["docker", "buildx", "imagetools", "inspect", OFFICIAL_BASE], timeout=120).stdout
         match = re.search(rb"^Digest:\s+(sha256:[0-9a-f]{64})\s*$", metadata, re.MULTILINE)
-        if not match:
-            raise RuntimeError("Official Python manifest digest could not be verified")
-        base = f"{OFFICIAL_BASE}@{match.group(1).decode('ascii')}"
+        if not match or match.group(1).decode("ascii") != OFFICIAL_BASE.rsplit("@", 1)[1]:
+            raise RuntimeError("Official Python manifest digest did not match the reviewed pin")
+        base = OFFICIAL_BASE
         print(f"Resolved official immutable Python base: {base}", flush=True)
         run(
             [
