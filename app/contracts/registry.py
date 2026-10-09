@@ -238,6 +238,8 @@ def validate_video(original: dict[str, Any]) -> None:
         refs.extend(items)
     if sum(counts) > limits[3]:
         raise ValueError("reference_limit_exceeded")
+    if edit and model == "seedance-2.5" and (counts != [0, 1, 0] or "size" in original):
+        raise ValueError("edit_requires_single_video")
     if url_video and model not in SEEDANCE_25_FAMILY and counts[2] and not (counts[0] or counts[1]):
         raise ValueError("audio_requires_visual_reference")
     start = body.get("start_image", body.get("image"))
