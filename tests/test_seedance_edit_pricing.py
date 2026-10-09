@@ -159,9 +159,9 @@ async def test_edit_http_settlement_and_refund_are_idempotent(
         rate = COSTS["720p"] * FX + MARKUP
         reserve = money(rate * 60)
         assert generation.partner_price_rub == reserve
-        assert generation.request_payload["rates"]["seconds"] == {
-            "retail": str(rate), "cost": str(Decimal(".196000")),
-        }
+        saved_rate = generation.request_payload["rates"]["seconds"]
+        assert Decimal(saved_rate["retail"]) == rate
+        assert Decimal(saved_rate["cost"]) == COSTS["720p"]
         accepted_rates = copy.deepcopy(generation.request_payload["rates"])
         await db_session.refresh(partner)
         assert partner.balance_rub == Decimal("1000000") - reserve
