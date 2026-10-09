@@ -88,9 +88,26 @@ async def _persisted_fx(db) -> dict:
 
 
 async def current_fx(db) -> dict:
-    """Return persisted/configured FX without external I/O."""
+    """Internal valuation FX, optionally floored, without external I/O.
 
-    return await _persisted_fx(db)
+    Keep the observed source intact for audit. Invoice creation deliberately
+    reads the raw persisted/provider rate, not this internal valuation minimum.
+    Accepted generation and invoice snapshots are never repriced here.
+    """
+
+    observed = await _persisted_fx(db)
+    minimum = _valid_rate(get_settings().internal_min_rub_per_usdt)
+    if minimum is None:
+        return observed
+    rate = _valid_rate(observed["rate"])
+    if rate is None:
+        raise HTTPException(503, "provider_temporarily_unavailable")
+    return {
+        **observed,
+        "rate": max(rate, minimum),
+        "observed_rate": str(rate),
+        "minimum_rate": str(minimum),
+    }
 
 
 async def refresh_fx_for_invoice(db, *, client=None) -> dict:
