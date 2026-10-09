@@ -5,6 +5,7 @@ from sqlalchemy import select
 
 from app.api.dependencies import DbSession, require_admin
 from app.catalog.access import grant_model_access, revoke_model_access
+from app.catalog.edit_pricing import EDIT_MODEL, EDIT_PRICE_MODE, configured_edit_markup, edit_retail_rate
 from app.catalog.models import Model, PartnerModelGrant, PartnerPrice, PartnerPriceHistory
 from app.catalog.pricing import publish_global_partner_price, snapshot_price_for_existing_partners
 from app.catalog.procurement import supports_free_rate
@@ -275,18 +276,33 @@ async def list_pricing(db: DbSession) -> list[PricingRead]:
         .where(Model.status == "production")
         .order_by(Model.slug, PartnerPrice.mode, PartnerPrice.resolution)
     )
-    return [
-        PricingRead(
-            model_slug=model.slug,
-            model_name=model.name,
-            modality=model.modality,
-            mode=price.mode,
-            resolution=price.resolution,
-            price_rub=price.price_rub,
-            billing_unit=price.billing_unit,
+    rows = []
+    fx = None
+    markup = configured_edit_markup(EDIT_MODEL)
+    for model, price in result.all():
+        retail = price.price_rub
+        if model.slug == EDIT_MODEL and price.mode == EDIT_PRICE_MODE:
+            if markup is None:
+                continue
+            if price.billing_unit != "second":
+                raise HTTPException(503, "provider_temporarily_unavailable")
+            if fx is None:
+                from app.billing.fx import current_fx
+
+                fx = (await current_fx(db))["rate"]
+            retail = edit_retail_rate(price.provider_cost_usdt, fx, markup)
+        rows.append(
+            PricingRead(
+                model_slug=model.slug,
+                model_name=model.name,
+                modality=model.modality,
+                mode=price.mode,
+                resolution=price.resolution,
+                price_rub=retail,
+                billing_unit=price.billing_unit,
+            )
         )
-        for model, price in result.all()
-    ]
+    return rows
 
 
 async def ensure_model_can_be_enabled(db: DbSession, model: Model | ModelCreate) -> None:
