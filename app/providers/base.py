@@ -36,6 +36,8 @@ class ProviderPollResult:
     usage: dict[str, object] | None = None
     error_code: str | None = None
     retryable_failure: bool = False
+    # Explicit task identity echoed by the provider, not merely our request URL.
+    task_identity_verified: bool = False
 
 
 @dataclass(frozen=True)

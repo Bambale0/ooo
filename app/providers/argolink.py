@@ -221,6 +221,9 @@ class ArgoLinkAdapter:
             data = response.json()
         except ValueError as exc:
             raise ProviderAdapterError("provider_temporarily_unavailable", "invalid_provider_poll_response") from exc
+        if isinstance(data, dict) and "request_id" in data and data["request_id"] != provider_task_id:
+            raise ProviderAdapterError("provider_temporarily_unavailable", "provider_task_identity_mismatch")
+        identity_verified = isinstance(data, dict) and data.get("request_id") == provider_task_id
         status = self._normalize_video_status(data)
         result_url = f"{self.base_url}/v1/videos/{provider_task_id}/content" if status == "completed" else None
         raw_error = self._extract_error(data) if status == "failed" else None
@@ -249,6 +252,7 @@ class ArgoLinkAdapter:
             usage=usage,
             error_code=error_code if isinstance(error_code, str) else None,
             retryable_failure=retryable_failure,
+            task_identity_verified=identity_verified,
         )
 
     async def open_result_stream(
