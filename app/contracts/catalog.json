@@ -205,22 +205,24 @@
         "currency": "USD",
         "billing_mode": "video",
         "unit": "second",
-        "generation_per_unit": 0.078,
+        "generation_per_unit": 0.0874,
         "tiers": [
           {
             "label": "480p",
-            "price": 0.078
+            "price": 0.0874
           },
           {
             "label": "720p",
-            "price": 0.17
+            "price": 0.196
           },
           {
             "label": "1080p",
-            "price": 0.43
+            "price": 0.483
           }
         ]
-      }
+      },
+      "checked_at": "2026-10-09",
+      "source": "https://argolink.io/en/models/seedance-2.5"
     },
     "seedance-2.5-self-developed-nsfw": {
       "category": "video",
