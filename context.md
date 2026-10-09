@@ -88,3 +88,6 @@ $env:DATABASE_URL = 'sqlite+aiosqlite:///./alembic_epic_smoke.db'
    - negative economics pre-creation 503 without burning idempotency key;
    - actual provider cost snapshots;
    - reproducible margin.
+
+## Active execution: temporary image delivery (2026-10-02)
+Baseline 630ce82633819ac923f4eb6c1035e72afb888e38. Ledger: docs/EXECUTION/IMAGE_DELIVERY_20261002.md. Implement temporary ACK/TTL image spooling and disconnect-independent dispatch; upstream 524 remediation remains separately verification-blocked by absent documented async/long-request image contract. Production unchanged.
