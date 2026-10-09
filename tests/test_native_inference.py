@@ -462,7 +462,6 @@ async def test_native_video_reserves_references_and_preserves_controls(client, d
         "resolution": "480p",
         "omni_reference_task_type": "edit",
         "reference_videos": [{"url": "https://public.example/clip.mp4"}],
-        "reference_audios": [{"url": "https://public.example/voice.mp3"}],
     }
     r = await client.post("/v1/videos/generations", headers=headers, json=body)
     assert r.status_code == 202
@@ -479,6 +478,38 @@ async def test_native_video_reserves_references_and_preserves_controls(client, d
     entries = list((await db_session.execute(select(LedgerEntry))).scalars())
     assert len(entries) == 2
     await upstream.aclose()
+
+
+@pytest.mark.parametrize("media_field", ["reference_images", "reference_audios", "reference_videos"])
+async def test_edit_extra_media_rejected_before_money_or_job(client, db_session, monkeypatch, media_field):
+    def forbidden(request):
+        raise AssertionError("Invalid edit must not contact the provider")
+
+    partner, headers, upstream = await setup(
+        db_session, monkeypatch, forbidden, model="seedance-2.5", category="video",
+        rates=[("default", "480p", "second", Decimal("20"), Decimal(".078"))],
+    )
+    body = {
+        "model": "seedance-2.5",
+        "prompt": "Make the colors warmer",
+        "resolution": "480p",
+        "omni_reference_task_type": "edit",
+        "reference_videos": [{"url": "https://public.example/clip.mp4"}],
+    }
+    if media_field == "reference_videos":
+        body[media_field] *= 2
+    else:
+        body[media_field] = [{"url": "https://public.example/extra-media"}]
+    try:
+        result = await client.post("/v1/videos/generations", headers=headers, json=body)
+        assert result.status_code == 422
+        assert result.json()["detail"] == "invalid_request_contract"
+        await db_session.refresh(partner)
+        assert partner.balance_rub == Decimal("1000000")
+        assert list((await db_session.scalars(select(Generation))).all()) == []
+        assert list((await db_session.scalars(select(LedgerEntry))).all()) == []
+    finally:
+        await upstream.aclose()
 
 
 @pytest.mark.parametrize(
