@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     support_storage_dir: str = "./var/support"
     log_level: str = "INFO"
     rub_per_usdt: Decimal = Field(default=Decimal("100.00"), gt=0)
+    seedance_25_edit_markup_rub_per_second: Decimal | None = Field(default=None, ge=0, allow_inf_nan=False)
     argolink_base_url: str = "https://argolink.io"
     argolink_api_key: str | None = None
     provider_notification_webhook_secret: SecretStr | None = None
@@ -48,7 +49,7 @@ class Settings(BaseSettings):
     argolink_poll_rps: float = Field(default=50.0, ge=0)
     asale_base_url: str = "https://gw.asale.ai"
     asale_api_key: str | None = None
-    asale_timeout_seconds: float = Field(default=30.0, gt=0)
+    asale_timeout_seconds: float = 30.0
     asale_http_connect_timeout_seconds: float = Field(default=5.0, gt=0)
     asale_http_read_timeout_seconds: float = Field(default=30.0, gt=0)
     asale_http_write_timeout_seconds: float = Field(default=30.0, gt=0)
