@@ -15,6 +15,7 @@ from app.billing.service import (
     lock_partner_for_update,
     require_sufficient_balance,
 )
+from app.catalog.edit_pricing import quote_video_edit
 from app.catalog.models import Model
 from app.catalog.pricing import effective_partner_prices
 from app.catalog.procurement import supports_free_rate
@@ -400,5 +401,9 @@ def quote(protocol, body, prices, *, fx=None, trial=False):
         return rates, {tier: body.get("n", 1)}, tier
     video = normalized_video(body)
     resolution = video.get("resolution", "768p" if body["model"] == "minimax-h3" else "720p")
-    add("seconds", "default", resolution, "second")
+    edit_rate = quote_video_edit(video, prices, fx=fx)
+    if edit_rate is None:
+        add("seconds", "default", resolution, "second")
+    else:
+        rates["seconds"] = edit_rate
     return rates, {"seconds": video_reserve_seconds(body)}, resolution
