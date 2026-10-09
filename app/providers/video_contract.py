@@ -1,7 +1,7 @@
-"""Supported ArgoLink video subset, checked against /en/docs on 2026-09-23.
+"""Legacy DTO and native ArgoLink video request validation.
 
-Video/audio references and editing require additional billable-input accounting
-and are deliberately not accepted by the public schema yet.
+Native bodies retain all reviewed controls and bill input video through the
+shared contract registry. The legacy schema exposes a smaller image-only subset.
 """
 
 from urllib.parse import urlsplit
@@ -16,13 +16,34 @@ SEEDANCE_MODELS = {"seedance-2.0", "seedance-2.0-mini", "seedance-2.0-fast", "se
 SEEDANCE_25_FAMILY = {"seedance-2.5", "seedance-2.5-self-developed-nsfw"}
 SEEDANCE_20_4K_FAMILY = {"seedance-2.0", "seedance-2.0-self-developed-nsfw"}
 SEEDANCE_MODELS |= SEEDANCE_25_FAMILY | SEEDANCE_20_4K_FAMILY
-VIDEO_MODELS = SEEDANCE_MODELS | {"grok-imagine-video-1.5", "wan-3"}
+REVIEWED_NATIVE_MODELS = {"minimax-h3", "wan-3", "wan-3-prime"}
+VIDEO_MODELS = SEEDANCE_MODELS | REVIEWED_NATIVE_MODELS | {"grok-imagine-video-1.5"}
 SEEDANCE_RATIOS = {"16:9", "9:16", "1:1", "4:3", "3:4", "21:9"}
 GROK_RATIOS = {"16:9", "9:16", "1:1", "4:3", "3:4", "3:2", "2:3"}
 
 
 def validate_video_request(payload: ProviderGenerationRequest) -> None:
     """Reject unsupported inputs before reserving funds or contacting the provider."""
+    if payload.model_slug in REVIEWED_NATIVE_MODELS:
+        from app.contracts.registry import validate_request
+
+        modes = {"default", "text_to_video", "image_to_video", "reference", "first_frame", "first_last_frame"}
+        if payload.mode not in modes:
+            raise ValueError("unsupported_mode")
+        if payload.mode == "text_to_video" and (payload.reference_images or payload.start_image):
+            raise ValueError("text_mode_does_not_accept_images")
+        if payload.mode in {"image_to_video", "first_frame"} and (not payload.start_image or payload.end_image):
+            raise ValueError("first_frame_required")
+        if payload.mode == "first_last_frame" and not (payload.start_image and payload.end_image):
+            raise ValueError("first_and_last_frame_required")
+        if payload.mode == "reference" and payload.start_image:
+            raise ValueError("reference_mode_does_not_accept_frames")
+        # Legacy creation reserves output seconds only, so input-video/audio
+        # requests must use the native API where billable input is reserved.
+        if payload.reference_videos or payload.reference_audios:
+            raise ValueError("native_video_endpoint_required")
+        validate_request("videos/generations", _reviewed_body(payload))
+        return
     seedance = payload.model_slug in SEEDANCE_MODELS
     if payload.model_slug not in VIDEO_MODELS:
         raise ValueError("model_contract_not_supported")
@@ -76,6 +97,8 @@ def video_request_body(payload: ProviderGenerationRequest) -> dict[str, object]:
 
         return validate_request("videos/generations", payload.native_body)
     validate_video_request(payload)
+    if payload.model_slug in REVIEWED_NATIVE_MODELS:
+        return _reviewed_body(payload)
     body: dict[str, object] = {
         "model": payload.model_slug,
         "prompt": payload.prompt,
@@ -88,6 +111,24 @@ def video_request_body(payload: ProviderGenerationRequest) -> dict[str, object]:
         body["reference_images"] = [{"url": url} for url in payload.reference_images]
     if payload.start_image:
         body["start_image" if payload.model_slug in SEEDANCE_MODELS else "image"] = {"url": payload.start_image}
+    if payload.end_image:
+        body["end_image"] = {"url": payload.end_image}
+    return body
+
+
+def _reviewed_body(payload: ProviderGenerationRequest) -> dict[str, object]:
+    body: dict[str, object] = {
+        "model": payload.model_slug,
+        "prompt": payload.prompt,
+        "duration": payload.duration_seconds,
+        "resolution": payload.resolution,
+    }
+    if payload.aspect_ratio:
+        body["aspect_ratio"] = payload.aspect_ratio
+    if payload.reference_images:
+        body["reference_images"] = [{"url": url} for url in payload.reference_images]
+    if payload.start_image:
+        body["start_image"] = {"url": payload.start_image}
     if payload.end_image:
         body["end_image"] = {"url": payload.end_image}
     return body
