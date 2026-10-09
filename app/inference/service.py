@@ -18,6 +18,7 @@ from app.billing.service import (
 from app.catalog.models import Model
 from app.catalog.pricing import effective_partner_prices
 from app.catalog.procurement import supports_free_rate
+from app.catalog.video_edit_pricing import edit_markup, retail_rate, video_pricing_mode
 from app.contracts.registry import (
     MODELS,
     OBSERVATIONS,
@@ -253,6 +254,12 @@ async def reserve(
         snapshot["client_request_id"] = client_request_id
     if video:
         snapshot["native_body"] = body
+        if video_pricing_mode(body) == "edit":
+            snapshot["pricing_policy"] = {
+                "mode": "edit",
+                "type": "cost_plus",
+                "markup_rub_per_second": str(edit_markup(model.slug)),
+            }
     if trial_telegram_id is not None:
         snapshot["trial_telegram_id"] = trial_telegram_id
     generation = Generation(
@@ -314,7 +321,7 @@ async def reserve(
         extra={
             "trace_id": generation.id,
             "generation_id": generation.id,
-            "partner_id": generation.partner_id,
+            "partner_id": auth.partner.id,
             "api_key_id": auth.api_key.id,
             "model_id": generation.model_id,
             "attempt_id": attempt.id if attempt else None,
@@ -333,14 +340,15 @@ def quote(protocol, body, prices, *, fx=None, trial=False):
         )
         if price is None:
             raise HTTPException(503, "provider_temporarily_unavailable")
+        retail = retail_rate(body["model"], price, fx)
         # Check every rate individually; expensive cached/written tokens cannot
         # silently be sold below procurement just because the whole quote is positive.
         free_rate = supports_free_rate(body["model"], mode, resolution, unit)
         if (
             price.provider_cost_usdt < 0
-            or price.price_rub < 0
-            or (not free_rate and (price.provider_cost_usdt == 0 or price.price_rub == 0))
-            or (not trial and price.price_rub < price.provider_cost_usdt * fx)
+            or retail < 0
+            or (not free_rate and (price.provider_cost_usdt == 0 or retail == 0))
+            or (not trial and retail < price.provider_cost_usdt * fx)
         ):
             raise HTTPException(503, "provider_temporarily_unavailable")
         observed = OBSERVATIONS["manual_procurement_review"].get(body["model"])
@@ -350,7 +358,7 @@ def quote(protocol, body, prices, *, fx=None, trial=False):
             and price.provider_cost_usdt < Decimal(observed["observed_default_edit_usd"])
         ):
             raise HTTPException(503, "provider_temporarily_unavailable")
-        rates[key] = {"retail": str(price.price_rub), "cost": str(price.provider_cost_usdt)}
+        rates[key] = {"retail": str(retail), "cost": str(price.provider_cost_usdt)}
 
     if protocol in TEXT_PROTOCOLS:
 
@@ -400,5 +408,5 @@ def quote(protocol, body, prices, *, fx=None, trial=False):
         return rates, {tier: body.get("n", 1)}, tier
     video = normalized_video(body)
     resolution = video.get("resolution", "768p" if body["model"] == "minimax-h3" else "720p")
-    add("seconds", "default", resolution, "second")
+    add("seconds", video_pricing_mode(video), resolution, "second")
     return rates, {"seconds": video_reserve_seconds(body)}, resolution
