@@ -163,6 +163,9 @@ async def create_generation(
             "billable_units": billable_units,
         },
     )
+    from app.billing.client_release import enroll_client_release_policy
+
+    enroll_client_release_policy(generation)
     db.add(generation)
     await db.flush()
     from app.providers.circuit import require_admission

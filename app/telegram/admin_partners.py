@@ -447,7 +447,7 @@ async def show_partner_generations(event, db, data: str) -> None:
     attempts_by_generation = {attempt.generation_id: attempt for attempt in attempts}
     lines = ["Генерации партнёра"]
     for row in visible:
-        charge = row.actual_charge_rub if row.actual_charge_rub is not None else row.partner_price_rub
+        charge = row.charged_rub if row.charged_rub is not None else row.partner_price_rub
         attempt = attempts_by_generation.get(row.id)
         attempt_line = f"\nAttempt UUID: {attempt.id}" if attempt is not None else ""
         client_request_id = generation_client_request_id(row)

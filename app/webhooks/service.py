@@ -356,6 +356,8 @@ def _build_terminal_payload(generation: Generation) -> dict[str, object]:
     }
     if client_request_id := generation_client_request_id(generation):
         payload["client_request_id"] = client_request_id
+    if generation.client_reserve_released_at is not None:
+        payload.update(financial_status="released_final", charged_rub="0.00")
     if generation.status == "completed":
         from app.media.service import build_result_download_url, is_internal_partner_media_url
 
@@ -365,7 +367,7 @@ def _build_terminal_payload(generation: Generation) -> dict[str, object]:
         else:
             payload["result_url"] = generation.result_url
         payload["charged_amount_rub"] = str(
-            generation.actual_charge_rub if generation.actual_charge_rub is not None else generation.partner_price_rub
+            generation.charged_rub if generation.charged_rub is not None else generation.partner_price_rub
         )
     else:
         payload["error_code"] = generation.public_error_code or f"generation_{generation.status}"

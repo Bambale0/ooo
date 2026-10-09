@@ -3,6 +3,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.billing.client_release import is_client_reserve_final
 from app.billing.service import (
     apply_cost_coverage_change,
     apply_partner_balance_change,
@@ -82,7 +83,8 @@ async def settle_actual(
     """Append only compensations, once, using the immutable accepted price schedule.
 
     Caller holds the generation lock. A late successful job first restores the
-    original reserve and then applies exactly one usage adjustment.
+    original reserve and then applies exactly one usage adjustment, except when
+    the client reserve was released finally. Procurement still settles in full.
     """
     await db.execute(
         select(Generation)
@@ -102,15 +104,18 @@ async def settle_actual(
     covered = (cost * generation.rub_per_usdt_snapshot).quantize(Decimal(".01"), rounding=ROUND_HALF_UP)
     await settle_generation_reserves(db, generation)
     partner = await lock_partner_for_update(db, generation.partner_id)
-    await apply_partner_balance_change(
-        db,
-        partner,
-        generation.partner_price_rub - charge,
-        "generation_usage_adjustment",
-        f"generation-usage:{generation.id}",
-        generation.id,
-        "Actual usage settlement",
-    )
+    if is_client_reserve_final(generation):
+        charge = Decimal("0.00")
+    else:
+        await apply_partner_balance_change(
+            db,
+            partner,
+            generation.partner_price_rub - charge,
+            "generation_usage_adjustment",
+            f"generation-usage:{generation.id}",
+            generation.id,
+            "Actual usage settlement",
+        )
     hold_rub = Decimal(provider_cost_hold_rub)
     if not hold_rub.is_finite() or hold_rub < 0:
         raise ValueError("invalid_provider_cost_hold")

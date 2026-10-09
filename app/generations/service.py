@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.billing.service import (
     apply_cost_coverage_change,
+    lock_generation_for_update,
     lock_partner_for_update,
     release_generation_cost_reserve,
     release_generation_reserve,
@@ -211,6 +212,13 @@ async def dispatch_generation_to_provider(
     generation: Generation,
     provider: str = PRIMARY_PROVIDER,
 ) -> ProviderAttempt | None:
+    from app.billing.client_release import (
+        arm_client_release_policy,
+        clear_client_release_deadline,
+        is_client_reserve_final,
+    )
+
+    generation = await lock_generation_for_update(db, generation)
     existing_result = await db.execute(
         select(ProviderAttempt).where(
             ProviderAttempt.generation_id == generation.id,
@@ -218,6 +226,9 @@ async def dispatch_generation_to_provider(
         )
     )
     existing = existing_result.scalar_one_or_none()
+    if is_client_reserve_final(generation):
+        # Final customer release permits a recovered result, never another paid launch.
+        return existing
     if existing is not None:
         if existing.provider_task_id or existing.status != "retry_pending":
             return existing
@@ -301,6 +312,7 @@ async def dispatch_generation_to_provider(
             attempt.credential_id = credential.id
         attempt.status = "submitting"
         generation.status = "sent_to_provider"
+        arm_client_release_policy(generation)
         await db.commit()
         provider_started_at = monotonic_seconds()
         try:
@@ -319,10 +331,16 @@ async def dispatch_generation_to_provider(
             outcome="success",
             duration_seconds=monotonic_seconds() - provider_started_at,
         )
+        # The network call follows a committed intent; the deadline worker may
+        # have made a final financial decision meanwhile. Re-read under its lock.
+        generation = await lock_generation_for_update(db, generation)
+        if attempt is not None:
+            await db.refresh(attempt)
         if attempt is None:
             attempt = ProviderAttempt(generation_id=generation.id, provider=provider)
             db.add(attempt)
         attempt.provider_task_id = result.provider_task_id
+        clear_client_release_deadline(generation)
         attempt.status = result.status
         attempt.public_error_code = None
         attempt.raw_error = None
@@ -337,11 +355,22 @@ async def dispatch_generation_to_provider(
         )
         generation.status = "sent_to_provider"
     except Exception as exc:
+        generation = await lock_generation_for_update(db, generation)
+        if attempt is not None:
+            await db.refresh(attempt)
         normalized = adapter.normalize_error(exc)
         if attempt is None:
             attempt = ProviderAttempt(generation_id=generation.id, provider=provider)
             db.add(attempt)
         _mark_attempt_error(attempt, generation, normalized)
+        if is_client_reserve_final(generation) and attempt.status == "retry_pending":
+            # A delayed submit response cannot reopen paid work after final
+            # customer resolution. Retain the unresolved provider obligation.
+            generation.status = attempt.status = "reconciliation_required"
+            generation.public_error_code = "submission_outcome_unknown"
+            attempt.next_attempt_at = attempt.next_poll_at = None
+        if attempt.status in {"failed", "retry_pending"}:
+            clear_client_release_deadline(generation)
         from app.providers.circuit import observe
 
         await observe(db, generation, provider=provider)
@@ -362,6 +391,7 @@ async def poll_generation_provider(
     generation: Generation,
     provider: str = PRIMARY_PROVIDER,
 ) -> Generation:
+    generation = await lock_generation_for_update(db, generation)
     attempt_result = await db.execute(
         select(ProviderAttempt).where(
             ProviderAttempt.generation_id == generation.id,
@@ -376,9 +406,11 @@ async def poll_generation_provider(
         return generation
 
     settings = get_settings()
+    from app.billing.client_release import is_client_reserve_final
+
     usage_review = is_usage_review(generation, attempt)
     reconciling_late_success = generation.status == "timeout" or attempt.status == "timeout"
-    if not usage_review and not reconciling_late_success and is_older_than(
+    if not is_client_reserve_final(generation) and not usage_review and not reconciling_late_success and is_older_than(
         attempt.created_at,
         settings.worker_provider_processing_timeout_seconds,
     ):
@@ -550,6 +582,10 @@ async def poll_generation_provider(
                     provider=provider,
                     actual_cost=Decimal(generation.provider_cost_usdt_snapshot),
                 )
+            from app.billing.client_release import is_client_reserve_final
+
+            if generation.status == "completed" and is_client_reserve_final(generation):
+                generation.actual_charge_rub = Decimal("0.00")
         if result.result_url:
             await create_provider_ready_asset(
                 db=db,
@@ -743,6 +779,10 @@ async def _queue_fallback_after_safe_failure(
     *,
     preferred_only: str | None = None,
 ) -> bool:
+    from app.billing.client_release import is_client_reserve_final
+
+    if is_client_reserve_final(generation):
+        return False
     if attempt.provider != PRIMARY_PROVIDER:
         return False
     selected = await select_fallback_provider(db, generation, after_provider=attempt.provider)

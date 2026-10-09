@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from sqlalchemy import JSON, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.database import Base
@@ -38,6 +38,11 @@ class Generation(Base):
     request_payload: Mapped[dict[str, object] | None] = mapped_column(JSON)
     actual_charge_rub: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
     actual_provider_cost_usdt: Mapped[Decimal | None] = mapped_column(ExactNumeric(36, 18))
+    # Financial disposition is independent of eventual provider execution.
+    # Nullable enrollment deliberately leaves historical jobs unchanged.
+    client_release_policy: Mapped[str | None] = mapped_column(String(64))
+    client_release_due_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), index=True)
+    client_reserve_released_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
     usage_snapshot: Mapped[dict[str, object] | None] = mapped_column(JSON)
     result_url: Mapped[str | None] = mapped_column(Text)
     public_error_code: Mapped[str | None] = mapped_column(String(80))
@@ -48,3 +53,11 @@ class Generation(Base):
     @property
     def result_urls(self) -> list[str]:
         return list((self.request_payload or {}).get("result_urls", [self.result_url] if self.result_url else []))
+
+    @property
+    def financial_status(self) -> str | None:
+        return "released_final" if self.client_reserve_released_at is not None else None
+
+    @property
+    def charged_rub(self) -> Decimal | None:
+        return Decimal("0.00") if self.client_reserve_released_at is not None else self.actual_charge_rub

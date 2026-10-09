@@ -281,6 +281,10 @@ async def reserve(
         webhook_url_snapshot=auth.api_key.webhook_url,
         webhook_secret_encrypted_snapshot=auth.api_key.webhook_secret_encrypted,
     )
+    if video:
+        from app.billing.client_release import enroll_client_release_policy
+
+        enroll_client_release_policy(generation)
     db.add(generation)
     await db.flush()
     from app.providers.circuit import require_admission
