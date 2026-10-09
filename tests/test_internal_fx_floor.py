@@ -23,7 +23,10 @@ def internal_floor(monkeypatch):
     monkeypatch.setitem(get_settings().__dict__, "internal_min_rub_per_usdt", FLOOR)
 
 
-@pytest.mark.parametrize("observed,expected", [(OBSERVED, FLOOR), (FLOOR, FLOOR), (Decimal("92.123456"), Decimal("92.123456"))])
+@pytest.mark.parametrize(
+    "observed,expected",
+    [(OBSERVED, FLOOR), (FLOOR, FLOOR), (Decimal("92.123456"), Decimal("92.123456"))],
+)
 async def test_internal_floor_preserves_higher_rates_and_source_rows(db_session, internal_floor, observed, expected):
     row = FxRateSnapshot(rate=observed)
     db_session.add(row)
@@ -69,7 +72,9 @@ async def test_invoice_rate_is_not_replaced_by_internal_minimum(db_session, inte
 
 @pytest.mark.parametrize("manual", [True, False])
 async def test_invoice_fallback_is_raw_but_internal_pricing_has_floor(db_session, internal_floor, manual):
-    await set_fx_policy(db_session, automatic_enabled=not manual, rate=Decimal("80"), actor="test", reason="test policy")
+    await set_fx_policy(
+        db_session, automatic_enabled=not manual, rate=Decimal("80"), actor="test", reason="test policy"
+    )
 
     class Unavailable:
         async def get_rub_per_usdt(self):
@@ -88,7 +93,9 @@ def test_invalid_floor_config_is_rejected(value):
 
 
 @pytest.mark.parametrize("edit", [False, True])
-async def test_seedance_cost_and_internal_fx_snapshots_settle_once(client, db_session, monkeypatch, internal_floor, edit):
+async def test_seedance_cost_and_internal_fx_snapshots_settle_once(
+    client, db_session, monkeypatch, internal_floor, edit
+):
     def forbidden(request):
         raise AssertionError("No provider call needed for reserve/settlement verification")
 
@@ -132,8 +139,13 @@ async def test_seedance_cost_and_internal_fx_snapshots_settle_once(client, db_se
         assert generation.actual_provider_cost_usdt == Decimal(".196") * billed_seconds
         assert generation.rub_per_usdt_snapshot == FLOOR and generation.request_payload == accepted
         assert partner.balance_rub == Decimal("1000000") - expected_charge
-        coverage = list(await db_session.scalars(select(CoverageLedgerEntry).where(CoverageLedgerEntry.generation_id == generation.id)))
-        assert sum(x.amount_rub for x in coverage) == -(Decimal(".196") * billed_seconds * FLOOR).quantize(Decimal(".01"), rounding="ROUND_HALF_UP")
+        coverage = list(await db_session.scalars(
+            select(CoverageLedgerEntry).where(CoverageLedgerEntry.generation_id == generation.id)
+        ))
+        expected_coverage = (Decimal(".196") * billed_seconds * FLOOR).quantize(
+            Decimal(".01"), rounding="ROUND_HALF_UP"
+        )
+        assert sum(x.amount_rub for x in coverage) == -expected_coverage
         ledger = list(await db_session.scalars(select(LedgerEntry).where(LedgerEntry.generation_id == generation.id)))
         assert len(ledger) == 2 and sum(x.amount_rub for x in ledger) == -expected_charge
     finally:
