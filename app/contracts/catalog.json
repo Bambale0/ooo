@@ -277,7 +277,7 @@
     },
     "claude-opus-4-8": {
       "category": "chat",
-      "endpoint": "/v1/chat/completions",
+      "endpoint": "/v1/responses",
       "procurement": {
         "currency": "USD",
         "billing_mode": "token",
@@ -290,7 +290,7 @@
     },
     "claude-sonnet-5": {
       "category": "chat",
-      "endpoint": "/v1/chat/completions",
+      "endpoint": "/v1/responses",
       "procurement": {
         "currency": "USD",
         "billing_mode": "token",
@@ -526,18 +526,20 @@
         "currency": "USD",
         "billing_mode": "video",
         "unit": "second",
-        "generation_per_unit": 0.044,
+        "generation_per_unit": 0.039,
         "tiers": [
           {
             "label": "768p",
-            "price": 0.044
+            "price": 0.039
           },
           {
             "label": "2k",
-            "price": 0.072
+            "price": 0.064
           }
         ]
-      }
+      },
+      "checked_at": "2026-10-09",
+      "source": "https://argolink.io/en/models/minimax-h3"
     },
     "nano-banana-2": {
       "category": "image",
@@ -730,6 +732,32 @@
         ]
       }
     },
+    "wan-3-prime": {
+      "category": "video",
+      "endpoint": "/v1/videos/generations",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "video",
+        "unit": "second",
+        "generation_per_unit": 0.051,
+        "tiers": [
+          {
+            "label": "480p",
+            "price": 0.051
+          },
+          {
+            "label": "720p",
+            "price": 0.11
+          },
+          {
+            "label": "1080p",
+            "price": 0.21
+          }
+        ]
+      },
+      "checked_at": "2026-10-09",
+      "source": "https://argolink.io/en/models/wan-3-prime"
+    },
     "wan-3": {
       "category": "video",
       "endpoint": "/v1/videos/generations",
@@ -737,22 +765,24 @@
         "currency": "USD",
         "billing_mode": "video",
         "unit": "second",
-        "generation_per_unit": 0.025,
+        "generation_per_unit": 0.038,
         "tiers": [
           {
             "label": "480p",
-            "price": 0.025
+            "price": 0.038
           },
           {
             "label": "720p",
-            "price": 0.05
+            "price": 0.075
           },
           {
             "label": "1080p",
-            "price": 0.1
+            "price": 0.15
           }
         ]
-      }
+      },
+      "checked_at": "2026-10-09",
+      "source": "https://argolink.io/en/models/wan-3"
     }
   }
 }

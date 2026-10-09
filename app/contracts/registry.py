@@ -198,18 +198,21 @@ def validate_video(original: dict[str, Any]) -> None:
     model = body["model"]
     seedance = model in SEEDANCE
     minimax = model == "minimax-h3"
-    url_video = seedance or minimax
-    wan = model == "wan-3"
-    maximum = 30 if model in SEEDANCE_25_FAMILY | {"wan-3"} else 15
-    minimum = 4 if url_video else 2 if wan else 1
+    wan = model in {"wan-3", "wan-3-prime"}
+    prime = model == "wan-3-prime"
+    url_video = seedance or minimax or wan
+    maximum = 30 if model in SEEDANCE_25_FAMILY or wan else 15
+    minimum = 4 if seedance or minimax or prime else 2 if wan else 1
     edit = body.get("omni_reference_task_type") == "edit"
     if edit and (
-        model not in SEEDANCE_25_FAMILY
+        model not in SEEDANCE_25_FAMILY | {"wan-3"}
         or not isinstance(body.get("duration", -1), int)
         or body.get("duration", -1) != -1
         or body.get("aspect_ratio", "adaptive") != "adaptive"
     ):
         raise ValueError("invalid_edit_request")
+    if edit and wan and any(field in body for field in ("duration", "aspect_ratio", "size")):
+        raise ValueError("edit_uses_source_dimensions")
     if not edit:
         integer(body.get("duration", 5), "duration", minimum, maximum)
     integer(body.get("n", 1), "n", 1, 1)
@@ -221,7 +224,7 @@ def validate_video(original: dict[str, Any]) -> None:
     limits = (
         (30, 10, 10, 50)
         if model in SEEDANCE_25_FAMILY
-        else (9, 3, 3, 15)
+        else (9, 3, 3, 12)
         if minimax
         else (9, 3, 3, 12)
         if seedance
@@ -240,13 +243,18 @@ def validate_video(original: dict[str, Any]) -> None:
         raise ValueError("reference_limit_exceeded")
     if edit and model == "seedance-2.5" and (counts != [0, 1, 0] or "size" in original):
         raise ValueError("edit_requires_single_video")
-    if url_video and model not in SEEDANCE_25_FAMILY and counts[2] and not (counts[0] or counts[1]):
+    if (
+        (seedance or minimax or prime) and model not in SEEDANCE_25_FAMILY
+        and counts[2] and not (counts[0] or counts[1])
+    ):
         raise ValueError("audio_requires_visual_reference")
     start = body.get("start_image", body.get("image"))
     end = body.get("end_image")
     if (start and refs) or (end and not start) or (edit and (start or not counts[1])):
         raise ValueError("conflicting_media_inputs")
-    if minimax and start and "aspect_ratio" in body:
+    if prime and (start or end):
+        raise ValueError("frames_not_supported")
+    if minimax and start and body.get("aspect_ratio", "adaptive") != "adaptive":
         raise ValueError("frame_aspect_ratio_is_derived_from_input")
     if not url_video and not wan and counts[0] and body.get("resolution") == "1080p":
         raise ValueError("reference_resolution_not_supported")
@@ -256,19 +264,32 @@ def validate_video(original: dict[str, Any]) -> None:
         ratios = {"adaptive"} if model in SEEDANCE_25_FAMILY else ratios | {"adaptive"}
     if edit:
         ratios = {"adaptive"}
-    if minimax and refs and not start:
+    if (minimax and (refs or start)) or (wan and not prime):
         ratios.add("adaptive")
+    if prime:
+        ratios = {"16:9", "1:1", "9:16"}
     if "aspect_ratio" in body and body["aspect_ratio"] not in ratios:
         raise ValueError("unsupported_aspect_ratio")
     prompt = body.get("prompt", "")
     if (not prompt.strip() and not (refs or start)) or ((edit or wan or minimax) and not prompt.strip()):
         raise ValueError("prompt_required")
-    if (seedance and len(prompt.encode()) > 40000) or (wan and len(prompt) > 4500):
+    if (
+        (seedance and len(prompt.encode()) > 40000)
+        or (wan and len(prompt) > 20000) or (minimax and len(prompt) > 7000)
+    ):
         raise ValueError("prompt_too_long")
     if url_video:
         if len(json.dumps(original, ensure_ascii=False, separators=(",", ":")).encode()) >= 1024 * 1024:
             raise ValueError("video_body_too_large")
-        if "seed" in body or body.get("watermark") is True or body.get("generate_audio") is False:
+        if minimax or wan:
+            for field in ("watermark", "generate_audio"):
+                if field in body and not isinstance(body[field], bool):
+                    raise ValueError("invalid_generation_control")
+        if wan and not prime and "seed" in body:
+            integer(body["seed"], "seed", 0, 4294967295)
+        if ("seed" in body and model != "wan-3") or body.get("watermark") is True:
+            raise ValueError("unsupported_generation_control")
+        if model != "wan-3" and body.get("generate_audio") is False:
             raise ValueError("unsupported_generation_control")
         if body.get("omni_reference_task_type", "auto") not in {"auto", "reference", "edit"}:
             raise ValueError("unsupported_task_type")
@@ -288,4 +309,6 @@ def video_reserve_seconds(original: dict[str, Any]) -> int:
     # Provider validates actual media lengths. Reserve the documented upper bound,
     # never trust a client-supplied duration for billable input media.
     ref_bound = 30 if model in SEEDANCE_25_FAMILY else 15
-    return min(30, output + ref_bound) if model == "wan-3" and refs else output + (ref_bound if refs else 0)
+    if model in {"wan-3", "wan-3-prime"} and refs:
+        return min(30, output + ref_bound)
+    return output + (ref_bound if refs else 0)
