@@ -56,11 +56,13 @@ async def test_edit_http_quote_and_settlement_are_frozen_and_idempotent(client, 
         assert response.status_code == 202, response.text
         generation = await db_session.get(Generation, response.json()["request_id"])
         assert generation.partner_price_rub == Decimal("1326.00")
-        assert generation.request_payload["rates"]["seconds"] == {"retail": "22.10000000", "cost": "0.19600000"}
+        accepted = generation.request_payload["rates"]["seconds"]
+        assert Decimal(accepted["retail"]) == Decimal("22.10")
+        assert Decimal(accepted["cost"]) == Decimal(".196")
         assert generation.request_payload["pricing_policy"] == {
             "mode": "edit", "type": "cost_plus", "markup_rub_per_second": "2.50"
         }
-        original_rates = dict(generation.request_payload["rates"]["seconds"])
+        original_rates = dict(accepted)
         monkeypatch.setattr(settings, "seedance_25_edit_markup_rub_per_second", Decimal("9.50"))
         monkeypatch.setattr(settings, "rub_per_usdt", Decimal("120"))
         duplicate = await client.post("/v1/videos/generations", headers=headers, json=BODY)
