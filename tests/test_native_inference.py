@@ -503,7 +503,7 @@ async def test_edit_extra_media_rejected_before_money_or_job(client, db_session,
     try:
         result = await client.post("/v1/videos/generations", headers=headers, json=body)
         assert result.status_code == 422
-        assert result.json()["detail"] == "edit_requires_single_video"
+        assert result.json()["detail"] == "invalid_request_contract"
         await db_session.refresh(partner)
         assert partner.balance_rub == Decimal("1000000")
         assert list((await db_session.scalars(select(Generation))).all()) == []
