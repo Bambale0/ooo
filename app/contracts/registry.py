@@ -268,7 +268,15 @@ def validate_video(original: dict[str, Any]) -> None:
     if url_video:
         if len(json.dumps(original, ensure_ascii=False, separators=(",", ":")).encode()) >= 1024 * 1024:
             raise ValueError("video_body_too_large")
-        if "seed" in body or body.get("watermark") is True or body.get("generate_audio") is False:
+        # The reviewed Seedance 2.5 contract supports a silent result. Keep
+        # other models unchanged; reject string/integer lookalikes before billing.
+        if model == "seedance-2.5" and "generate_audio" in body and not isinstance(body["generate_audio"], bool):
+            raise ValueError("invalid_generate_audio")
+        if (
+            "seed" in body
+            or body.get("watermark") is True
+            or (body.get("generate_audio") is False and model != "seedance-2.5")
+        ):
             raise ValueError("unsupported_generation_control")
         if body.get("omni_reference_task_type", "auto") not in {"auto", "reference", "edit"}:
             raise ValueError("unsupported_task_type")

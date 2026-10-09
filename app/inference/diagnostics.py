@@ -10,6 +10,7 @@ from uuid import UUID
 
 import httpx
 
+from app.contracts.validation_errors import VALIDATION_REASONS
 from app.generations.models import Generation
 from app.providers.models import ProviderAttempt
 
@@ -29,6 +30,7 @@ def log_rejection(
     generation_id: str | None = None,
     attempt_id: str | None = None,
     upstream_status: int | None = None,
+    validation_reason: str | None = None,
 ) -> None:
     """One safe, queryable event for every public inference rejection."""
 
@@ -49,6 +51,8 @@ def log_rejection(
         event["attempt_id"] = attempt_id
     if isinstance(upstream_status, int):
         event["upstream_status"] = upstream_status
+    if validation_reason in VALIDATION_REASONS:
+        event["validation_reason"] = validation_reason
     logger.warning("native_inference_rejected", extra=event)
 
 
