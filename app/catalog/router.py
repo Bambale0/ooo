@@ -180,7 +180,7 @@ async def list_model_grants(model_slug: str, db: DbSession) -> list[dict]:
     grants = (
         await db.execute(
             select(PartnerModelGrant)
-            .where(PartnerModelGrant.model_id == model_slug, PartnerModelGrant.revoked_at.is_(None))
+            .where(PartnerModelGrant.model_id == model.id, PartnerModelGrant.revoked_at.is_(None))
             .order_by(PartnerModelGrant.created_at)
         )
     ).scalars()
