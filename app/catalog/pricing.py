@@ -64,6 +64,7 @@ async def effective_partner_prices(
                 PartnerPriceSnapshot.partner_id == partner_id,
                 PartnerPrice.model_id == model_id,
             )
+            .with_for_update(of=PartnerPrice)
         )
     ).all()
     return [
@@ -208,3 +209,4 @@ async def _snapshot_new_variants_for_partner(
     if created:
         await db.flush()
     return created
+

@@ -33,7 +33,9 @@ class AttemptCostReconciliation(BaseModel):
 
 @router.get("/reconciliation")
 async def pending(db: DbSession):
-    unknown_generation_ids = select(ProviderAttempt.generation_id).where(ProviderAttempt.cost_status == "unknown")
+    unknown_generation_ids = select(ProviderAttempt.generation_id).where(
+        ProviderAttempt.cost_status.in_(["unknown", "estimated"])
+    )
     rows = (
         await db.execute(
             select(Generation)
@@ -55,7 +57,7 @@ async def pending(db: DbSession):
                 select(ProviderAttempt)
                 .where(
                     ProviderAttempt.generation_id.in_([g.id for g in generations]),
-                    ProviderAttempt.cost_status == "unknown",
+                    ProviderAttempt.cost_status.in_(["unknown", "estimated"]),
                 )
                 .order_by(ProviderAttempt.created_at, ProviderAttempt.id)
             )
@@ -117,16 +119,23 @@ async def reconcile_attempt_cost(
         actual_cost = Decimal(payload.provider_cost_usdt)
         final_status = "settled"
 
-    if attempt.cost_status != "unknown":
+    if attempt.cost_status not in {"unknown", "estimated"}:
         if attempt.cost_status == final_status and Decimal(attempt.provider_cost_usdt or 0) == actual_cost:
             return {"id": generation.id, "attempt_id": attempt.id, "cost_status": attempt.cost_status}
         raise HTTPException(409, "provider_attempt_cost_already_reconciled")
 
-    held_usdt = Decimal(attempt.cost_reserve_usdt or 0)
+    estimated = attempt.cost_status == "estimated"
+    if estimated and (generation.status != "completed" or generation.actual_provider_cost_usdt is None):
+        raise HTTPException(409, "provider_estimate_not_settled")
+    held_usdt = Decimal(0) if estimated else Decimal(attempt.cost_reserve_usdt or 0)
     fx = Decimal(generation.rub_per_usdt_snapshot)
     held_rub = (held_usdt * fx).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    total_actual_cost = Decimal(generation.actual_provider_cost_usdt or 0) + actual_cost
-    desired_coverage_net = -(total_actual_cost * fx).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    old_estimate = Decimal(attempt.provider_cost_usdt or 0) if estimated else Decimal(0)
+    total_actual_cost = Decimal(generation.actual_provider_cost_usdt or 0) - old_estimate + actual_cost
+    remaining_hold_rub = max(Decimal(0), Decimal(generation.provider_cost_hold_rub or 0) - held_rub)
+    desired_coverage_net = (
+        -(total_actual_cost * fx).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) - remaining_hold_rub
+    )
     current_coverage_net = Decimal(
         await db.scalar(
             select(func.coalesce(func.sum(CoverageLedgerEntry.amount_rub), 0)).where(

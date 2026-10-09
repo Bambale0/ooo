@@ -121,3 +121,4 @@ async def test_reference_smoke_uploads_polls_and_checks_protected_content(
     with pytest.raises(SystemExit, match="existing runs"):
         await run(args)
     assert len(submissions) == 1
+

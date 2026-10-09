@@ -754,5 +754,23 @@
         ]
       }
     }
+  },
+  "procurement_reviews": {
+    "seedance-2.5": {
+      "effective_at": "2026-10-06T12:17:00Z",
+      "source": "ArgoLink supplier pricing notice 2026-10-06; independently checked live catalog",
+      "expected_previous": {
+        "480p": "0.078",
+        "720p": "0.170",
+        "1080p": "0.430"
+      },
+      "discount": "0.15",
+      "compensation": {
+        "reference": "seedance25-billing-error-20261004-20261006",
+        "amount_usdt": "15.73",
+        "status": "supplier_reported",
+        "reason": "Supplier reported credit for erroneous Seedance 2.5 debits from 2026-10-04T16:41:00Z to 2026-10-06T12:17:00Z; balance reconciliation pending"
+      }
+    }
   }
 }
