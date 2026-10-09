@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     support_storage_dir: str = "./var/support"
     log_level: str = "INFO"
     rub_per_usdt: Decimal = Field(default=Decimal("100.00"), gt=0)
+    internal_min_rub_per_usdt: Decimal | None = Field(default=None, gt=0, allow_inf_nan=False)
     seedance_25_edit_markup_rub_per_second: Decimal | None = Field(default=None, ge=0, allow_inf_nan=False)
     argolink_base_url: str = "https://argolink.io"
     argolink_api_key: str | None = None
