@@ -402,3 +402,94 @@ async def test_native_cpu_spinner_is_killed_at_short_test_deadline(monkeypatch):
     monkeypatch.setattr("media_probe.decoder.MAX_SECONDS", 0.05)
     with pytest.raises(ProbeError, match="timeout"):
         await run_bounded(["/usr/bin/python3", "-c", "while True: pass"], stdout_limit=100)
+
+
+@pytest.mark.parametrize("stream_name", ["stdout", "stderr"])
+async def test_overflowed_pipe_is_drained_and_child_reaped_without_hanging(monkeypatch, stream_name):
+    """A full asyncio pipe can remain paused after the child has been killed."""
+    real_create = asyncio.create_subprocess_exec
+    children = []
+
+    async def record(*args, **kwargs):
+        process = await real_create(*args, **kwargs)
+        children.append(process)
+        return process
+
+    from media_probe import decoder
+
+    real_read = decoder._read_bounded
+
+    async def after_backpressure(stream, maximum):
+        if children and stream is getattr(children[0], stream_name):
+            # Schedule deterministically like the slower container: let asyncio
+            # pause its transport before the capped reader consumes anything.
+            async with asyncio.timeout(1):
+                while not stream._paused:  # noqa: ASYNC110 - no public transport-pause event; test only
+                    await asyncio.sleep(0.001)
+        return await real_read(stream, maximum)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", record)
+    monkeypatch.setattr(decoder, "_read_bounded", after_backpressure)
+    try:
+        with pytest.raises(ProbeError, match="resource_limit"):
+            await asyncio.wait_for(
+                run_bounded(
+                    ["/usr/bin/python3", "-c", f"import sys; sys.{stream_name}.buffer.write(b'x' * 1048576)"],
+                    stdout_limit=64,
+                ),
+                timeout=2,
+            )
+        assert children[0].returncode is not None
+        assert not Path(f"/proc/{children[0].pid}").exists()  # noqa: ASYNC240 - local synthetic child only
+        assert await run_bounded(["/usr/bin/python3", "-c", "print('ready')"], stdout_limit=64) == b"ready\n"
+    finally:
+        # Keep a failing pre-fix regression from leaving paused test transports.
+        for process in children:
+            for stream in (process.stdout, process.stderr):
+                if stream is not None:
+                    async with asyncio.timeout(1):
+                        while await stream.read(65536):
+                            pass
+
+
+async def test_repeated_cancellation_waits_for_owned_cleanup_and_preserves_cancel(monkeypatch):
+    from media_probe import decoder
+
+    real_create, real_discard = asyncio.create_subprocess_exec, decoder._discard_pipe
+    started, draining, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    children = []
+
+    async def record(*args, **kwargs):
+        process = await real_create(*args, **kwargs)
+        children.append(process)
+        started.set()
+        return process
+
+    async def paused_discard(stream):
+        draining.set()
+        await release.wait()
+        await real_discard(stream)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", record)
+    monkeypatch.setattr(decoder, "_discard_pipe", paused_discard)
+    task = asyncio.create_task(run_bounded(
+        ["/usr/bin/python3", "-c", "import time; time.sleep(30)"], stdout_limit=64,
+    ))
+    try:
+        await asyncio.wait_for(started.wait(), timeout=2)
+        task.cancel()
+        await asyncio.wait_for(draining.wait(), timeout=2)
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()  # Caller still owns cleanup after the second cancellation.
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=2)
+        assert children[0].returncode is not None
+        assert not Path(f"/proc/{children[0].pid}").exists()  # noqa: ASYNC240 - synthetic child only
+        assert not [item for item in asyncio.all_tasks() if item.get_name() == "media-probe-process-cleanup"]
+    finally:
+        release.set()
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)

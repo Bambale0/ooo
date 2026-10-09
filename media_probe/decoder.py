@@ -62,6 +62,13 @@ async def _read_bounded(stream: asyncio.StreamReader, maximum: int) -> bytes:
     return bytes(result)
 
 
+async def _discard_pipe(stream: asyncio.StreamReader) -> None:
+    # Only used after SIGKILL: finite buffered bytes, never accumulated in memory.
+    # Reading resumes a backpressured transport so Process.wait() can finish.
+    while await stream.read(CHUNK_SIZE):
+        pass
+
+
 async def run_bounded(argv: list[str], *, stdout_limit: int, stderr_metadata: bool = False) -> bytes:
     """No shell, bounded pipe readers, scrubbed environment and reliable reaping."""
     process = await asyncio.create_subprocess_exec(
@@ -108,12 +115,28 @@ async def run_bounded(argv: list[str], *, stdout_limit: int, stderr_metadata: bo
     except TimeoutError as exc:
         raise ProbeError("timeout") from exc
     finally:
-        kill_group()
-        for task in pending:
-            if not task.done():
-                task.cancel()
-        await asyncio.gather(*pending, return_exceptions=True)
-        await process.wait()
+        async def cleanup() -> None:
+            kill_group()
+            for task in pending:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            # Cancelled capped readers may leave asyncio's pipe transport paused.
+            # Reap AND drain both streams after killing the whole process group.
+            # communicate() would accumulate output and break the memory bound.
+            await asyncio.gather(_discard_pipe(process.stdout), _discard_pipe(process.stderr), process.wait())
+
+        cleaning = asyncio.create_task(cleanup(), name="media-probe-process-cleanup")
+        interrupted = False
+        while not cleaning.done():
+            try:
+                await asyncio.shield(cleaning)
+            except asyncio.CancelledError:
+                # A second cancellation must not detach cleanup or strand pipes.
+                interrupted = True
+        await cleaning
+        if interrupted:
+            raise asyncio.CancelledError
 
 
 def input_options(*, audio: bool = True) -> list[str]:
