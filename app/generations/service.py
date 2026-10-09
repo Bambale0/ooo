@@ -13,6 +13,7 @@ from app.billing.service import (
 )
 from app.contracts.registry import normalized_video
 from app.generations.models import Generation
+from app.generations.video_recovery import active_video_poll_clause, is_usage_review, is_video_generation
 from app.infrastructure.config import get_settings
 from app.infrastructure.metrics import monotonic_seconds, observe_provider_request
 from app.infrastructure.retry import is_due, is_older_than, next_poll_at, next_retry_at, utc_now
@@ -167,10 +168,10 @@ async def active_provider_for_generation(
 ) -> str | None:
     result = await db.execute(
         select(ProviderAttempt.provider)
+        .join(Generation, Generation.id == ProviderAttempt.generation_id)
         .where(
             ProviderAttempt.generation_id == generation_id,
-            ProviderAttempt.status.in_(("accepted", "processing", "retry_pending", "timeout")),
-            ProviderAttempt.provider_task_id.is_not(None),
+            active_video_poll_clause(),
         )
         .order_by(ProviderAttempt.created_at.desc(), ProviderAttempt.id.desc())
         .limit(1)
@@ -375,8 +376,9 @@ async def poll_generation_provider(
         return generation
 
     settings = get_settings()
+    usage_review = is_usage_review(generation, attempt)
     reconciling_late_success = generation.status == "timeout" or attempt.status == "timeout"
-    if not reconciling_late_success and is_older_than(
+    if not usage_review and not reconciling_late_success and is_older_than(
         attempt.created_at,
         settings.worker_provider_processing_timeout_seconds,
     ):
@@ -451,7 +453,11 @@ async def poll_generation_provider(
         from app.providers.circuit import observe
 
         await observe(db, generation, outcome="error", provider=provider)
-        if reconciling_late_success:
+        if provider == PRIMARY_PROVIDER and is_video_generation(generation):
+            # A status-read failure never proves that an accepted paid job failed.
+            _defer_known_video_poll(attempt, generation, normalized, review=usage_review,
+                                   timed_out=reconciling_late_success)
+        elif reconciling_late_success:
             attempt.public_error_code = normalized.public_code
             attempt.raw_error = normalized.raw_error
             attempt.last_error = normalized.raw_error or normalized.public_code
@@ -483,6 +489,19 @@ async def poll_generation_provider(
         await db.refresh(generation)
         return generation
 
+    if usage_review and (
+        not getattr(result, "task_identity_verified", False)
+        or result.status not in {"completed", "failed"}
+    ):
+        _defer_known_video_poll(
+            attempt, generation,
+            ProviderAdapterError("provider_temporarily_unavailable", "video_review_pending"),
+            review=True,
+        )
+        await db.flush()
+        return generation
+
+    prior_retry_count = attempt.retry_count
     attempt.status = result.status
     attempt.public_error_code = None
     attempt.raw_error = None
@@ -503,10 +522,17 @@ async def poll_generation_provider(
         elif (generation.request_payload or {}).get("rates"):
             from app.inference.accounting import settle_actual
 
-            seconds = (result.usage or {}).get("billed_seconds")
+            seconds = result.usage.get("billed_seconds") if isinstance(result.usage, dict) else None
             if isinstance(seconds, bool) or not isinstance(seconds, int) or seconds < 1:
                 generation.status = attempt.status = "reconciliation_required"
                 generation.public_error_code = "usage_reconciliation_required"
+                if usage_review:
+                    attempt.retry_count = prior_retry_count
+                _defer_known_video_poll(
+                    attempt, generation,
+                    ProviderAdapterError("provider_temporarily_unavailable", "video_usage_missing"),
+                    review=True,
+                )
                 from app.providers.circuit import observe
 
                 await observe(db, generation, provider=provider)
@@ -618,6 +644,8 @@ async def poll_generation_provider(
             attempt.status = "timeout"
         else:
             generation.status = "processing"
+            if getattr(result, "task_identity_verified", False):
+                generation.public_error_code = None
         attempt.poll_count += 1
         attempt.next_poll_at = next_poll_at(
             attempt.poll_count,
@@ -629,6 +657,30 @@ async def poll_generation_provider(
     await db.flush()
     await db.refresh(generation)
     return generation
+
+
+def _defer_known_video_poll(
+    attempt: ProviderAttempt, generation: Generation, error: ProviderAdapterError,
+    *, review: bool = False, timed_out: bool = False,
+) -> None:
+    settings = get_settings()
+    attempt.public_error_code = error.public_code
+    attempt.raw_error = attempt.last_error = error.raw_error or error.public_code
+    attempt.retry_count += 1
+    attempt.next_attempt_at = next_retry_at(
+        min(attempt.retry_count, 32),
+        base_seconds=settings.worker_retry_base_seconds,
+        max_seconds=settings.worker_retry_max_seconds,
+        retry_after_seconds=error.retry_after_seconds,
+    )
+    attempt.next_poll_at = None
+    if review:
+        generation.status = attempt.status = "reconciliation_required"
+    elif timed_out:
+        generation.status = attempt.status = "timeout"
+    else:
+        generation.status = "processing"
+        attempt.status = "retry_pending"
 
 
 def _attempt_cost_reserve(generation: Generation, provider: str) -> Decimal | None:

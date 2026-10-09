@@ -15,6 +15,7 @@ from app.generations.service import (
     dispatch_generation_to_provider,
     poll_generation_provider,
 )
+from app.generations.video_recovery import active_video_poll_clause
 from app.infrastructure.config import get_settings
 from app.infrastructure.database import SessionLocal
 from app.infrastructure.logging import configure_logging
@@ -192,9 +193,7 @@ def _fair_due_active_candidate_ids_query(*, provider: str | None, limit: int):
         )
         .join(ProviderAttempt, ProviderAttempt.generation_id == Generation.id)
         .where(
-            Generation.status.in_(("sent_to_provider", "processing", "timeout")),
-            ProviderAttempt.status.in_(("accepted", "processing", "retry_pending", "timeout")),
-            ProviderAttempt.provider_task_id.is_not(None),
+            active_video_poll_clause(),
             (due_at.is_(None)) | (due_at <= now),
             *([ProviderAttempt.provider == provider] if provider else []),
         )
@@ -260,11 +259,20 @@ async def _poll_generation_candidate(
         try:
             result = await db.execute(select(Generation).where(Generation.id == generation_id).with_for_update())
             generation = result.scalar_one_or_none()
-            if generation is None or generation.status not in {"sent_to_provider", "processing", "timeout"}:
+            if generation is None or generation.status not in {
+                "sent_to_provider", "processing", "timeout", "reconciliation_required"
+            }:
                 await db.rollback()
                 return False
 
-            selected_provider = provider or await _active_provider_for_generation(db, generation.id)
+            if generation.status == "reconciliation_required":
+                # Recheck the narrow automatic lane after acquiring the row lock,
+                # even when a provider filter was explicitly passed to the worker.
+                selected_provider = await _active_provider_for_generation(db, generation.id)
+                if provider is not None and selected_provider != provider:
+                    selected_provider = None
+            else:
+                selected_provider = provider or await _active_provider_for_generation(db, generation.id)
             if selected_provider is None:
                 await db.rollback()
                 return False
@@ -349,9 +357,7 @@ async def _poll_active_generations(
         select(Generation)
         .join(ProviderAttempt, ProviderAttempt.generation_id == Generation.id)
         .where(
-            Generation.status.in_(("sent_to_provider", "processing", "timeout")),
-            ProviderAttempt.status.in_(("accepted", "processing", "retry_pending", "timeout")),
-            ProviderAttempt.provider_task_id.is_not(None),
+            active_video_poll_clause(),
             *([ProviderAttempt.provider == provider] if provider else []),
         )
         .order_by(Generation.created_at)
@@ -371,10 +377,10 @@ async def _poll_active_generations(
 async def _active_provider_for_generation(db: AsyncSession, generation_id: str) -> str | None:
     result = await db.execute(
         select(ProviderAttempt.provider)
+        .join(Generation, Generation.id == ProviderAttempt.generation_id)
         .where(
             ProviderAttempt.generation_id == generation_id,
-            ProviderAttempt.status.in_(("accepted", "processing", "retry_pending", "timeout")),
-            ProviderAttempt.provider_task_id.is_not(None),
+            active_video_poll_clause(),
         )
         .order_by(ProviderAttempt.created_at.desc(), ProviderAttempt.id.desc())
         .limit(1)
