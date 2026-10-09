@@ -17,6 +17,7 @@ from app.catalog.schemas import (
     PartnerPriceUpsert,
     PricingRead,
 )
+from app.catalog.video_edit_pricing import EDIT_MODE, EDIT_MODEL, edit_markup, retail_rate
 from app.contracts.registry import MODELS
 
 router = APIRouter()
@@ -114,7 +115,7 @@ async def enable_restricted_model(model_slug: str, db: DbSession) -> Model:
     prices = list((await db.execute(select(PartnerPrice).where(PartnerPrice.model_id == model.id))).scalars())
     if not prices:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="price_gate_missing")
-    if any(p.price_rub < p.provider_cost_usdt * fx for p in prices):
+    if any(retail_rate(model.slug, p, fx) < p.provider_cost_usdt * fx for p in prices):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="economic_gate_missing")
     if not model.has_provider_integration:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="provider_integration_gate_missing")
@@ -179,7 +180,7 @@ async def list_model_grants(model_slug: str, db: DbSession) -> list[dict]:
     grants = (
         await db.execute(
             select(PartnerModelGrant)
-            .where(PartnerModelGrant.model_id == model.id, PartnerModelGrant.revoked_at.is_(None))
+            .where(PartnerModelGrant.model_id == model_slug, PartnerModelGrant.revoked_at.is_(None))
             .order_by(PartnerModelGrant.created_at)
         )
     ).scalars()
@@ -275,6 +276,16 @@ async def list_pricing(db: DbSession) -> list[PricingRead]:
         .where(Model.status == "production")
         .order_by(Model.slug, PartnerPrice.mode, PartnerPrice.resolution)
     )
+    rows = [
+        (model, price)
+        for model, price in result.all()
+        if not (model.slug == EDIT_MODEL and price.mode == EDIT_MODE and edit_markup(model.slug) is None)
+    ]
+    fx = Decimal(1)
+    if any(model.slug == EDIT_MODEL and price.mode == EDIT_MODE for model, price in rows):
+        from app.billing.fx import current_fx
+
+        fx = (await current_fx(db))["rate"]
     return [
         PricingRead(
             model_slug=model.slug,
@@ -282,10 +293,10 @@ async def list_pricing(db: DbSession) -> list[PricingRead]:
             modality=model.modality,
             mode=price.mode,
             resolution=price.resolution,
-            price_rub=price.price_rub,
+            price_rub=retail_rate(model.slug, price, fx),
             billing_unit=price.billing_unit,
         )
-        for model, price in result.all()
+        for model, price in rows
     ]
 
 
@@ -313,7 +324,7 @@ async def ensure_model_can_be_enabled(db: DbSession, model: Model | ModelCreate)
                 (p.price_rub == 0 or p.provider_cost_usdt == 0)
                 and not supports_free_rate(model.slug, p.mode, p.resolution, p.billing_unit)
             )
-            or p.price_rub < p.provider_cost_usdt * fx
+            or retail_rate(model.slug, p, fx) < p.provider_cost_usdt * fx
             for p in prices
         ):
             raise HTTPException(409, "economic_gate_missing")
