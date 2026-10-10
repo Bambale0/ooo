@@ -297,6 +297,20 @@ async def upsert_price(payload: PartnerPriceUpsert, db: DbSession) -> None:
     )
     price = price_result.scalar_one_or_none()
     if price is not None:
+        # A custom rate must retain its billing unit (e.g. RUB per second).
+        if payload.billing_unit != price.billing_unit:
+            custom_partner_id = (
+                await db.execute(
+                    select(PartnerPriceSnapshot.partner_id)
+                    .where(
+                        PartnerPriceSnapshot.partner_price_id == price.id,
+                        PartnerPriceSnapshot.is_custom.is_(True),
+                    )
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if custom_partner_id is not None:
+                raise HTTPException(status_code=409, detail="custom_partner_billing_unit_conflict")
         # A procurement update must not silently make a negotiated rate loss-making.
         below_cost_partner_id = (
             await db.execute(
