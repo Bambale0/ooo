@@ -77,6 +77,16 @@ def test_no_video_preserves_existing_default_tariff_and_procurement(edit_rule, m
     assert units == {"seconds": 11}
 
 
+def test_edit_mode_label_alone_does_not_trigger_video_input_tariff(edit_rule):
+    """Only an actual video reference selects the edit price, not a mode label."""
+    body = request(video=False, task_mode="edit")
+    assert video_pricing_mode(body) == "default"
+    rates, units, _ = quote("videos/generations", body, prices(), fx=FX)
+    assert Decimal(rates["seconds"]["retail"]) == Decimal("23.80")
+    assert Decimal(rates["seconds"]["cost"]) == COSTS["720p"]
+    assert units["seconds"] > 0
+
+
 def test_other_seedance_family_stays_default(edit_rule):
     body = request()
     body["model"] = "seedance-2.0"
