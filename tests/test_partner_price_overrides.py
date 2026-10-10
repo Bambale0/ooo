@@ -135,3 +135,37 @@ async def test_global_procurement_change_cannot_invalidate_locked_partner_rate(
     await db_session.refresh(template)
     assert template.price_rub == Decimal("23.80")
     assert template.provider_cost_usdt == Decimal("0.10")
+
+
+async def test_global_unit_change_cannot_reinterpret_custom_per_second_rate(
+    client, db_session, admin_headers
+):
+    apix, _other, model, template = await _seed_two_partners(db_session)
+    response = await client.put(
+        f"/api/v1/catalog/pricing/partners/{apix.id}",
+        headers=admin_headers,
+        json={
+            "model_slug": model.slug,
+            "mode": "default",
+            "resolution": "720p",
+            "price_rub": "23.00",
+            "reason": "Negotiated per-second rate",
+        },
+    )
+    assert response.status_code == 200
+    global_response = await client.put(
+        "/api/v1/catalog/pricing",
+        headers=admin_headers,
+        json={
+            "model_slug": model.slug,
+            "mode": "default",
+            "resolution": "720p",
+            "price_rub": "30.00",
+            "provider_cost_usdt": "0.100000",
+            "billing_unit": "generation",
+        },
+    )
+    assert global_response.status_code == 409
+    assert global_response.json()["detail"] == "custom_partner_billing_unit_conflict"
+    await db_session.refresh(template)
+    assert template.billing_unit == "second"
