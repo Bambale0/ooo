@@ -124,7 +124,7 @@ async def test_failed_accepted_task_is_never_resubmitted_to_same_provider(db_ses
         "failed",
         "original-failed-task",
     )
-    assert attempt.cost_status == "unknown"
+    assert attempt.cost_status == "confirmed_free"
     await dispatch_generation_to_provider(db_session, generation)
     adapter.submit_generation.assert_not_awaited()
     assert await _ledger(db_session, generation) == [
@@ -221,6 +221,8 @@ async def test_definitive_late_provider_failure_replaces_timeout_status(db_sessi
         "provider_generation_failed",
     )
     assert attempt.raw_error == "The result could not be generated."
+    assert attempt.cost_status == "confirmed_free"
+    assert generation.actual_provider_cost_usdt == Decimal("0")
     assert await _ledger(db_session, generation) == [
         ("generation_reserve", Decimal("-80")),
         ("generation_reserve_release", Decimal("80")),
@@ -229,9 +231,7 @@ async def test_definitive_late_provider_failure_replaces_timeout_status(db_sessi
     assert partner.balance_rub == Decimal("100")
 
 
-async def test_revoked_original_credential_does_not_change_terminal_failure_or_switch_keys(
-    db_session, adapter
-):
+async def test_revoked_original_credential_does_not_change_terminal_failure_or_switch_keys(db_session, adapter):
     partner, generation, attempt, _ = await _seed(db_session)
     await poll_generation_provider(db_session, generation)
     original = await db_session.get(ProviderCredential, attempt.credential_id)
@@ -245,8 +245,8 @@ async def test_revoked_original_credential_does_not_change_terminal_failure_or_s
     adapter.submit_generation.assert_not_awaited()
     assert (generation.status, attempt.status) == ("failed", "failed")
     assert generation.actual_charge_rub is None
-    assert generation.actual_provider_cost_usdt is None
-    assert attempt.cost_status == "unknown"
+    assert generation.actual_provider_cost_usdt == Decimal("0")
+    assert attempt.cost_status == "confirmed_free"
     assert await _ledger(db_session, generation) == [
         ("generation_reserve", Decimal("-80")),
         ("generation_reserve_release", Decimal("80")),
@@ -255,9 +255,10 @@ async def test_revoked_original_credential_does_not_change_terminal_failure_or_s
     assert partner.balance_rub == Decimal("100")
 
 
-async def test_native_terminal_failure_keeps_unknown_cost_and_emits_one_failed_webhook(db_session, adapter):
+async def test_native_terminal_failure_closes_confirmed_free_cost_and_emits_one_failed_webhook(db_session, adapter):
     partner, generation, attempt, _ = await _seed(db_session)
     partner.cost_coverage_rub = Decimal("100")
+    generation.mode = "videos/generations"
     generation.request_payload = {
         "protocol": "videos/generations",
         "rates": {"seconds": {"retail": "16", "cost": "0.1"}},
@@ -282,8 +283,8 @@ async def test_native_terminal_failure_keeps_unknown_cost_and_emits_one_failed_w
     adapter.submit_generation.assert_not_awaited()
     assert generation.status == "failed"
     assert generation.actual_charge_rub is None
-    assert generation.actual_provider_cost_usdt is None
-    assert attempt.cost_status == "unknown"
+    assert generation.actual_provider_cost_usdt == Decimal("0")
+    assert attempt.cost_status == "confirmed_free"
     assert await _ledger(db_session, generation) == [
         ("generation_reserve", Decimal("-80")),
         ("generation_reserve_release", Decimal("80")),
@@ -293,9 +294,10 @@ async def test_native_terminal_failure_keeps_unknown_cost_and_emits_one_failed_w
     )
     assert sorted((entry.operation_type, entry.amount_rub) for entry in coverage) == [
         ("provider_cost_reserve", Decimal("-50")),
+        ("provider_cost_reserve_adjustment", Decimal("50")),
     ]
     await db_session.refresh(partner)
-    assert (partner.balance_rub, partner.cost_coverage_rub) == (Decimal("100"), Decimal("50"))
+    assert (partner.balance_rub, partner.cost_coverage_rub) == (Decimal("100"), Decimal("100"))
 
 
 @pytest.mark.integration

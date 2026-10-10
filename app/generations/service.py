@@ -378,9 +378,13 @@ async def poll_generation_provider(
     settings = get_settings()
     usage_review = is_usage_review(generation, attempt)
     reconciling_late_success = generation.status == "timeout" or attempt.status == "timeout"
-    if not usage_review and not reconciling_late_success and is_older_than(
-        attempt.created_at,
-        settings.worker_provider_processing_timeout_seconds,
+    if (
+        not usage_review
+        and not reconciling_late_success
+        and is_older_than(
+            attempt.created_at,
+            settings.worker_provider_processing_timeout_seconds,
+        )
     ):
         attempt.status = "timeout"
         attempt.public_error_code = "generation_timeout"
@@ -455,8 +459,9 @@ async def poll_generation_provider(
         await observe(db, generation, outcome="error", provider=provider)
         if provider == PRIMARY_PROVIDER and is_video_generation(generation):
             # A status-read failure never proves that an accepted paid job failed.
-            _defer_known_video_poll(attempt, generation, normalized, review=usage_review,
-                                   timed_out=reconciling_late_success)
+            _defer_known_video_poll(
+                attempt, generation, normalized, review=usage_review, timed_out=reconciling_late_success
+            )
         elif reconciling_late_success:
             attempt.public_error_code = normalized.public_code
             attempt.raw_error = normalized.raw_error
@@ -490,11 +495,11 @@ async def poll_generation_provider(
         return generation
 
     if usage_review and (
-        not getattr(result, "task_identity_verified", False)
-        or result.status not in {"completed", "failed"}
+        not getattr(result, "task_identity_verified", False) or result.status not in {"completed", "failed"}
     ):
         _defer_known_video_poll(
-            attempt, generation,
+            attempt,
+            generation,
             ProviderAdapterError("provider_temporarily_unavailable", "video_review_pending"),
             review=True,
         )
@@ -529,7 +534,8 @@ async def poll_generation_provider(
                 if usage_review:
                     attempt.retry_count = prior_retry_count
                 _defer_known_video_poll(
-                    attempt, generation,
+                    attempt,
+                    generation,
                     ProviderAdapterError("provider_temporarily_unavailable", "video_usage_missing"),
                     review=True,
                 )
@@ -568,6 +574,14 @@ async def poll_generation_provider(
             # leaving clients on "expired" forever.
             generation.status = "failed"
             generation.public_error_code = "provider_generation_failed"
+            if attempt.cost_status == "confirmed_free":
+                await release_generation_cost_reserve(
+                    db,
+                    generation,
+                    reason="Released procurement reserve after confirmed free provider failure",
+                )
+                if generation.actual_provider_cost_usdt is None:
+                    generation.actual_provider_cost_usdt = Decimal("0")
             if provider == "infai":
                 unresolved_prior = await db.scalar(
                     select(ProviderAttempt.id)
@@ -660,8 +674,12 @@ async def poll_generation_provider(
 
 
 def _defer_known_video_poll(
-    attempt: ProviderAttempt, generation: Generation, error: ProviderAdapterError,
-    *, review: bool = False, timed_out: bool = False,
+    attempt: ProviderAttempt,
+    generation: Generation,
+    error: ProviderAdapterError,
+    *,
+    review: bool = False,
+    timed_out: bool = False,
 ) -> None:
     settings = get_settings()
     attempt.public_error_code = error.public_code
@@ -722,9 +740,15 @@ def _record_attempt_result_accounting(
     if cost is not None and cost.is_finite() and cost >= 0:
         attempt.provider_cost_usdt = cost
         attempt.cost_status = "reported"
+    elif attempt.provider == PRIMARY_PROVIDER and is_video_generation(generation):
+        # ArgoLink bills delivered video only. An explicit terminal failed
+        # status is proof of a free result, unlike timeout, transport errors
+        # or an unconfirmed submit. Provider-reported charges above take precedence.
+        attempt.provider_cost_usdt = Decimal("0")
+        attempt.cost_status = "confirmed_free"
     else:
-        # A terminal status proves completion of the task, not that the provider
-        # waived its charge. Keep a queryable obligation until reconciliation.
+        # Other providers and uncertain outcomes retain procurement coverage
+        # until a verified billing reconciliation.
         attempt.provider_cost_usdt = None
         attempt.cost_status = "unknown"
         if prior_cost_status != "unknown":

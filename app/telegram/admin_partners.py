@@ -213,9 +213,7 @@ async def show_admin_partners(event, db, dialog, page: int = 0, *, search: dict 
         query = query.where(condition)
     rows = (
         await db.execute(
-            query.order_by(Partner.created_at.desc(), Partner.id)
-            .offset(page * PAGE_SIZE)
-            .limit(PAGE_SIZE + 1)
+            query.order_by(Partner.created_at.desc(), Partner.id).offset(page * PAGE_SIZE).limit(PAGE_SIZE + 1)
         )
     ).all()
     wallet_total = await db.scalar(
@@ -270,10 +268,7 @@ async def search_admin_partners(event, db, dialog, value: str) -> None:
 
 
 async def _count(db, model, partner_id: str) -> int:
-    return int(
-        await db.scalar(select(func.count()).select_from(model).where(model.partner_id == partner_id))
-        or 0
-    )
+    return int(await db.scalar(select(func.count()).select_from(model).where(model.partner_id == partner_id)) or 0)
 
 
 async def show_partner_card(event, db, dialog, partner_id: str) -> None:
@@ -348,14 +343,18 @@ async def show_partner_keys(event, db, data: str) -> None:
     partner_id, page = _parse_section(data)
     await _partner_row(db, partner_id)
     rows = (
-        await db.execute(
-            select(ApiKey)
-            .where(ApiKey.partner_id == partner_id)
-            .order_by(ApiKey.created_at.desc())
-            .offset(page * DETAIL_PAGE_SIZE)
-            .limit(DETAIL_PAGE_SIZE + 1)
+        (
+            await db.execute(
+                select(ApiKey)
+                .where(ApiKey.partner_id == partner_id)
+                .order_by(ApiKey.created_at.desc())
+                .offset(page * DETAIL_PAGE_SIZE)
+                .limit(DETAIL_PAGE_SIZE + 1)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     lines = ["API-ключи партнёра"]
     for row in rows[:DETAIL_PAGE_SIZE]:
         state = "активен" if row.is_active else "отозван"
@@ -372,14 +371,18 @@ async def show_partner_credentials(event, db, data: str) -> None:
     partner_id, page = _parse_section(data)
     await _partner_row(db, partner_id)
     rows = (
-        await db.execute(
-            select(ProviderCredential)
-            .where(ProviderCredential.partner_id == partner_id)
-            .order_by(ProviderCredential.created_at.desc())
-            .offset(page * DETAIL_PAGE_SIZE)
-            .limit(DETAIL_PAGE_SIZE + 1)
+        (
+            await db.execute(
+                select(ProviderCredential)
+                .where(ProviderCredential.partner_id == partner_id)
+                .order_by(ProviderCredential.created_at.desc())
+                .offset(page * DETAIL_PAGE_SIZE)
+                .limit(DETAIL_PAGE_SIZE + 1)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     lines = ["Ключи поставщика"]
     for row in rows[:DETAIL_PAGE_SIZE]:
         state = "активен" if row.is_active else "отозван"
@@ -395,14 +398,18 @@ async def show_partner_payments(event, db, data: str) -> None:
     partner_id, page = _parse_section(data)
     await _partner_row(db, partner_id)
     rows = (
-        await db.execute(
-            select(PaymentInvoice)
-            .where(PaymentInvoice.partner_id == partner_id)
-            .order_by(PaymentInvoice.created_at.desc())
-            .offset(page * DETAIL_PAGE_SIZE)
-            .limit(DETAIL_PAGE_SIZE + 1)
+        (
+            await db.execute(
+                select(PaymentInvoice)
+                .where(PaymentInvoice.partner_id == partner_id)
+                .order_by(PaymentInvoice.created_at.desc())
+                .offset(page * DETAIL_PAGE_SIZE)
+                .limit(DETAIL_PAGE_SIZE + 1)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     lines = ["Платежи партнёра"]
     for row in rows[:DETAIL_PAGE_SIZE]:
         lines.append(
@@ -421,22 +428,24 @@ async def show_partner_generations(event, db, data: str) -> None:
     partner_id, page = _parse_section(data)
     await _partner_row(db, partner_id)
     rows = (
-        await db.execute(
-            select(Generation)
-            .where(Generation.partner_id == partner_id)
-            .order_by(Generation.created_at.desc())
-            .offset(page * DETAIL_PAGE_SIZE)
-            .limit(DETAIL_PAGE_SIZE + 1)
+        (
+            await db.execute(
+                select(Generation)
+                .where(Generation.partner_id == partner_id)
+                .order_by(Generation.created_at.desc())
+                .offset(page * DETAIL_PAGE_SIZE)
+                .limit(DETAIL_PAGE_SIZE + 1)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     visible = rows[:DETAIL_PAGE_SIZE]
     generation_ids = [row.id for row in visible]
     attempts = (
         list(
             (
-                await db.execute(
-                    select(ProviderAttempt).where(ProviderAttempt.generation_id.in_(generation_ids))
-                )
+                await db.execute(select(ProviderAttempt).where(ProviderAttempt.generation_id.in_(generation_ids)))
             ).scalars()
         )
         if generation_ids
@@ -445,7 +454,18 @@ async def show_partner_generations(event, db, data: str) -> None:
     attempts_by_generation = {attempt.generation_id: attempt for attempt in attempts}
     lines = ["Генерации партнёра"]
     for row in visible:
-        charge = row.actual_charge_rub if row.actual_charge_rub is not None else row.partner_price_rub
+        # Never present a pre-authorized hold as money actually spent.
+        if row.status in {"failed", "cancelled"} and row.actual_charge_rub is None:
+            charge_label = "Списано: 0.00 ₽"
+        elif row.actual_charge_rub is not None:
+            charge_label = f"Списано: {row.actual_charge_rub:.2f} ₽"
+        elif row.status == "completed":
+            from app.billing.history import final_generation_charge
+
+            actual = await final_generation_charge(db, row)
+            charge_label = f"Списано: {actual:.2f} ₽" if actual is not None else "Списание не подтверждено"
+        else:
+            charge_label = "Фактического списания пока нет"
         attempt = attempts_by_generation.get(row.id)
         attempt_line = f"\nAttempt UUID: {attempt.id}" if attempt is not None else ""
         client_request_id = generation_client_request_id(row)
@@ -453,7 +473,7 @@ async def show_partner_generations(event, db, data: str) -> None:
         lines.append(
             f"Generation UUID: {row.id}{attempt_line}{client_request_line}\n"
             f"{row.model_slug} · {row.mode}/{row.resolution}\n"
-            f"{row.status} · {charge:.2f} ₽ · {_date(row.created_at)}"
+            f"{row.status} · {charge_label} · {_date(row.created_at)}"
         )
     if len(lines) == 1:
         lines.append("Генераций нет.")
@@ -466,14 +486,18 @@ async def show_partner_ledger(event, db, data: str) -> None:
     partner_id, page = _parse_section(data)
     await _partner_row(db, partner_id)
     rows = (
-        await db.execute(
-            select(LedgerEntry)
-            .where(LedgerEntry.partner_id == partner_id)
-            .order_by(LedgerEntry.created_at.desc())
-            .offset(page * DETAIL_PAGE_SIZE)
-            .limit(DETAIL_PAGE_SIZE + 1)
+        (
+            await db.execute(
+                select(LedgerEntry)
+                .where(LedgerEntry.partner_id == partner_id)
+                .order_by(LedgerEntry.created_at.desc())
+                .offset(page * DETAIL_PAGE_SIZE)
+                .limit(DETAIL_PAGE_SIZE + 1)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     lines = ["Ledger партнёра"]
     for row in rows[:DETAIL_PAGE_SIZE]:
         lines.append(
