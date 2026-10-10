@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from app.api.dependencies import DbSession
 from app.api.marketing import marketing_page
+from app.api.native_video_reference import REVIEWED_VIDEO_MODELS, render_native_video_reference
 from app.api.partner_reference import render_reference, table
 from app.api.public_ui import page
 from app.catalog.models import Model, PartnerPrice
@@ -60,9 +61,12 @@ async def _public_connection_guide(db: DbSession, lang: str) -> HTMLResponse:
             if ru
             else "<p>No models are currently enabled for public partner use.</p>"
         )
-    body = render_reference(base_url, lang, video_models={model.slug for model in model_rows}).replace(
+    video_models = {model.slug for model in model_rows}
+    body = render_reference(base_url, lang, video_models=video_models - REVIEWED_VIDEO_MODELS).replace(
         "<!-- enabled-models -->", enabled
     )
+    anchor = '<h2 id="uploads">'
+    body = body.replace(anchor, render_native_video_reference(lang, video_models) + anchor, 1)
     return page(title, body, lang)
 
 
