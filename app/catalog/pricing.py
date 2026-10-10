@@ -139,17 +139,19 @@ async def publish_global_partner_price(
     template: PartnerPrice,
     price_rub: Decimal,
 ) -> int:
-    """Atomically activate one global price for future requests by every partner.
+    """Publish the global price only to non-custom partner rates.
 
-    Generation rows keep their immutable accepted price, so historical and
-    in-flight work is never repriced. Partner snapshots are the live admission
-    lookup and therefore change together with the public template.
+    Partner-specific rates are immutable with respect to later global price
+    publications. Accepted and in-flight generation prices never change.
     """
     snapshots = list(
         (
             await db.execute(
                 select(PartnerPriceSnapshot)
-                .where(PartnerPriceSnapshot.partner_price_id == template.id)
+                .where(
+                    PartnerPriceSnapshot.partner_price_id == template.id,
+                    PartnerPriceSnapshot.is_custom.is_(False),
+                )
                 .with_for_update()
             )
         ).scalars()

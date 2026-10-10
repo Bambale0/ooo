@@ -333,3 +333,31 @@ Review correction: cleanup now uses an unconditional `always()` step and checks
 `DEPLOY_AUTH_DIR` in the runner shell. `GITHUB_ENV` makes the path available to
 subsequent shell steps, while the Actions `env` expression context is limited to
 workflow/job/step declarations. The prior expression could skip cleanup.
+
+
+# Durable individual partner price (2026-10-10)
+
+Baseline main/live: `9cb809057aded8aff4b18a61974f41fa5daa146c`.
+Branch: `fix/persistent-partner-pricing-20261010`.
+
+- User outcome: APIX bot Seedance 2.5 default 720p has negotiated 23.00 RUB/sec
+  independently of global 23.80 RUB/sec; no retroactive generation/ledger repricing.
+- Production preflight: the sole non-global snapshot among 300 entries is APIX
+  (23.00 vs 23.80); five other partners' rate remains 23.80. Existing production
+  migration is 20261003_0027. Production API/worker run 9cb809057.
+- Root cause: `publish_global_partner_price` overwrites *every* snapshot.
+  Comparing numeric prices is insufficient: global may temporarily equal a custom rate.
+- Decision: an explicit `is_custom` database flag, migration preserving all
+  existing price values, audited admin-only partner override, lock ordering
+  template -> snapshot, margin check, and unchanged accepted generation snapshots.
+- Regression: custom rate survives repeated global publication including a
+  momentary equal price; other partners follow the global price; unauthorized,
+  below-cost and excess-precision writes fail closed; duplicate writes are
+  idempotent. Migration backfill selects by data, not hardcoded partner identifiers.
+- Rollout: backup and apply 0028 migration to existing host before new code
+  (host autodedeploy blocks pending migrations), verify baseline row counts,
+  run CI and code-only immutable release, then confirm live revision and prices.
+- Risk: old code will not respect the flag if rolled back; disallow global pricing
+  publications on old revisions after the migration. Schema downgrade refuses
+  while any custom rate exists.
+- Verification status: pending PR CI / migration / production release.

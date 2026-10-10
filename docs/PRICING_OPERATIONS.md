@@ -5,7 +5,7 @@
 Global partner prices are published atomically for every partner and apply to new generations.
 
 - `partner_prices.price_rub` is the retail template for future partners and newly introduced variants.
-- `partner_price_snapshots.price_rub` is the live global retail price used at admission for an existing partner.
+- `partner_price_snapshots.price_rub` is the partner's live retail price used at admission; `is_custom=true` marks a durable, partner-specific override immune to global publication.
 - `partner_prices.provider_cost_usdt` remains live procurement cost for every partner.
 - Generation admission compares the frozen partner retail price against the current procurement cost and current FX rate.
 
@@ -33,19 +33,19 @@ Every generation stores its accepted price, so in-flight and historical operatio
 
 Migration `20261002_0025` atomically inserts one retail snapshot for every non-deleted partner and every existing `partner_prices` row.
 
-An existing snapshot changes only through the confirmed global publication transaction.
+Ordinary snapshots follow a confirmed global publication. Custom snapshots change only through an authenticated partner-specific update, never through global publication.
 
 ### New partner approval
 
 Partner approval calls `snapshot_partner_prices()`. The new partner receives the current retail template for every existing pricing variant.
 
-Changing the global template later does not alter that partner's snapshot.
+Later global publications update non-custom snapshots; custom snapshots retain their negotiated rate.
 
 ### New pricing variant
 
 When a brand-new `model/mode/resolution` pricing variant is created through the admin pricing endpoint, its initial retail price is snapshotted for all existing non-deleted partners.
 
-Later confirmed updates of that same variant change the template and every existing partner snapshot atomically.
+Later confirmed updates of that variant change the template and all non-custom snapshots atomically. Custom snapshots are excluded.
 
 A safe lazy enrollment exists only for variants whose `created_at` is newer than the partner. A missing snapshot for a variant older than the partner is treated as a rollout/data-integrity problem and pricing stays fail-closed.
 
@@ -56,7 +56,7 @@ A safe lazy enrollment exists only for variants whose `created_at` is newer than
 3. Approve the partner only after the intended global retail templates are correct.
 4. Approval snapshots those retail prices for the partner.
 5. Verify the partner has the expected snapshot count before issuing production traffic.
-6. Partner-specific commercial prices are not supported; confirmed publication is global.
+6. A negotiated partner rate is set via admin-only `PUT /api/v1/catalog/pricing/partners/{partner_id}` with `model_slug`, `mode`, `resolution`, `price_rub` (RUB per configured billing unit), and a nonempty `reason`. It is scoped to that partner and variant, recorded in an append-only history, and does not modify past generations.
 7. Run the financial incident tick and verify no `partner-economics` incident exists for the partner.
 
 ## Changing global prices
@@ -72,7 +72,7 @@ Before changing it:
 
 After changing it:
 
-- verify every existing snapshot changed to the published value;
+- verify every ordinary (`is_custom=false`) snapshot changed to the published value and every custom (`is_custom=true`) snapshot stayed unchanged;
 - verify in-flight and historical generation snapshots did not change;
 - run the financial incident tick.
 
@@ -140,3 +140,21 @@ ORDER BY p.project_name, m.slug, pp.mode, pp.resolution;
 ```
 
 Any returned row is a rollout blocker for pricing/fallback changes affecting that configuration.
+
+
+## Preserving negotiated partner rates
+
+Migration `20261010_0028` adds an explicit `is_custom` marker and append-only
+`partner_price_override_history` audit. Any existing snapshot whose price differs
+from its global template is marked custom, without changing either price or
+any historical generation, ledger, refund, or balance. Migration import audit
+entries are timestamped when imported, not backdated to the original agreement.
+
+Admin-only per-partner writes validate the variant, partner, decimal precision,
+and current procurement/FX floor. Updating the same rate twice is idempotent.
+Changes to the global template skip custom snapshots; a custom rate stays fixed
+even if the global price momentarily equals it. Global procurement updates that
+would make a custom rate loss-making are rejected (HTTP 409). Rollback to old
+application code is unsafe during subsequent global price edits; a schema
+downgrade is blocked while custom rows exist. Check the live revision and
+schema before applying a global pricing update.

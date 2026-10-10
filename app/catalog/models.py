@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from sqlalchemy import JSON, DateTime, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, DateTime, Numeric, String, Text, UniqueConstraint, false
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.database import Base
@@ -81,4 +81,20 @@ class PartnerPriceSnapshot(Base):
     partner_id: Mapped[str] = mapped_column(String(36), primary_key=True)
     partner_price_id: Mapped[str] = mapped_column(String(36), primary_key=True)
     price_rub: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    is_custom: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=false())
+    created_at: Mapped[object] = utc_created_at()
+
+
+class PartnerPriceOverrideHistory(Base):
+    """Append-only audit of one partner-specific retail rate change."""
+
+    __tablename__ = "partner_price_override_history"
+
+    id: Mapped[str] = uuid_pk()
+    partner_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    partner_price_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    old_price_rub: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
+    new_price_rub: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    actor: Mapped[str] = mapped_column(String(80), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[object] = utc_created_at()
