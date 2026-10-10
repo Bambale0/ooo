@@ -149,7 +149,7 @@ jobs:
           # Public ECR sometimes throttles anonymous pulls. Verify the
           # unmodified config with a signed Ubuntu nginx package if the
           # pinned official container cannot be fetched.
-          if ! docker run --rm \
+          if docker run --rm \
             --add-host app:127.0.0.1 \
             -v "$PWD/nginx/production.conf:/etc/nginx/conf.d/default.conf:ro" \
             -v "$cert_dir:/etc/nginx/ssl:ro" \
