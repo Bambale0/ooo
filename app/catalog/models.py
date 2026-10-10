@@ -93,7 +93,7 @@ class PartnerPriceOverrideHistory(Base):
     id: Mapped[str] = uuid_pk()
     partner_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     partner_price_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
-    old_price_rub: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    old_price_rub: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
     new_price_rub: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     actor: Mapped[str] = mapped_column(String(80), nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
