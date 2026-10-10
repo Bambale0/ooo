@@ -122,7 +122,7 @@ async def test_global_procurement_change_cannot_invalidate_locked_partner_rate(
             "model_slug": model.slug,
             "mode": "default",
             "resolution": "720p",
-            "price_rub": "80.00",
+            "price_rub": "300.00",
             "provider_cost_usdt": "2.000000",
             "billing_unit": "second",
         },
