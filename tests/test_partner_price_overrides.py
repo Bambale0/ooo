@@ -73,6 +73,7 @@ async def test_admin_can_lock_one_partner_rate_across_future_global_price_change
 
 async def test_partner_rate_override_requires_admin_and_rejects_below_cost(client, db_session, admin_headers):
     apix, other, model, template = await _seed_two_partners(db_session)
+    template_id, partner_ids = template.id, {apix.id, other.id}
     url = f"/api/v1/catalog/pricing/partners/{apix.id}"
     payload = {
         "model_slug": model.slug,
@@ -92,11 +93,11 @@ async def test_partner_rate_override_requires_admin_and_rejects_below_cost(clien
     assert invalid_precision.status_code == 422
     snapshots = (
         await db_session.execute(
-            select(PartnerPriceSnapshot).where(PartnerPriceSnapshot.partner_price_id == template.id)
+            select(PartnerPriceSnapshot).where(PartnerPriceSnapshot.partner_price_id == template_id)
         )
     ).scalars().all()
     assert len(snapshots) == 2
-    assert {row.partner_id for row in snapshots} == {apix.id, other.id}
+    assert {row.partner_id for row in snapshots} == partner_ids
     assert all(row.price_rub == Decimal("23.80") and not row.is_custom for row in snapshots)
 
 
