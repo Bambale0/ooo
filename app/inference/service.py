@@ -30,6 +30,7 @@ from app.contracts.registry import (
 from app.generations.models import Generation
 from app.inference.accounting import MILLION, TOKEN_MODES, charges
 from app.infrastructure.config import get_settings
+from app.media.video_inputs import eligible_video_input, prepare_video_inputs, snapshot_is_fresh
 from app.providers.base import ProviderGenerationRequest
 from app.providers.models import ProviderAttempt
 from app.providers.service import get_active_provider_credential
@@ -98,26 +99,33 @@ async def reserve(
     trial_telegram_id=None,
     client_request_id: str | None = None,
 ):
+    request_hash = fingerprint(protocol, body, files_digest)
+    prepared = None
+    if protocol == "videos/generations" and eligible_video_input(body):
+        # No financial row lock during bounded network/probe work. Completed
+        # idempotent admissions do not download or upload the media again.
+        existing = await _existing_generation(db, auth.partner.id, idempotency_key, request_hash, client_request_id)
+        if existing is not None:
+            return existing, None
+        from app.catalog.access import RESTRICTED_STATUS, has_model_grant
+
+        available = await db.scalar(
+            select(Model).where(Model.slug == body["model"], Model.status.in_(["production", RESTRICTED_STATUS]))
+        )
+        if (
+            auth.partner.status == "active"
+            and available is not None
+            and (available.status != RESTRICTED_STATUS or await has_model_grant(db, available.id, auth.partner.id))
+            and await get_active_provider_credential(db, auth.partner.id, "argolink", for_update=False) is not None
+        ):
+            prepared = await prepare_video_inputs(db, auth.partner.id, body)
+            if prepared is not None and not snapshot_is_fresh(prepared):
+                prepared = None
     partner = await lock_partner_for_update(db, auth.partner.id)
     if partner.status != "active":
         raise InferenceAdmissionError(403, "partner_not_active", failure_stage="partner_status")
-    request_hash = fingerprint(protocol, body, files_digest)
-    existing = (
-        await db.execute(
-            select(Generation).where(
-                Generation.partner_id == partner.id,
-                Generation.idempotency_key == idempotency_key,
-            )
-        )
-    ).scalar_one_or_none()
-    if existing:
-        if (existing.request_payload or {}).get("request_hash") != request_hash:
-            raise InferenceAdmissionError(409, "idempotency_conflict", failure_stage="idempotency")
-        from app.inference.correlation import generation_client_request_id
-
-        stored_client_request_id = generation_client_request_id(existing)
-        if client_request_id is not None and stored_client_request_id != client_request_id:
-            raise InferenceAdmissionError(409, "idempotency_conflict", failure_stage="idempotency")
+    existing = await _existing_generation(db, partner.id, idempotency_key, request_hash, client_request_id)
+    if existing is not None:
         return existing, None
     from app.catalog.access import RESTRICTED_STATUS, has_model_grant
 
@@ -160,6 +168,7 @@ async def reserve(
             prices,
             fx=fx_data["rate"],
             trial=trial_telegram_id is not None,
+            video_seconds=prepared["billable_seconds"] if prepared else None,
         )
     except HTTPException as exc:
         raise _admission_error(exc, "pricing") from exc
@@ -179,7 +188,8 @@ async def reserve(
     fx = fx_data["rate"]
     provider_cost_reserve_usdt = cost
     if protocol == "videos/generations":
-        video_body = normalized_video(body)
+        effective_body = prepared["body"] if prepared else body
+        video_body = normalized_video(effective_body)
 
         def media_url(value) -> str | None:
             if isinstance(value, str):
@@ -193,12 +203,12 @@ async def reserve(
         reference_audios = video_body.get("reference_audios", [])
         fallback_request = ProviderGenerationRequest(
             generation_id="reserve",
-            native_body=body,
+            native_body=effective_body,
             model_slug=model.slug,
             mode=protocol,
             resolution=resolution,
             prompt=str(video_body.get("prompt", "")),
-            duration_seconds=int(units.get("seconds", 1)),
+            duration_seconds=(int(video_body.get("duration", 5)) if prepared else int(units.get("seconds", 1))),
             aspect_ratio=video_body.get("aspect_ratio"),
             reference_images=tuple(url for item in references if (url := media_url(item)) is not None),
             reference_videos=tuple(url for item in reference_videos if (url := media_url(item)) is not None),
@@ -242,6 +252,9 @@ async def reserve(
         snapshot["client_request_id"] = client_request_id
     if video:
         snapshot["native_body"] = body
+        if prepared:
+            snapshot["effective_native_body"] = prepared["body"]
+            snapshot["video_inputs"] = {key: value for key, value in prepared.items() if key != "body"}
         if video_pricing_mode(body) == "edit":
             snapshot["pricing_policy"] = {
                 "mode": "edit",
@@ -318,7 +331,21 @@ async def reserve(
     return generation, attempt
 
 
-def quote(protocol, body, prices, *, fx=None, trial=False):
+async def _existing_generation(db, partner_id, idempotency_key, request_hash, client_request_id):
+    from app.inference.correlation import generation_client_request_id
+
+    existing = await db.scalar(
+        select(Generation).where(Generation.partner_id == partner_id, Generation.idempotency_key == idempotency_key)
+    )
+    if existing is not None and (
+        (existing.request_payload or {}).get("request_hash") != request_hash
+        or (client_request_id is not None and generation_client_request_id(existing) != client_request_id)
+    ):
+        raise InferenceAdmissionError(409, "idempotency_conflict", failure_stage="idempotency")
+    return existing
+
+
+def quote(protocol, body, prices, *, fx=None, trial=False, video_seconds=None):
     fx = fx if fx is not None else get_settings().rub_per_usdt
     rates = {}
 
@@ -399,4 +426,9 @@ def quote(protocol, body, prices, *, fx=None, trial=False):
     resolution = video.get("resolution", "768p" if body["model"] == "minimax-h3" else "720p")
     video_cost = video_input_cost(body["model"], video, resolution)
     add("seconds", video_pricing_mode(video), resolution, "second", cost_override=video_cost)
-    return rates, {"seconds": video_reserve_seconds(body)}, resolution
+    maximum = video_reserve_seconds(body)
+    if video_seconds is not None:
+        if isinstance(video_seconds, bool) or not isinstance(video_seconds, int) or not 1 <= video_seconds <= maximum:
+            raise HTTPException(503, "provider_temporarily_unavailable")
+        maximum = video_seconds
+    return rates, {"seconds": maximum}, resolution

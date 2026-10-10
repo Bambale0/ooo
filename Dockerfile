@@ -1,13 +1,14 @@
-FROM python:3.12-slim AS builder
+FROM public.ecr.aws/docker/library/python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1 AS builder
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /build
 COPY requirements.lock ./
 RUN pip install --no-cache-dir --require-hashes --prefix=/install -r requirements.lock
 COPY pyproject.toml README.md ./
 COPY app ./app
+COPY media_probe ./media_probe
 RUN pip install --no-cache-dir --prefix=/install --no-deps .
 
-FROM python:3.12-slim AS runtime
+FROM public.ecr.aws/docker/library/python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1 AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 APP_ENV=production
 WORKDIR /app
 RUN groupadd -r neironych && useradd -r -g neironych -d /app -s /usr/sbin/nologin neironych

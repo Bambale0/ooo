@@ -123,7 +123,10 @@ jobs:
             docker-compose.pitr.yml \
             nginx/production.conf \
             ops/backup/postgres \
-            ops/deploy/existing_host.py
+            ops/deploy/existing_host.py \
+            Dockerfile.media-probe \
+            media_probe \
+            ops/smoke/media_probe.py
           remote_dir="$(ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
             -p "$DEPLOY_SSH_PORT" -i ~/.ssh/deploy_key "$DEPLOY_SSH_USER@$DEPLOY_HOST" \
             "umask 077; mktemp -d /tmp/neironych-${RELEASE_SHA}.XXXXXX")"

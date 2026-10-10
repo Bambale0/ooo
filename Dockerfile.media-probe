@@ -1,0 +1,18 @@
+# Build a separate credential-free image. CI must supply an approved immutable
+# python:3.12-slim-trixie digest; intentionally no mutable default base image.
+ARG MEDIA_PROBE_BASE
+FROM ${MEDIA_PROBE_BASE}
+ARG FFMPEG_VERSION=7:7.1.5-0+deb13u1
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 LANG=C.UTF-8 LC_ALL=C.UTF-8 HOME=/nonexistent
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends "ffmpeg=${FFMPEG_VERSION}" libseccomp2 \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 media-probe \
+    && useradd --uid 10001 --gid 10001 --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin media-probe \
+    && mkdir -p /opt/media-probe /run/media-probe \
+    && chown 10001:10001 /run/media-probe
+WORKDIR /opt/media-probe
+# No app, requirements, credentials, .env, source-control metadata or DB drivers.
+COPY media_probe ./media_probe
+USER 10001:10001
+ENTRYPOINT ["python", "-m", "media_probe.server"]

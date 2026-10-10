@@ -14,13 +14,15 @@ async def get_active_provider_credential(
     db: AsyncSession,
     partner_id: str,
     provider: str,
+    *,
+    for_update: bool = True,
 ) -> ProviderCredential | None:
     scope = (
         (ProviderCredential.partner_id.is_(None) & (ProviderCredential.label == INFAI_CREDENTIAL_LABEL))
         if provider == "infai"
         else ProviderCredential.partner_id == partner_id
     )
-    result = await db.execute(
+    query = (
         select(ProviderCredential)
         .where(
             scope,
@@ -29,8 +31,10 @@ async def get_active_provider_credential(
             ProviderCredential.encrypted_api_key.is_not(None),
         )
         .order_by(ProviderCredential.created_at.desc())
-        .with_for_update()
     )
+    if for_update:
+        query = query.with_for_update()
+    result = await db.execute(query)
     return result.scalars().first()
 
 

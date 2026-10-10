@@ -1,0 +1,52 @@
+# PROPOSED local review overlay only. Do not activate without container-runtime
+# verification, a separately built/scanned immutable checker image, and rollout approval.
+# docker compose -f docker-compose.prod.yml -f docker-compose.media-probe.yml ...
+services:
+  app:
+    environment:
+      MEDIA_PROBE_SOCKET: /run/media-probe/probe.sock
+    group_add: ["10001"]
+    volumes:
+      - media_probe_socket:/run/media-probe:ro
+  media_probe:
+    # Deliberately does NOT inherit x-runtime, env_file, dependencies or app secrets.
+    image: ${NEIRONYCH_MEDIA_PROBE_IMAGE:?Set separately built immutable checker image digest}
+    user: "10001:10001"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    # No seccomp override: retain the Docker default seccomp profile.
+    privileged: false
+    ipc: private
+    init: true
+    restart: unless-stopped
+    cpus: 2.0
+    mem_limit: 2g
+    memswap_limit: 2g
+    pids_limit: 64
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=384m,uid=10001,gid=10001,mode=0700
+    volumes:
+      - media_probe_socket:/run/media-probe
+    ulimits:
+      core: 0
+      nofile:
+        soft: 128
+        hard: 128
+    stop_grace_period: 5s
+    healthcheck:
+      test: [CMD, python, -c, "from pathlib import Path; assert Path('/run/media-probe/probe.sock').is_socket()"]
+      interval: 10s
+      timeout: 2s
+      retries: 3
+      start_period: 5s
+volumes:
+  media_probe_socket:
+    # Tiny shared IPC mount only. Input files live exclusively in the checker's
+    # separate private /tmp. No Docker socket, app files, DB, ports or host paths.
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=1m,uid=10001,gid=10001,mode=0770,noexec,nosuid,nodev

@@ -40,7 +40,7 @@ markers = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["app*"]
+include = ["app*", "media_probe*"]
 
 [tool.ruff]
 line-length = 120

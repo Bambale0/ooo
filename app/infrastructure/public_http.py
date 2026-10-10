@@ -10,6 +10,19 @@ import socket
 
 import httpx
 
+_TRANSLATION_NETWORKS = tuple(ipaddress.ip_network(value) for value in (
+    "64:ff9b::/96", "64:ff9b:1::/48", "2002::/16", "2001::/32",
+))
+
+
+def _public_address(value: str) -> bool:
+    address = ipaddress.ip_address(value)
+    return bool(
+        address.is_global and not address.is_multicast and not address.is_reserved
+        and not getattr(address, "is_site_local", False)
+        and not any(address in network for network in _TRANSLATION_NETWORKS)
+    )
+
 
 class PublicHTTPTransport(httpx.AsyncHTTPTransport):
     def __init__(self):
@@ -25,9 +38,7 @@ class PublicHTTPTransport(httpx.AsyncHTTPTransport):
                 5,
             )
             addresses = list(dict.fromkeys(info[4][0] for info in infos))
-            if not addresses or any(
-                not ipaddress.ip_address(ip).is_global or ipaddress.ip_address(ip).is_multicast for ip in addresses
-            ):
+            if not addresses or not all(_public_address(ip) for ip in addresses):
                 raise ValueError("non_public_address")
         except (OSError, ValueError, TimeoutError) as exc:
             raise httpx.ConnectError("public_address_required", request=request) from exc
