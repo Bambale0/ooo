@@ -25,6 +25,8 @@ async def _seed_two_partners(db_session):
     await db_session.flush()
     await snapshot_partner_prices(db_session, apix.id)
     await snapshot_partner_prices(db_session, other.id)
+    # Failed HTTP requests roll back the shared fixture session; persist test setup first.
+    await db_session.commit()
     return apix, other, model, template
 
 
@@ -129,5 +131,7 @@ async def test_global_procurement_change_cannot_invalidate_locked_partner_rate(
     )
     assert response.status_code == 409
     assert response.json()["detail"] == "custom_partner_price_below_provider_cost"
+    # AsyncSession rollback expires loaded ORM attributes; refresh explicitly.
+    await db_session.refresh(template)
     assert template.price_rub == Decimal("23.80")
     assert template.provider_cost_usdt == Decimal("0.10")
