@@ -77,3 +77,21 @@ class ModelGrantRead(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class PartnerPriceOverrideUpsert(BaseModel):
+    model_slug: str = Field(min_length=2, max_length=80)
+    mode: str = Field(default="default", min_length=1, max_length=80)
+    resolution: str = Field(default="default", min_length=1, max_length=80)
+    price_rub: Decimal = Field(gt=0, max_digits=18, decimal_places=2, allow_inf_nan=False)
+    reason: str = Field(min_length=5, max_length=500)
+
+
+class PartnerPriceOverrideRead(BaseModel):
+    partner_id: str
+    model_slug: str
+    mode: str
+    resolution: str
+    price_rub: Decimal
+    billing_unit: str
+    is_custom: bool

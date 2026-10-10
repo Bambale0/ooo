@@ -3,9 +3,17 @@ from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 
+from app.accounts.models import Partner
 from app.api.dependencies import DbSession, require_admin
 from app.catalog.access import grant_model_access, revoke_model_access
-from app.catalog.models import Model, PartnerModelGrant, PartnerPrice, PartnerPriceHistory
+from app.catalog.models import (
+    Model,
+    PartnerModelGrant,
+    PartnerPrice,
+    PartnerPriceHistory,
+    PartnerPriceOverrideHistory,
+    PartnerPriceSnapshot,
+)
 from app.catalog.pricing import publish_global_partner_price, snapshot_price_for_existing_partners
 from app.catalog.procurement import supports_free_rate
 from app.catalog.schemas import (
@@ -14,6 +22,8 @@ from app.catalog.schemas import (
     ModelGrantCreate,
     ModelGrantRead,
     ModelRead,
+    PartnerPriceOverrideRead,
+    PartnerPriceOverrideUpsert,
     PartnerPriceUpsert,
     PricingRead,
 )
@@ -198,6 +208,72 @@ async def list_model_grants(model_slug: str, db: DbSession) -> list[dict]:
     ]
 
 
+@router.put(
+    "/pricing/partners/{partner_id}",
+    response_model=PartnerPriceOverrideRead,
+    dependencies=[Depends(require_admin)],
+)
+async def upsert_partner_price_override(
+    partner_id: str,
+    payload: PartnerPriceOverrideUpsert,
+    db: DbSession,
+) -> PartnerPriceOverrideRead:
+    """Set a durable price for one partner without repricing prior generations."""
+    partner = await db.get(Partner, partner_id)
+    if partner is None or partner.status == "deleted":
+        raise HTTPException(status_code=404, detail="partner_not_found")
+    model = (await db.execute(select(Model).where(Model.slug == payload.model_slug))).scalar_one_or_none()
+    if model is None:
+        raise HTTPException(status_code=404, detail="model_not_found")
+    template = (
+        await db.execute(
+            select(PartnerPrice)
+            .where(
+                PartnerPrice.model_id == model.id,
+                PartnerPrice.mode == payload.mode,
+                PartnerPrice.resolution == payload.resolution,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if template is None:
+        raise HTTPException(status_code=404, detail="price_variant_not_found")
+    snapshot = await db.get(PartnerPriceSnapshot, (partner_id, template.id), with_for_update=True)
+    if snapshot is None:
+        raise HTTPException(status_code=409, detail="partner_price_snapshot_missing")
+
+    from app.billing.fx import current_fx
+
+    fx_rate = Decimal((await current_fx(db))["rate"])
+    if payload.price_rub < template.provider_cost_usdt * fx_rate:
+        raise HTTPException(status_code=409, detail="partner_price_below_provider_cost")
+
+    if snapshot.price_rub != payload.price_rub or not snapshot.is_custom:
+        db.add(
+            PartnerPriceOverrideHistory(
+                partner_id=partner_id,
+                partner_price_id=template.id,
+                old_price_rub=snapshot.price_rub,
+                new_price_rub=payload.price_rub,
+                actor="admin_api",
+                reason=payload.reason,
+            )
+        )
+        snapshot.price_rub = payload.price_rub
+        snapshot.is_custom = True
+        await db.flush()
+
+    return PartnerPriceOverrideRead(
+        partner_id=partner_id,
+        model_slug=model.slug,
+        mode=template.mode,
+        resolution=template.resolution,
+        price_rub=snapshot.price_rub,
+        billing_unit=template.billing_unit,
+        is_custom=True,
+    )
+
+
 @router.put("/pricing", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_admin)])
 async def upsert_price(payload: PartnerPriceUpsert, db: DbSession) -> None:
     model_result = await db.execute(select(Model).where(Model.slug == payload.model_slug))
@@ -217,9 +293,24 @@ async def upsert_price(payload: PartnerPriceUpsert, db: DbSession) -> None:
             PartnerPrice.model_id == model.id,
             PartnerPrice.mode == payload.mode,
             PartnerPrice.resolution == payload.resolution,
-        )
+        ).with_for_update()
     )
     price = price_result.scalar_one_or_none()
+    if price is not None:
+        # A procurement update must not silently make a negotiated rate loss-making.
+        below_cost_partner_id = (
+            await db.execute(
+                select(PartnerPriceSnapshot.partner_id)
+                .where(
+                    PartnerPriceSnapshot.partner_price_id == price.id,
+                    PartnerPriceSnapshot.is_custom.is_(True),
+                    PartnerPriceSnapshot.price_rub < provider_cost_rub,
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if below_cost_partner_id is not None:
+            raise HTTPException(status_code=409, detail="custom_partner_price_below_provider_cost")
     if price is None:
         price = PartnerPrice(
             model_id=model.id,
