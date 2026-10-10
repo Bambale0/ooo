@@ -308,8 +308,13 @@ async def test_generation_and_partner_history_show_full_correlation_uuids(cabine
     assert generation.id[:8] + " · " not in admin_view[-1].text
 
     partner_view = await feed(user=int(owner.telegram_id), callback="history:0")
-    assert ledger.id in partner_view[-1].text
+    # Latest owner requirement: partners see one final charge; audit UUIDs stay admin-only.
+    assert ledger.id not in partner_view[-1].text
     assert generation.id in partner_view[-1].text
+    assert "-10.00" in partner_view[-1].text
+    ledger_view = await feed(user=999, callback=f"admin_partner_ledger:{owner.id}")
+    assert ledger.id in ledger_view[-1].text
+    assert generation.id in ledger_view[-1].text
 
 
 @pytest.mark.parametrize(

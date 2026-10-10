@@ -9,7 +9,7 @@ from sqlalchemy import select
 from app.accounts.models import ApiKey, PartnerApplication
 from app.accounts.router import submit_application, update_partner_api_key_webhook
 from app.accounts.schemas import ApiKeyWebhookUpdate, PartnerApplicationCreate
-from app.billing.models import LedgerEntry
+from app.billing.history import final_generation_charge, partner_transactions
 from app.billing.safe_to_withdraw import calculate_safe_to_withdraw
 from app.generations.models import Generation
 from app.infrastructure.config import get_settings
@@ -20,7 +20,7 @@ from app.support.models import SupportAttachment, SupportTicket
 from app.support.service import append_message, attachment_for, get_ticket, ticket_messages
 from app.telegram.actions import confirm_action
 from app.telegram.service import is_admin, new_action, notify, partner_for
-from app.telegram.ui import keyboard, show, status_label
+from app.telegram.ui import format_msk, keyboard, show, status_label, transaction_label
 
 
 def actor(event) -> str:
@@ -236,7 +236,7 @@ async def handle_callback(event, db, dialog) -> None:
         reset(dialog)
         await show(
             event,
-            f"Ваш баланс: {partner.balance_rub:.2f} ₽\n\n"
+            f"Доступный баланс: {partner.balance_rub:.2f} ₽\n\n"
             "Для пополнения нажмите «Пополнить» и укажите сумму от 1 000 ₽. "
             "После подтверждения создадим счёт Crypto Pay с оплатой в USDT или TON. "
             "Рубли зачислятся автоматически после подтверждения платежа.\n\n"
@@ -316,37 +316,22 @@ async def handle_callback(event, db, dialog) -> None:
         )
     elif data.startswith("history:"):
         page = page_number(data)
-        rows = (
-            (
-                await db.execute(
-                    select(LedgerEntry)
-                    .where(LedgerEntry.partner_id == partner.id)
-                    .order_by(LedgerEntry.created_at.desc())
-                    .offset(page * 8)
-                    .limit(9)
-                )
-            )
-            .scalars()
-            .all()
-        )
-        labels = {
-            "generation_reserve": "Резерв",
-            "generation_charge": "Генерация",
-            "payment_credit": "Пополнение",
-            "generation_refund": "Возврат резерва",
-        }
+        rows = await partner_transactions(db, partner.id, page=page)
         lines = []
         for row in rows[:8]:
-            generation_line = f"\nGeneration UUID: {row.generation_id}" if row.generation_id else ""
+            model = f" · {row.model_slug}" if row.model_slug else ""
+            identifier = (
+                f"Generation UUID: {row.generation_id}" if row.generation_id else f"Операция UUID: {row.id}"
+            )
             lines.append(
-                f"{row.created_at:%d.%m %H:%M} · {labels.get(row.operation_type, 'Операция')} · "
-                f"{row.amount_rub:+.2f} ₽\nLedger UUID: {row.id}{generation_line}"
+                f"{format_msk(row.created_at, '%d.%m %H:%M')} · {transaction_label(row.operation_type)}{model} · "
+                f"{row.amount_rub:+.2f} ₽\n{identifier}"
             )
         buttons = [("Поиск по UUID", "search_prompt")]
         navigation(buttons, "history", page, len(rows) > 8)
         await show(
             event, "История операций\n\n"
-            "Здесь показаны пополнения, резервы, списания и возвраты. "
+            "Здесь показаны пополнения, фактические списания и возвраты платежей. "
             "Для проверки генерации или счёта выберите «Поиск по UUID».\n\n"
             + ("\n".join(lines) or "Операций пока нет. После первого пополнения или запуска они появятся здесь."),
             keyboard(*buttons),
@@ -905,7 +890,11 @@ async def handle_message(event, db, dialog) -> None:
         if row:
             from app.telegram.trials import download_link
 
-            charge = row.actual_charge_rub if row.actual_charge_rub is not None else row.partner_price_rub
+            charge = await final_generation_charge(db, row)
+            charge_text = (
+                f"Списано: {charge:.2f} ₽" if charge is not None
+                else "Фактического списания пока нет."
+            )
             result = (
                 "\n" + download_link(row)
                 if row.status == "completed" and (row.request_payload or {}).get("trial_telegram_id")
@@ -913,7 +902,7 @@ async def handle_message(event, db, dialog) -> None:
             )
             await show(
                 event,
-                f"Генерация {row.id}\n{status_label(row.status)}\nСумма: {charge:.2f} ₽{result}",
+                f"Генерация {row.id}\n{status_label(row.status)}\n{charge_text}{result}",
             )
         else:
             payment = (

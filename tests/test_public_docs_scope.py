@@ -6,6 +6,7 @@ from importlib.resources import files
 
 import pytest
 
+from app.api.native_video_reference import LIMITS, render_native_video_reference
 from app.api.partner_reference import EXAMPLES, VIDEO_LIMITS
 from app.api.public_ui import TELEGRAM_APPLICATION_URL
 from app.api.text_reference import EXAMPLES as TEXT_EXAMPLES
@@ -150,10 +151,14 @@ def test_published_video_duration_and_resolution_limits_match_contract(model, se
 
 
 def test_video_table_covers_every_published_video_model():
-    """Each reviewed video contract has limits before an operator enables it."""
+    """Each reviewed contract has rendered limits before an operator enables it."""
     published = {name for name, item in MODELS.items() if item["category"] == "video"}
-    documented = {row[0] for row in VIDEO_LIMITS}
+    documented = {row[0] for row in VIDEO_LIMITS} | set(LIMITS)
     assert documented == published
+    for lang in ("ru", "en"):
+        rendered = ReferenceHTML(render_native_video_reference(lang, set(LIMITS)))
+        assert set(LIMITS) <= rendered.ids
+        assert len(rendered.code) >= len(LIMITS)
 
 
 def test_text_metadata_is_explicitly_public_and_covers_supported_ids():

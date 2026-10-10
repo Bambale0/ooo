@@ -24,25 +24,37 @@ async def test_measured_video_admission_preserves_original_identity_and_staged_b
     client, db_session, monkeypatch, edit, expected_seconds
 ):
     partner, headers, upstream = await setup(
-        db_session, monkeypatch, lambda request: pytest.fail("No paid provider request during admission"),
-        model="seedance-2.5", category="video",
+        db_session,
+        monkeypatch,
+        lambda request: pytest.fail("No paid provider request during admission"),
+        model="seedance-2.5",
+        category="video",
         rates=[("default", "480p", "second", Decimal("20"), Decimal(".078"))],
     )
-    body = {"model": "seedance-2.5", "prompt": "Animate", "resolution": "480p",
-            "reference_videos": [{"url": "https://source.example/clip.mp4"}]}
+    body = {
+        "model": "seedance-2.5",
+        "prompt": "Animate",
+        "resolution": "480p",
+        "reference_videos": [{"url": "https://source.example/clip.mp4"}],
+    }
     body.update({"omni_reference_task_type": "edit"} if edit else {"duration": 4})
     staged = copy.deepcopy(body)
     staged["reference_videos"][0]["url"] = "https://media.example/private-copy.mp4"
-    preparation = {"policy": "isolated-full-decode-v1", "body": staged, "billable_seconds": expected_seconds,
-                   "output_seconds": None if edit else 4, "expires_at": int(time.time()) + 604800,
-                   "assets": [{"sha256": "a" * 64, "size_bytes": 100, "duration": "5/1"}]}
+    preparation = {
+        "policy": "isolated-full-decode-v1",
+        "body": staged,
+        "billable_seconds": expected_seconds,
+        "output_seconds": None if edit else 4,
+        "expires_at": int(time.time()) + 604800,
+        "assets": [{"sha256": "a" * 64, "size_bytes": 100, "duration": "5/1"}],
+    }
     prepare = AsyncMock(return_value=preparation)
     monkeypatch.setattr("app.inference.service.prepare_video_inputs", prepare, raising=False)
     response = await client.post("/v1/videos/generations", json=body, headers=headers)
     assert response.status_code == 202, response.text
     generation = await db_session.get(Generation, response.json()["request_id"])
     assert generation.partner_price_rub == Decimal(expected_seconds * 20)
-    assert generation.provider_cost_usdt_snapshot == Decimal(".078") * expected_seconds
+    assert generation.provider_cost_usdt_snapshot == Decimal(".0523") * expected_seconds
     assert generation.request_payload["native_body"] == body
     assert generation.request_payload["effective_native_body"] == staged
     assert generation.request_payload["reserved_units"] == {"seconds": expected_seconds}
@@ -68,7 +80,11 @@ async def measured_admission(client, db_session, monkeypatch):
         return httpx.Response(202, json={"request_id": "mock-measured-job"})
 
     partner, headers, upstream = await setup(
-        db_session, monkeypatch, handler, model="seedance-2.5", category="video",
+        db_session,
+        monkeypatch,
+        handler,
+        model="seedance-2.5",
+        category="video",
         rates=[("default", "720p", "second", Decimal("20"), Decimal(".078"))],
     )
     calls, uploads, tickets = install_transport(monkeypatch)
@@ -76,19 +92,27 @@ async def measured_admission(client, db_session, monkeypatch):
     response = await client.post("/v1/videos/generations", json=BODY, headers=headers)
     assert response.status_code == 202, response.text
     generation = await db_session.get(Generation, response.json()["request_id"])
-    monkeypatch.setattr("app.generations.service.get_partner_provider_adapter", AsyncMock(
-        return_value=ArgoLinkAdapter(api_key="fixture", client=upstream),
-    ))
-    monkeypatch.setattr("app.generations.service.get_provider_rate_limiter",
-                        lambda *_: SimpleNamespace(acquire=AsyncMock()))
+    monkeypatch.setattr(
+        "app.generations.service.get_partner_provider_adapter",
+        AsyncMock(
+            return_value=ArgoLinkAdapter(api_key="fixture", client=upstream),
+        ),
+    )
+    monkeypatch.setattr(
+        "app.generations.service.get_provider_rate_limiter", lambda *_: SimpleNamespace(acquire=AsyncMock())
+    )
     return partner, generation, upstream, submitted, (calls, uploads, tickets)
 
 
 async def test_real_inspection_copy_admission_and_restart_dispatch_share_identical_media(
-    client, db_session, monkeypatch,
+    client,
+    db_session,
+    monkeypatch,
 ):
     partner, generation, upstream, submitted, (calls, uploads, tickets) = await measured_admission(
-        client, db_session, monkeypatch,
+        client,
+        db_session,
+        monkeypatch,
     )
     assert generation.partner_price_rub == 200
     assert uploads == [DATA] and len(tickets) == 1 and len(calls) == 3
@@ -106,16 +130,21 @@ async def test_real_inspection_copy_admission_and_restart_dispatch_share_identic
 
 @pytest.mark.parametrize("after_pacing", [False, True])
 async def test_expired_first_submit_releases_existing_reserves_once_without_paid_call(
-    client, db_session, monkeypatch, after_pacing,
+    client,
+    db_session,
+    monkeypatch,
+    after_pacing,
 ):
     partner, generation, upstream, submitted, _ = await measured_admission(client, db_session, monkeypatch)
     generation.webhook_url_snapshot = "https://client.example/hook"
     if after_pacing:
+
         async def delayed():
             monkeypatch.setattr(video_inputs, "snapshot_is_fresh", lambda *_: False)
 
-        monkeypatch.setattr("app.generations.service.get_provider_rate_limiter",
-                            lambda *_: SimpleNamespace(acquire=delayed))
+        monkeypatch.setattr(
+            "app.generations.service.get_provider_rate_limiter", lambda *_: SimpleNamespace(acquire=delayed)
+        )
     else:
         monkeypatch.setattr(video_inputs, "snapshot_is_fresh", lambda *_: False)
     attempt = await dispatch_generation_to_provider(db_session, generation)
@@ -135,7 +164,10 @@ async def test_expired_first_submit_releases_existing_reserves_once_without_paid
 
 @pytest.mark.parametrize("status", ["retry_pending", "reconciliation_required", "submitting"])
 async def test_expiry_preserves_prior_unknown_obligation_without_replay_or_credit(
-    client, db_session, monkeypatch, status,
+    client,
+    db_session,
+    monkeypatch,
+    status,
 ):
     partner, generation, upstream, submitted, _ = await measured_admission(client, db_session, monkeypatch)
     attempt = ProviderAttempt(generation_id=generation.id, provider="argolink", status=status)
@@ -149,3 +181,63 @@ async def test_expiry_preserves_prior_unknown_obligation_without_replay_or_credi
     assert len(list(await db_session.scalars(select(LedgerEntry)))) == 1
     assert len(list(await db_session.scalars(select(CoverageLedgerEntry)))) == 1
     await upstream.aclose()
+
+
+async def test_measured_video_with_photo_retains_edit_retail_and_video_procurement(client, db_session, monkeypatch):
+    """Measured 11s output + 10s video is quoted at edit prices, not the 41s default hold."""
+    from app.infrastructure.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "seedance_25_edit_markup_rub_per_second", Decimal("2.50"))
+    monkeypatch.setattr(get_settings(), "rub_per_usdt", Decimal("100"))
+    partner, headers, upstream = await setup(
+        db_session,
+        monkeypatch,
+        lambda request: pytest.fail("No paid provider calls during preflight"),
+        model="seedance-2.5",
+        category="video",
+        rates=[
+            ("default", "720p", "second", Decimal("23.80"), Decimal(".196")),
+            ("edit", "720p", "second", Decimal("18.83"), Decimal(".196")),
+        ],
+    )
+    original = {
+        "model": "seedance-2.5",
+        "prompt": "Use @Image 1 for outfit and @Video 1 for motion",
+        "resolution": "720p",
+        "duration": 11,
+        "aspect_ratio": "9:16",
+        "omni_reference_task_type": "reference",
+        "reference_videos": [{"url": "https://source.example/clip.mp4"}],
+        "reference_images": [{"url": "https://source.example/appearance.png"}],
+    }
+    staged = copy.deepcopy(original)
+    staged["reference_videos"][0]["url"] = "https://storage.example/staged.mp4"
+    preparation = {
+        "policy": "isolated-full-decode-v1",
+        "body": staged,
+        "billable_seconds": 21,
+        "output_seconds": 11,
+        "expires_at": int(time.time()) + 604800,
+        "assets": [{"sha256": "a" * 64, "size_bytes": 100, "duration": "10/1"}],
+    }
+    prepare = AsyncMock(return_value=preparation)
+    monkeypatch.setattr("app.inference.service.prepare_video_inputs", prepare)
+    try:
+        response = await client.post("/v1/videos/generations", json=original, headers=headers)
+        assert response.status_code == 202, response.text
+        generation = await db_session.get(Generation, response.json()["request_id"])
+        assert generation.request_payload["native_body"] == original
+        assert generation.request_payload["effective_native_body"] == staged
+        assert generation.request_payload["pricing_policy"]["mode"] == "edit"
+        assert generation.request_payload["reserved_units"] == {"seconds": 21}
+        assert generation.partner_price_rub == Decimal("464.10")
+        assert generation.provider_cost_usdt_snapshot == Decimal("2.457")
+        assert _provider_request_for_generation(generation).native_body == staged
+        await db_session.refresh(partner)
+        assert partner.balance_rub == Decimal("999535.90")
+        duplicate = await client.post("/v1/videos/generations", json=original, headers=headers)
+        assert duplicate.json() == response.json()
+        assert prepare.await_count == 1
+        assert len(list(await db_session.scalars(select(LedgerEntry)))) == 1
+    finally:
+        await upstream.aclose()

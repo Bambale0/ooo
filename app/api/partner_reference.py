@@ -452,10 +452,10 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
                 "generate_audio",
                 "boolean · optional",
                 t(
-                    "Seedance/MiniMax: false запрещён, звук нельзя отключить. Wan поддерживает переключатель звука. "
-                    "Не переносите опции одной модели на другую.",
-                    "Seedance/MiniMax reject false: audio cannot be disabled. Wan supports an audio toggle. "
-                    "Do not assume options from one model work with another.",
+                    "Seedance 2.5: true создаёт звук, false — видео без звука; только boolean, не строка. "
+                    "Wan также поддерживает переключатель. Контракты остальных моделей не меняются.",
+                    "Seedance 2.5: true generates audio, false returns a silent video; use a boolean, not a string. "
+                    "Wan also supports an audio toggle. Other model contracts are unchanged.",
                 ),
             ),
             (
@@ -528,11 +528,28 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
     body += example("video-frames")
     body += "<h3>Seedance 2.5 · edit</h3>" + example("video-edit")
     body += p(
-        "В edit обязателен prompt и хотя бы один reference_videos. Первый ролик — редактируемый, длиной 4–30 секунд. "
-        "Итоговая длина и пропорции следуют исходному ролику: duration=-1 или пропустить, "
+        "Тарификация Seedance 2.5: если в запросе есть reference_videos, применяется тариф edit "
+        "для выбранного разрешения, даже когда omni_reference_task_type=reference и также переданы фото/аудио. "
+        "Без reference_videos применяется обычный тариф. "
+        "При наличии видео поставщик считает оплачиваемые секунды как длительность результата плюс суммарную "
+        "длительность видеореференсов; после завершения списывается только фактический usage. "
+        "Наличие видео не меняет режим запроса автоматически.",
+        "Seedance 2.5 billing: when reference_videos are present, the edit retail rate applies at the selected "
+        "resolution, even for reference mode combined with image/audio. Without reference_videos, the normal rate "
+        "applies. With video input, billable seconds include output plus reference video duration; final billing "
+        "uses actual provider usage. Pricing never changes the provider request mode.",
+    )
+
+    body += p(
+        "Для seedance-2.5 edit обязателен prompt и ровно один reference_videos, длиной 4–30 секунд. "
+        "Фото, аудио и второе видео в edit не принимаются. Для смешанных референсов используйте reference "
+        "с явно выбранной длительностью: сервер не переключает режим и не удаляет референсы автоматически. "
+        "В edit длина и пропорции следуют исходному ролику: duration=-1 или пропустить, "
         "aspect_ratio=adaptive или пропустить; start_image, end_image и фиксированный size не используются.",
-        "Edit requires prompt and at least one reference_videos entry. The first video is the editing target, "
-        "4–30 seconds long. Output duration and aspect follow that video: duration=-1 or omit, "
+        "seedance-2.5 edit requires prompt and exactly one reference_videos entry, 4–30 seconds long. "
+        "Images, audio and a second video are not accepted in edit. Use reference with an explicit duration "
+        "for mixed assets: the server never silently changes modes or removes references. "
+        "Edit output duration and aspect follow that video: duration=-1 or omit, "
         "aspect_ratio=adaptive or omit; do not use start_image, end_image or fixed size.",
     )
     body += "<h3>" + t("Альтернативные имена полей", "Field aliases") + "</h3>"
@@ -797,6 +814,21 @@ def render_errors(lang):
         + "</p>"
     )
     body += code({"detail": "invalid_request_contract"})
+    body += (
+        "<p>"
+        + t(
+            "При 422 invalid_request_contract заголовок X-Validation-Error может содержать безопасный код причины: "
+            "edit_requires_single_video, invalid_duration, invalid_generate_audio или unsupported_aspect_ratio. "
+            "Тело ответа остаётся прежним; неизвестные внутренние ошибки не раскрываются. "
+            "Отклонение на request_validation происходит до резервирования денег и отправки провайдеру.",
+            "For 422 invalid_request_contract, X-Validation-Error may contain a safe reason code: "
+            "edit_requires_single_video, invalid_duration, invalid_generate_audio or unsupported_aspect_ratio. "
+            "The response body is unchanged; unknown internal errors are not disclosed. "
+            "Rejection at request_validation happens before balance reservation or provider submission.",
+        )
+        + "</p>"
+    )
+
     body += code(
         {
             "error": {"type": "request_already_submitted", "message": "request_already_submitted"},

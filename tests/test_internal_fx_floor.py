@@ -120,8 +120,9 @@ async def test_seedance_cost_and_internal_fx_snapshots_settle_once(
         generation = await db_session.get(Generation, response.json()["request_id"])
         rate = Decimal(".196") * FLOOR + Decimal("2.50") if edit else Decimal("23.80")
         reserved_units = 60 if edit else 10
+        procurement_rate = Decimal(".117") if edit else Decimal(".196")
         assert generation.rub_per_usdt_snapshot == FLOOR
-        assert generation.provider_cost_usdt_snapshot == Decimal(".196") * reserved_units
+        assert generation.provider_cost_usdt_snapshot == procurement_rate * reserved_units
         accepted = generation.request_payload
         assert Decimal(accepted["rates"]["seconds"]["retail"]) == rate
         assert Decimal(accepted["fx"]["rate"]) == FLOOR
@@ -136,13 +137,13 @@ async def test_seedance_cost_and_internal_fx_snapshots_settle_once(
         await db_session.refresh(partner)
         expected_charge = (rate * billed_seconds).quantize(Decimal(".01"), rounding="ROUND_HALF_UP")
         assert generation.actual_charge_rub == expected_charge
-        assert generation.actual_provider_cost_usdt == Decimal(".196") * billed_seconds
+        assert generation.actual_provider_cost_usdt == procurement_rate * billed_seconds
         assert generation.rub_per_usdt_snapshot == FLOOR and generation.request_payload == accepted
         assert partner.balance_rub == Decimal("1000000") - expected_charge
         coverage = list(await db_session.scalars(
             select(CoverageLedgerEntry).where(CoverageLedgerEntry.generation_id == generation.id)
         ))
-        expected_coverage = (Decimal(".196") * billed_seconds * FLOOR).quantize(
+        expected_coverage = (procurement_rate * billed_seconds * FLOOR).quantize(
             Decimal(".01"), rounding="ROUND_HALF_UP"
         )
         assert sum(x.amount_rub for x in coverage) == -expected_coverage

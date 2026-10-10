@@ -14,6 +14,7 @@ from app.api.dependencies import DbSession, PartnerAuth, get_partner_auth
 from app.billing.service import release_generation_reserves
 from app.catalog.models import Model
 from app.contracts.registry import MODELS, PROTOCOLS, TEXT_PROTOCOLS, image_reference_limit, validate_request
+from app.contracts.validation_errors import validation_reason
 from app.generations.models import Generation
 from app.inference.accounting import settle_actual, token_usage
 from app.inference.correlation import derive_client_request_id, generation_client_request_id
@@ -269,6 +270,10 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
             headers={**(exc.headers or {}), "X-Request-Id": diagnostic_trace_id},
         ) from exc
     except (ValueError, TypeError, AttributeError) as exc:
+        reason = validation_reason(exc)
+        validation_headers = {"X-Request-Id": diagnostic_trace_id}
+        if reason is not None:
+            validation_headers["X-Validation-Error"] = reason
         log_rejection(
             trace_id=diagnostic_trace_id,
             partner_id=auth.partner.id,
@@ -278,11 +283,12 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
             failure_stage="request_validation",
             error_code="invalid_request_contract",
             http_status=422,
+            validation_reason=reason,
         )
         raise HTTPException(
             422,
             "invalid_request_contract",
-            headers={"X-Request-Id": diagnostic_trace_id},
+            headers=validation_headers,
         ) from exc
     idem = request.headers.get("idempotency-key", "")
     if not 8 <= len(idem) <= 160:

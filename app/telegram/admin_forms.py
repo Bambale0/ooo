@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.telegram.service import is_admin, new_action
-from app.telegram.ui import keyboard, show
+from app.telegram.ui import format_msk, keyboard, show
 
 # field, human prompt; every value is validated again on confirmation.
 FORMS = {
@@ -383,7 +383,8 @@ async def history(event, db, data):
             ).scalars()
         )
         lines = [
-            f"{r.created_at:%d.%m %H:%M} {r.scope}\n{r.old_value} → {r.new_value}, автор {r.actor}" for r in rows[:8]
+            f"{format_msk(r.created_at, '%d.%m %H:%M')} {r.scope}\n{r.old_value} → {r.new_value}, автор {r.actor}"
+            for r in rows[:8]
         ]
         navigation(buttons, "admin_threshold_history", page, len(rows) > 8)
     else:
@@ -404,6 +405,9 @@ async def history(event, db, data):
                     .limit(3)
                 )
             ).scalars()
-            lines.extend(f"История {p.created_at:%d.%m}: {p.old_price_rub} → {p.new_price_rub} ₽" for p in last)
+            lines.extend(
+                f"История {format_msk(p.created_at, '%d.%m')}: {p.old_price_rub} → {p.new_price_rub} ₽"
+                for p in last
+            )
         navigation(buttons, "admin_catalog", page, len(rows) > 3)
     await show(event, "\n".join(lines) or "Записей нет.", keyboard(*buttons, back="admin_ops"))

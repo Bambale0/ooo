@@ -91,3 +91,16 @@ the mandatory real Unix-socket/container and PostgreSQL CI gates.
 Sources:
 - https://argolink.io/en/docs (Seedance uploads, reference limits and actual usage)
 - https://argolink.io/en/models/seedance-2.5 (edit input/output billing)
+
+
+## Integration update (2026-10-10)
+
+Merged with production video-input pricing: reference_videos selects edit retail
+even in reference mode with photo. Verified preflight only changes reserved
+billable seconds, not pricing, provider procurement rates, or actual settlement.
+Unverifiable input retains maximum; clients cannot declare trusted duration.
+
+CI-verified app releases now include checker sources in the immutable release
+bundle for separately approved host activation. Regular deploys never auto-enable
+the socket or new Compose service. Keep it disabled until image scanning,
+hardening validation and a documented existing-host overlay with rollback.

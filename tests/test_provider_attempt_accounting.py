@@ -39,7 +39,7 @@ async def test_failed_provider_attempt_persists_reported_usage(db_session, monke
     assert partner.cost_coverage_rub == Decimal("851.25")
 
 
-async def test_infai_success_retains_reserve_for_unknown_primary_cost(db_session, monkeypatch):
+async def test_infai_success_releases_confirmed_free_argolink_primary_cost(db_session, monkeypatch):
     partner, generation, primary, credential = await seed(db_session)
 
     class Infai(PrimaryFailure):
@@ -54,7 +54,8 @@ async def test_infai_success_retains_reserve_for_unknown_primary_cost(db_session
 
     monkeypatch.setattr("app.generations.service.get_partner_provider_adapter", adapter)
     await poll_generation_provider(db_session, generation, "argolink")
-    assert primary.cost_status == "unknown"
+    assert primary.cost_status == "confirmed_free"
+    assert primary.provider_cost_usdt == Decimal("0")
     assert primary.cost_reserve_usdt == Decimal("2.5")
 
     fallback = ProviderAttempt(
@@ -73,13 +74,13 @@ async def test_infai_success_retains_reserve_for_unknown_primary_cost(db_session
 
     assert generation.status == "completed"
     assert generation.actual_provider_cost_usdt == Decimal("2.929446")
-    assert generation.provider_cost_hold_usdt == Decimal("2.5")
-    assert generation.provider_cost_hold_rub == Decimal("212.50")
+    assert generation.provider_cost_hold_usdt == Decimal("0")
+    assert generation.provider_cost_hold_rub == Decimal("0")
     assert fallback.cost_status == "settled"
     assert fallback.provider_cost_usdt == Decimal("2.929446")
-    # The first accepted task has an unresolved cost, so no part of the
-    # procurement reserve may be returned as if that task were free.
-    assert partner.cost_coverage_rub == Decimal("538.50")
+    # ArgoLink's definitive failed status is free; only InfAI's successful
+    # attempt is charged to procurement coverage.
+    assert partner.cost_coverage_rub == Decimal("751.00")
 
 
 async def test_provider_outcomes_are_idempotent_per_generation_and_provider(db_session):
@@ -213,9 +214,7 @@ async def test_admin_can_list_and_reconcile_unknown_attempt_cost(client, db_sess
     assert partner.cost_coverage_rub == Decimal("751.00")
 
 
-async def test_migrated_unknown_cost_reconciliation_does_not_release_coverage_twice(
-    client, db_session, admin_headers
-):
+async def test_migrated_unknown_cost_reconciliation_does_not_release_coverage_twice(client, db_session, admin_headers):
     partner, generation, primary, _ = await seed(db_session)
     generation.status = "completed"
     generation.actual_provider_cost_usdt = Decimal("2.929446")

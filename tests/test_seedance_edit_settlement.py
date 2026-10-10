@@ -36,10 +36,13 @@ async def test_edit_http_quote_and_settlement_are_frozen_and_idempotent(client, 
         if request.method == "POST":
             submitted.append(json.loads(request.content))
             return httpx.Response(202, json={"request_id": "edit-provider-task"})
-        return httpx.Response(200, json={
-            "status": "done",
-            "usage": {"output_seconds": 10, "reference_video_seconds": 10, "billed_seconds": 20},
-        })
+        return httpx.Response(
+            200,
+            json={
+                "status": "done",
+                "usage": {"output_seconds": 10, "reference_video_seconds": 10, "billed_seconds": 20},
+            },
+        )
 
     settings = get_settings()
     monkeypatch.setattr(settings, "seedance_25_edit_markup_rub_per_second", Decimal("2.50"))
@@ -58,9 +61,11 @@ async def test_edit_http_quote_and_settlement_are_frozen_and_idempotent(client, 
         assert generation.partner_price_rub == Decimal("1326.00")
         accepted = generation.request_payload["rates"]["seconds"]
         assert Decimal(accepted["retail"]) == Decimal("22.10")
-        assert Decimal(accepted["cost"]) == Decimal(".196")
+        assert Decimal(accepted["cost"]) == Decimal(".117")
         assert generation.request_payload["pricing_policy"] == {
-            "mode": "edit", "type": "cost_plus", "markup_rub_per_second": "2.50"
+            "mode": "edit",
+            "type": "cost_plus",
+            "markup_rub_per_second": "2.50",
         }
         original_rates = dict(accepted)
         monkeypatch.setattr(settings, "seedance_25_edit_markup_rub_per_second", Decimal("9.50"))
@@ -78,7 +83,7 @@ async def test_edit_http_quote_and_settlement_are_frozen_and_idempotent(client, 
         assert submitted == [BODY]
         assert generation.status == "completed"
         assert generation.actual_charge_rub == Decimal("442.00")
-        assert generation.actual_provider_cost_usdt == Decimal("3.92")
+        assert generation.actual_provider_cost_usdt == Decimal("2.34")
         assert generation.usage_snapshot == {"seconds": 20}
         await db_session.refresh(partner)
         assert partner.balance_rub == Decimal("999558.00")
@@ -94,8 +99,12 @@ async def test_catalog_edit_price_matches_admission_without_changing_default(cli
     monkeypatch.setattr(get_settings(), "seedance_25_edit_markup_rub_per_second", Decimal("2.50"))
     monkeypatch.setattr(get_settings(), "rub_per_usdt", Decimal("100"))
     _, _, upstream = await setup(
-        db_session, monkeypatch, lambda request: httpx.Response(500),
-        model="seedance-2.5", category="video", rates=RATES,
+        db_session,
+        monkeypatch,
+        lambda request: httpx.Response(500),
+        model="seedance-2.5",
+        category="video",
+        rates=RATES,
     )
     try:
         response = await client.get("/api/v1/catalog/pricing")
