@@ -13,6 +13,20 @@ from app.infrastructure.config import get_settings
 
 EDIT_MODEL = "seedance-2.5"
 EDIT_MODE = "edit"
+# ArgoLink Seedance 2.5: video input changes the supplier rate for *all*
+# billable seconds, including output and reference seconds.
+# This is procurement accounting, not a separate provider request mode.
+VIDEO_INPUT_USD_PER_SECOND = {
+    "480p": Decimal("0.0523"),
+    "720p": Decimal("0.117"),
+    "1080p": Decimal("0.289"),
+}
+
+
+def video_input_cost(model: str, body: dict, resolution: str) -> Decimal | None:
+    if model == EDIT_MODEL and body.get("reference_videos"):
+        return VIDEO_INPUT_USD_PER_SECOND[resolution]
+    return None
 
 
 class Price(Protocol):
@@ -29,7 +43,11 @@ def edit_markup(model: str) -> Decimal | None:
 
 
 def video_pricing_mode(body: dict) -> str:
-    if body.get("omni_reference_task_type") == EDIT_MODE and edit_markup(body.get("model")) is not None:
+    if (
+        body.get("model") == EDIT_MODEL
+        and edit_markup(body.get("model")) is not None
+        and (body.get("reference_videos") or body.get("omni_reference_task_type") == EDIT_MODE)
+    ):
         return EDIT_MODE
     return "default"
 

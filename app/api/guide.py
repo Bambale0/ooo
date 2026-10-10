@@ -1,5 +1,6 @@
 """Self-contained public inference documentation, without internal API exposure."""
 
+from decimal import Decimal
 from html import escape
 from importlib.resources import files
 
@@ -12,6 +13,7 @@ from app.api.marketing import marketing_page
 from app.api.partner_reference import render_reference, table
 from app.api.public_ui import page
 from app.catalog.models import Model, PartnerPrice
+from app.catalog.video_edit_pricing import EDIT_MODE, EDIT_MODEL, edit_markup, retail_rate
 from app.contracts.registry import MODELS
 from app.infrastructure.config import get_settings
 
@@ -90,9 +92,28 @@ async def prices(db: DbSession):
             .order_by(Model.slug, PartnerPrice.mode, PartnerPrice.resolution)
         )
     ).all()
+    rows = [
+        (model, price)
+        for model, price in rows
+        if not (model.slug == EDIT_MODEL and price.mode == EDIT_MODE and edit_markup(model.slug) is None)
+    ]
+    fx = Decimal(1)
+    if any(model.slug == EDIT_MODEL and price.mode == EDIT_MODE for model, price in rows):
+        from app.billing.fx import current_fx
+
+        fx = (await current_fx(db))["rate"]
     units = {"million_tokens": "млн токенов", "second": "секунда", "generation": "изображение"}
     body = '<h2 class="price-heading">Модели и цены</h2>'
     body += "<p>Цены списания с партнёрского баланса. Цена вашей перепродажи определяется вами.</p>"
+    if any(model.slug == EDIT_MODEL and price.mode == EDIT_MODE for model, price in rows):
+        body += (
+            "<p><strong>Seedance 2.5 с видеореференсом:</strong> применяется цена режима edit "
+            "(даже если для видео с фото или аудио запрос отправляется как reference). "
+            "Без входного видео используется обычный тариф default. "
+            "Оплачиваемые секунды = длительность результата + длительность всех входных "
+            "видеореференсов по итоговому usage поставщика. "
+            "Тариф edit рассчитывается по действующему курсу на момент запроса.</p>"
+        )
     if not rows:
         body += (
             '<div class="empty-state"><h3>Приём заказов ещё не открыт.</h3>'
@@ -111,9 +132,11 @@ async def prices(db: DbSession):
         '<th scope="col">Цена, ₽</th><th scope="col">Единица</th></tr></thead><tbody>'
     )
     for model, price in rows:
+        mode = "edit / с видеореференсом" if model.slug == EDIT_MODEL and price.mode == EDIT_MODE else price.mode
+        visible_rate = retail_rate(model.slug, price, fx)
         body += (
-            f"<tr><td>{escape(model.name)}</td><td>{escape(price.mode)} / {escape(price.resolution)}</td>"
-            f'<td class="price-number">{price.price_rub:.2f}</td>'
+            f"<tr><td>{escape(model.name)}</td><td>{escape(mode)} / {escape(price.resolution)}</td>"
+            f'<td class="price-number">{visible_rate:.2f}</td>'
             f"<td>{escape(units.get(price.billing_unit, price.billing_unit))}</td></tr>"
         )
     body += (

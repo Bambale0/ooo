@@ -18,7 +18,7 @@ from app.billing.service import (
 from app.catalog.models import Model
 from app.catalog.pricing import effective_partner_prices
 from app.catalog.procurement import supports_free_rate
-from app.catalog.video_edit_pricing import edit_markup, retail_rate, video_pricing_mode
+from app.catalog.video_edit_pricing import edit_markup, retail_rate, video_input_cost, video_pricing_mode
 from app.contracts.registry import (
     MODELS,
     OBSERVATIONS,
@@ -200,21 +200,9 @@ async def reserve(
             prompt=str(video_body.get("prompt", "")),
             duration_seconds=int(units.get("seconds", 1)),
             aspect_ratio=video_body.get("aspect_ratio"),
-            reference_images=tuple(
-                url
-                for item in references
-                if (url := media_url(item)) is not None
-            ),
-            reference_videos=tuple(
-                url
-                for item in reference_videos
-                if (url := media_url(item)) is not None
-            ),
-            reference_audios=tuple(
-                url
-                for item in reference_audios
-                if (url := media_url(item)) is not None
-            ),
+            reference_images=tuple(url for item in references if (url := media_url(item)) is not None),
+            reference_videos=tuple(url for item in reference_videos if (url := media_url(item)) is not None),
+            reference_audios=tuple(url for item in reference_audios if (url := media_url(item)) is not None),
             start_image=media_url(video_body.get("start_image")),
             end_image=media_url(video_body.get("end_image")),
         )
@@ -334,21 +322,22 @@ def quote(protocol, body, prices, *, fx=None, trial=False):
     fx = fx if fx is not None else get_settings().rub_per_usdt
     rates = {}
 
-    def add(key, mode, resolution, unit):
+    def add(key, mode, resolution, unit, *, cost_override=None):
         price = next(
             (p for p in prices if p.mode == mode and p.resolution == resolution and p.billing_unit == unit), None
         )
         if price is None:
             raise HTTPException(503, "provider_temporarily_unavailable")
         retail = retail_rate(body["model"], price, fx)
+        procurement = price.provider_cost_usdt if cost_override is None else cost_override
         # Check every rate individually; expensive cached/written tokens cannot
         # silently be sold below procurement just because the whole quote is positive.
         free_rate = supports_free_rate(body["model"], mode, resolution, unit)
         if (
-            price.provider_cost_usdt < 0
+            procurement < 0
             or retail < 0
-            or (not free_rate and (price.provider_cost_usdt == 0 or retail == 0))
-            or (not trial and retail < price.provider_cost_usdt * fx)
+            or (not free_rate and (procurement == 0 or retail == 0))
+            or (not trial and retail < procurement * fx)
         ):
             raise HTTPException(503, "provider_temporarily_unavailable")
         observed = OBSERVATIONS["manual_procurement_review"].get(body["model"])
@@ -358,7 +347,7 @@ def quote(protocol, body, prices, *, fx=None, trial=False):
             and price.provider_cost_usdt < Decimal(observed["observed_default_edit_usd"])
         ):
             raise HTTPException(503, "provider_temporarily_unavailable")
-        rates[key] = {"retail": str(retail), "cost": str(price.provider_cost_usdt)}
+        rates[key] = {"retail": str(retail), "cost": str(procurement)}
 
     if protocol in TEXT_PROTOCOLS:
 
@@ -408,5 +397,6 @@ def quote(protocol, body, prices, *, fx=None, trial=False):
         return rates, {tier: body.get("n", 1)}, tier
     video = normalized_video(body)
     resolution = video.get("resolution", "768p" if body["model"] == "minimax-h3" else "720p")
-    add("seconds", video_pricing_mode(video), resolution, "second")
+    video_cost = video_input_cost(body["model"], video, resolution)
+    add("seconds", video_pricing_mode(video), resolution, "second", cost_override=video_cost)
     return rates, {"seconds": video_reserve_seconds(body)}, resolution
