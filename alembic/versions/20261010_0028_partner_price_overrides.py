@@ -25,7 +25,7 @@ def upgrade() -> None:
         sa.Column("id", sa.String(length=36), nullable=False),
         sa.Column("partner_id", sa.String(length=36), nullable=False),
         sa.Column("partner_price_id", sa.String(length=36), nullable=False),
-        sa.Column("old_price_rub", sa.Numeric(18, 2), nullable=False),
+        sa.Column("old_price_rub", sa.Numeric(18, 2), nullable=True),
         sa.Column("new_price_rub", sa.Numeric(18, 2), nullable=False),
         sa.Column("actor", sa.String(length=80), nullable=False),
         sa.Column("reason", sa.Text(), nullable=False),
@@ -47,7 +47,7 @@ def upgrade() -> None:
                 new_price_rub, actor, reason
             )
             SELECT gen_random_uuid()::varchar(36), s.partner_id, s.partner_price_id,
-                   p.price_rub, s.price_rub, 'migration_backfill',
+                   NULL, s.price_rub, 'migration_backfill',
                    'Existing non-global partner rate preserved on migration'
             FROM partner_price_snapshots AS s
             JOIN partner_prices AS p ON p.id = s.partner_price_id
