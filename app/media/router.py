@@ -2,7 +2,7 @@ import hmac
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import select
 
 from app.accounts.models import Partner
@@ -10,6 +10,7 @@ from app.api.dependencies import DbSession, get_current_partner
 from app.infrastructure.config import get_settings
 from app.media.models import MediaAsset
 from app.media.service import result_download_signature
+from app.media.storage import get_media_storage
 from app.providers.base import ProviderAdapterError
 from app.providers.models import ProviderAttempt
 from app.providers.service import get_partner_provider_adapter
@@ -87,6 +88,14 @@ async def read_media_content(
     asset = await db.get(MediaAsset, asset_id)
     if asset is None or asset.partner_id != partner.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="media_asset_not_found")
+    if asset.status == "stored" and asset.kind == "image" and asset.storage_key:
+        storage = get_media_storage()
+        if asset.storage_backend != get_settings().media_storage_backend:
+            raise HTTPException(503, "media_storage_unavailable")
+        path = await storage.local_path(asset.storage_key)
+        if path is not None:
+            return FileResponse(path, media_type=asset.content_type or "application/octet-stream")
+        raise HTTPException(503, "media_asset_missing")
     if asset.status != "provider_ready":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="media_asset_not_ready")
 

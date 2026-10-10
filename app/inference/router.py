@@ -19,6 +19,7 @@ from app.generations.models import Generation
 from app.inference.accounting import settle_actual, token_usage
 from app.inference.correlation import derive_client_request_id, generation_client_request_id
 from app.inference.diagnostics import NativeRequestTrace, log_rejection
+from app.inference.image_results import persist_single_image
 from app.inference.images import image_usage, inspect_url_images
 from app.inference.service import reserve
 from app.inference.streams import SSEDecoder, UsageCollector, event_data
@@ -469,11 +470,15 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
                 generation.result_url = urls[0]
                 generation.request_payload = {**(generation.request_payload or {}), "result_urls": urls}
             units = image_usage(body, await inspect_url_images(body, data))
+            if generation.model_slug == "nano-banana-2.1" and len(data.get("data", [])) == 1:
+                await persist_single_image(db, generation, data)
         await finish(db, generation, attempt, units)
     except (ValueError, TypeError, KeyError, OSError, httpx.HTTPError) as exc:
         trace.failed(attempt, exc, phase="response_body_or_usage")
         await fail(db, generation, attempt, "usage_reconciliation_required", definitive=False)
         # A successful result still belongs to the partner even if its cost needs reconciliation.
+        if protocol.startswith("images/") and generation.model_slug == "nano-banana-2.1":
+            return public_error("image_result_reconciliation_required", generation_id=generation.id)
         if "data" not in locals():
             return public_error("provider_response_invalid", generation_id=generation.id)
     finally:

@@ -12,7 +12,7 @@ FROM public.ecr.aws/docker/library/python:3.12-slim@sha256:a6e34c598f2467ed0e9a8
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 APP_ENV=production
 WORKDIR /app
 RUN groupadd -r neironych && useradd -r -g neironych -d /app -s /usr/sbin/nologin neironych
-RUN mkdir -p /data/support && chown neironych:neironych /data/support
+RUN mkdir -p /data/support /data/generated-images && chown neironych:neironych /data/support /data/generated-images
 COPY --from=builder /install /usr/local
 COPY alembic ./alembic
 COPY alembic.ini ./
