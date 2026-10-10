@@ -528,6 +528,19 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
     body += example("video-frames")
     body += "<h3>Seedance 2.5 · edit</h3>" + example("video-edit")
     body += p(
+        "Тарификация Seedance 2.5: если в запросе есть reference_videos, применяется тариф edit "
+        "для выбранного разрешения, даже когда omni_reference_task_type=reference и также переданы фото/аудио. "
+        "Без reference_videos применяется обычный тариф. "
+        "При наличии видео поставщик считает оплачиваемые секунды как длительность результата плюс суммарную "
+        "длительность видеореференсов; после завершения списывается только фактический usage. "
+        "Наличие видео не меняет режим запроса автоматически.",
+        "Seedance 2.5 billing: when reference_videos are present, the edit retail rate applies at the selected "
+        "resolution, even for reference mode combined with image/audio. Without reference_videos, the normal rate "
+        "applies. With video input, billable seconds include output plus reference video duration; final billing "
+        "uses actual provider usage. Pricing never changes the provider request mode.",
+    )
+
+    body += p(
         "Для seedance-2.5 edit обязателен prompt и ровно один reference_videos, длиной 4–30 секунд. "
         "Фото, аудио и второе видео в edit не принимаются. Для смешанных референсов используйте reference "
         "с явно выбранной длительностью: сервер не переключает режим и не удаляет референсы автоматически. "
