@@ -219,7 +219,7 @@ def test_seedance_edit_rejects_explicit_output_dimensions(controls):
         ("duration", True),
         ("duration", 3),
         ("n", 2),
-        ("generate_audio", False),
+        ("generate_audio", "false"),
         ("seed", 123),
         ("resolution", "8k"),
         ("omni_reference_task_type", "extend"),

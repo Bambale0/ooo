@@ -277,6 +277,7 @@ def validate_video(original: dict[str, Any]) -> None:
     if url_video:
         if len(json.dumps(original, ensure_ascii=False, separators=(",", ":")).encode()) >= 1024 * 1024:
             raise ValueError("video_body_too_large")
+        # Wan 3 supports explicit seed and silent video; Prime does not.
         if model == "wan-3":
             if "seed" in body:
                 integer(body["seed"], "seed", 0, 4294967295)
@@ -284,8 +285,16 @@ def validate_video(original: dict[str, Any]) -> None:
                 raise ValueError("invalid_generate_audio")
             if body.get("watermark") is True:
                 raise ValueError("unsupported_generation_control")
-        elif "seed" in body or body.get("watermark") is True or body.get("generate_audio") is False:
-            raise ValueError("unsupported_generation_control")
+        else:
+            # Seedance 2.5 supports a silent result. Reject boolean lookalikes.
+            if model == "seedance-2.5" and "generate_audio" in body and not isinstance(body["generate_audio"], bool):
+                raise ValueError("invalid_generate_audio")
+            if (
+                "seed" in body
+                or body.get("watermark") is True
+                or (body.get("generate_audio") is False and model != "seedance-2.5")
+            ):
+                raise ValueError("unsupported_generation_control")
         if body.get("omni_reference_task_type", "auto") not in {"auto", "reference", "edit"}:
             raise ValueError("unsupported_task_type")
         for ref in [*refs, *([start] if start else []), *([end] if end else [])]:

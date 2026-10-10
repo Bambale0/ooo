@@ -15,7 +15,7 @@ from app.payments.models import PaymentInvoice
 from app.providers.models import ProviderAttempt, ProviderCredential
 from app.telegram.models import BotDialog
 from app.telegram.service import is_admin
-from app.telegram.ui import keyboard, show
+from app.telegram.ui import format_msk, keyboard, show
 
 PAGE_SIZE = 4
 DETAIL_PAGE_SIZE = 5
@@ -54,9 +54,7 @@ def _status(partner: Partner) -> str:
 
 
 def _date(value) -> str:
-    if hasattr(value, "strftime"):
-        return value.strftime("%d.%m.%Y %H:%M")
-    return str(value or "—")
+    return format_msk(value)
 
 
 def _search_filter(search: dict | None):
@@ -484,6 +482,11 @@ async def show_partner_ledger(event, db, data: str) -> None:
         )
     if len(lines) == 1:
         lines.append("Операций ledger нет.")
+    # Preserve support/audit identifiers in the administrator-only view.
+    for index, row in enumerate(rows[:DETAIL_PAGE_SIZE], start=1):
+        lines[index] += f"\nLedger UUID: {row.id}"
+        if row.generation_id:
+            lines[index] += f"\nGeneration UUID: {row.generation_id}"
     buttons = _section_navigation("admin_partner_ledger", partner_id, page, len(rows) > DETAIL_PAGE_SIZE)
     await show(event, "\n\n".join(lines), keyboard(*buttons, back=f"admin_partner_view:{partner_id}"))
 
