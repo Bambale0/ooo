@@ -46,7 +46,7 @@ def video_pricing_mode(body: dict) -> str:
     if (
         body.get("model") == EDIT_MODEL
         and edit_markup(body.get("model")) is not None
-        and (body.get("reference_videos") or body.get("omni_reference_task_type") == EDIT_MODE)
+        and bool(body.get("reference_videos"))
     ):
         return EDIT_MODE
     return "default"
