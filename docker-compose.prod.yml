@@ -4,6 +4,7 @@ x-runtime: &runtime
   env_file: .env
   environment:
     APP_ENV: production
+    MEDIA_LOCAL_STORAGE_DIR: /data/generated-images
     APP_REVISION: ${APP_REVISION:?Set APP_REVISION to the image commit SHA}
   restart: unless-stopped
   read_only: true
@@ -21,6 +22,7 @@ services:
   app:
     <<: *runtime
     ports: ["127.0.0.1:8000:8000"]
+    volumes: ["generated_image_data:/data/generated-images"]
   worker:
     <<: *runtime
     command: [python, -m, app.workers.generation_worker]
@@ -79,3 +81,4 @@ volumes:
   postgres_data:
   redis_data:
   support_data:
+  generated_image_data:
