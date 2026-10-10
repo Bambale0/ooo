@@ -71,6 +71,8 @@ class Settings(BaseSettings):
     # Absent checker or resource pressure keeps the established maximum reserve.
     media_probe_socket: str | None = None
     media_local_storage_dir: str = "./var/media"
+    media_image_max_bytes: int = Field(default=32 * 1024 * 1024, gt=0, le=128 * 1024 * 1024)
+    media_image_max_pixels: int = Field(default=48_000_000, gt=0)
     media_retention_hours: int = 24
     media_share_link_ttl_seconds: int = Field(default=7 * 24 * 60 * 60, ge=300, le=30 * 24 * 60 * 60)
     media_max_download_bytes: int = 500 * 1024 * 1024
