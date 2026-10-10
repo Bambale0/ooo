@@ -1,11 +1,35 @@
 import asyncio
 import logging
+from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 logger = logging.getLogger(__name__)
+MSK = ZoneInfo("Europe/Moscow")
+
+
+def format_msk(value: object, fmt: str = "%d.%m.%Y %H:%M") -> str:
+    """Localize only rendered text; naive DB datetimes represent UTC.
+
+    Never depend on the process timezone or modify persisted timestamps.
+    This matches the existing Moscow timezone of the admin usage report.
+    """
+    if not isinstance(value, datetime):
+        return str(value or "—")
+    aware = value.replace(tzinfo=UTC) if value.tzinfo is None else value
+    return f"{aware.astimezone(MSK).strftime(fmt)} МСК"
+
+
+def transaction_label(operation_type: str) -> str:
+    return {
+        "generation_charge": "Списание",
+        "payment_credit": "Пополнение",
+        "payment_refund_adjustment": "Возврат платежа",
+        "manual_adjustment": "Корректировка баланса",
+    }.get(operation_type, "Операция")
 
 
 def keyboard(*buttons: tuple[str, str], back: str | None = "main_menu") -> InlineKeyboardMarkup:
