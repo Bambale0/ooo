@@ -1,3 +1,5 @@
+import os
+import tempfile
 from pathlib import Path
 
 from app.infrastructure.config import Settings, get_settings
@@ -32,14 +34,37 @@ class LocalMediaStorage(MediaStorage):
         content: bytes,
         content_type: str,
     ) -> str:
-        path = self.root / key
+        path = self._safe_path(key)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(content)
+        fd, temp_path = tempfile.mkstemp(prefix=".pending-", dir=path.parent)
+        try:
+            with os.fdopen(fd, "wb") as output:
+                output.write(content)
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(temp_path, path)
+            directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        finally:
+            try:
+                os.unlink(temp_path)
+            except FileNotFoundError:
+                pass
         return key
 
+    def _safe_path(self, key: str) -> Path:
+        root = self.root.resolve()
+        candidate = (root / key).resolve()
+        if not candidate.is_relative_to(root) or candidate == root:
+            raise MediaStorageError("Invalid storage key")
+        return candidate
+
     async def local_path(self, key: str) -> Path | None:
-        path = self.root / key
-        return path if path.exists() else None
+        path = self._safe_path(key)
+        return path if path.is_file() else None
 
 
 class S3MediaStorage(MediaStorage):
