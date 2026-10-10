@@ -142,7 +142,7 @@ async def test_nonretryable_argolink_failure_still_queues_equivalent_infai(db_se
     assert generation.request_payload["fallback_provider"] == "infai"
     assert primary.status == "failed"
     assert primary.provider_task_id == "failed-argo"
-    assert primary.cost_status == "unknown"
+    assert primary.cost_status == "confirmed_free"
 
 
 async def test_seedance20_fallback_quote_uses_video_input_group_rate(db_session):
@@ -268,7 +268,7 @@ async def test_infai_fallback_precedes_primary_retry_and_charges_once(db_session
     assert generation.actual_charge_rub == Decimal("327")
     assert generation.actual_provider_cost_usdt == Decimal("2.929446")
     assert partner.balance_rub == Decimal("673")
-    assert partner.cost_coverage_rub == Decimal("538.50")
+    assert partner.cost_coverage_rub == Decimal("751.00")
     entries = list(await db_session.scalars(select(LedgerEntry).where(LedgerEntry.generation_id == generation.id)))
     assert sum((e.amount_rub for e in entries), Decimal(0)) == Decimal("-327")
 
@@ -421,6 +421,6 @@ async def test_infai_timeout_then_definitive_outcome_settles_once(db_session, mo
     await db_session.commit()
     await poll_generation_provider(db_session, generation, "infai")
     assert partner.balance_rub == (Decimal("1000") if terminal == "failed" else Decimal("673"))
-    assert partner.cost_coverage_rub == (Decimal("510.83") if terminal == "failed" else Decimal("538.50"))
+    assert partner.cost_coverage_rub == (Decimal("1000.00") if terminal == "failed" else Decimal("751.00"))
     assert attempt.status == terminal
     assert attempt.next_poll_at is None
