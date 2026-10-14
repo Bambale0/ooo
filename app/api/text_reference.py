@@ -157,6 +157,13 @@ PUBLIC_TEXT_MODELS: dict[str, dict[str, Any]] = {
         "default_effort": "max",
         "thinking": "always",
     },
+    "qwen3.8-max": {
+        "context_tokens": 1_000_000,
+        "max_input_tokens": 983_616,
+        "max_output_tokens": 131_072,
+        "images": True,
+        "thinking": "always",
+    },
 }
 
 

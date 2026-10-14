@@ -227,3 +227,33 @@ has been removed. Both native image routes reject 2K/4K before submission;
 Nano Banana 2 and Pro keep their existing 1K/2K/4K contracts.
 
 Source: https://argolink.io/api/catalog/v1/models?category=image&sort=provider&page_size=100
+
+
+## Qwen3.8-Max — selective addition (2026-10-14)
+
+The `qwen3.8-max` model is reviewed independently against ArgoLink's live
+catalog revision `a2c7ddc452e46f37` and the
+[Qwen3.8-Max model card](https://argolink.io/en/models/qwen3.8-max).
+This does **not** mark the whole historical catalog revision as current: the
+current provider catalog also has unrelated added, removed and repriced models.
+Do not call the global contract importer to enable Qwen.
+
+- Native endpoint: `POST /v1/chat/completions` with model `qwen3.8-max`.
+  ArgoLink also converts `/v1/responses` and `/v1/messages` requests to Chat
+  Completions, with the documented conversion caveats.
+- Inputs: text and images; context 1,000,000 tokens, up to 983,616 input tokens;
+  up to 131,072 output tokens.
+- Reasoning is enabled by default; `reasoning_effort`, `enable_thinking` and
+  `thinking_budget` do not control it. Reasoning tokens are billed as output.
+- Procurement in USD per 1M tokens: ordinary input `1.30`, output `3.90`,
+  cached input `0.1625`, cache write `1.625`. Store all four dimensions
+  separately; cached input and writes must not be priced as ordinary input.
+- Retail prices are configured in the database using the same live RUB/USD retail
+  conversion policy as other active LLM models. Do not hardcode a currency rate or
+  a customer retail price in this contract.
+- Release gate: add draft model and its four price/capability rows via existing
+  admin operations; verify a real provider response and usage before setting
+  successful-smoke gate; enable only after verified CI/live runtime matches the
+  version containing this contract.
+- Previous generation price snapshots, ledgers, individual partner rates and
+  unrelated provider models remain unchanged.
