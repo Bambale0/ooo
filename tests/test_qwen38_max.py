@@ -7,6 +7,7 @@ import httpx
 from sqlalchemy import select
 from test_native_inference import setup
 
+from app.api.text_reference import PUBLIC_TEXT_MODELS
 from app.catalog.sync import variants
 from app.contracts.registry import MODELS, validate_request
 from app.generations.models import Generation
@@ -24,6 +25,14 @@ def test_qwen38_max_reviewed_contract_and_passthrough():
     entry = MODELS[MODEL]
     assert entry["category"] == "chat"
     assert entry["endpoint"] == "/v1/chat/completions"
+    public = PUBLIC_TEXT_MODELS[MODEL]
+    assert public == {
+        "context_tokens": 1_000_000,
+        "max_input_tokens": 983_616,
+        "max_output_tokens": 131_072,
+        "images": True,
+        "thinking": "always",
+    }
     actual = {(m, tier, unit): cost for m, tier, unit, cost in variants(entry)}
     assert actual == {(mode, "default", "million_tokens"): cost for mode, cost in COSTS.items()}
 
