@@ -44,6 +44,7 @@ VALIDATION_REASONS = frozenset(
         "unsupported_size_ratio",
         "unsupported_task_type",
         "video_body_too_large",
+        "video_input_unavailable",
     }
 )
 
