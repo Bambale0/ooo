@@ -257,3 +257,39 @@ Do not call the global contract importer to enable Qwen.
   version containing this contract.
 - Previous generation price snapshots, ledgers, individual partner rates and
   unrelated provider models remain unchanged.
+
+
+## Qwen3.8-Max video-input 422 incident (2026-10-15)
+
+Alibaba Cloud's official `qwen3.8-max` contract accepts direct MP4 input through
+`/v1/chat/completions` using a user content part `{"type":"video_url",
+"video_url":{"url":"https://.../video.mp4"},"fps":2}`. ArgoLink's resale
+contract explicitly advertises **text and images only** for the same slug.
+
+Production evidence (only request/attempt metadata, no partner content):
+- Three requests were rejected locally with `422 invalid_idempotency_key`;
+  an `Idempotency-Key` of 8–160 characters is required independently of modality.
+- A later accepted partner request at 10:04 UTC reached ArgoLink and received
+  upstream HTTP 400; the proxy mapped it to `422 provider_rejected_request`.
+- A separate *operator-owned* upstream smoke with Alibaba's official `video_url`
+  + `fps:2` sample returned upstream 400 and an explicit provider rejection:
+  `当前模型不支持该能力：video` (this route does not support video capability).
+
+Until a video-capable provider route has been tested end-to-end with confirmed
+procurement and retail coverage, fail `qwen3.8-max` text inference requests
+containing a `video_url`, `input_video` or `video` content part **before**
+creating a generation, provider attempt, ledger, or partner reserve. Return the
+existing generic 422 `invalid_request_contract` body with allowlisted
+`X-Validation-Error: video_input_unavailable`; never disclose upstream route
+identities or raw media URLs to partners.
+
+Do not transcode clips into sampled stills without an explicit opt-in and billing
+review: it is not equivalent to submitting the original video. Do not auto-route
+to a different provider whose current procurement exceeds Qwen retail prices.
+Remove the admission guard only after a verified video-capable upstream, matching
+economic rates, and a successful production video smoke.
+
+Sources:
+- https://help.aliyun.com/en/model-studio/vision
+- https://help.aliyun.com/en/model-studio/qwen3-8-max
+- https://argolink.io/en/models/qwen3.8-max

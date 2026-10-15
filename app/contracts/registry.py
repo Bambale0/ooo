@@ -48,6 +48,20 @@ def image_reference_limit(model: str, *, multipart: bool = False) -> int:
     return 1 if multipart and not model.startswith("nano-") else 3
 
 
+
+def _contains_video_input(value: Any) -> bool:
+    """Inspect media structure, not words in messages or tool schemas."""
+    if isinstance(value, list):
+        return any(_contains_video_input(item) for item in value)
+    if not isinstance(value, dict):
+        return False
+    if value.get("type") in {"video_url", "input_video", "video"}:
+        return True
+    if "video_url" in value or "input_video" in value:
+        return True
+    return any(_contains_video_input(item) for item in value.values())
+
+
 def validate_request(protocol: str, original: dict[str, Any]) -> dict[str, Any]:
     """Return a copy without dropping or injecting provider request controls."""
     body = copy.deepcopy(original)
@@ -59,6 +73,13 @@ def validate_request(protocol: str, original: dict[str, Any]) -> dict[str, Any]:
         required = "input" if protocol == "responses" else "messages"
         if required not in body:
             raise ValueError(f"{required}_required")
+        # Alibaba Qwen3.8-Max can parse video natively, but the reviewed
+        # ArgoLink route rejects official type=video_url/fps requests with
+        # HTTP 400 ("model does not support capability: video"), 2026-10-15.
+        # Fail before partner funds are reserved, and never silently turn
+        # a video into text/stills. Remove only after an upstream live smoke.
+        if model == "qwen3.8-max" and _contains_video_input(body[required]):
+            raise ValueError("video_input_unavailable")
         for key in ("max_tokens", "max_completion_tokens", "max_output_tokens"):
             if key in body:
                 integer(body[key], key, 1, 10_000_000)

@@ -993,6 +993,21 @@ def render_text_reference(lang: str) -> str:
     for example in EXAMPLES[8:11]:
         result += "<h4>" + escape(example["protocol"]) + " — vision</h4>" + _code(example["body"])
 
+    result += '<h3 id="text-qwen-video">' + choose("Видео в Qwen3.8-Max", "Video input in Qwen3.8-Max") + "</h3>"
+    result += paragraph(
+        "Оригинальная модель Qwen3.8-Max понимает видео, но текущий маршрут Нейроныча "
+        "принимает для неё только текст и изображения. Блоки video_url, input_video и video "
+        "отклоняются с HTTP 422 invalid_request_contract и заголовком "
+        "X-Validation-Error: video_input_unavailable до резерва средств. "
+        "Не заменяйте видео кадрами без явного выбора такого режима. Для текстовых "
+        "запросов обязательно указывайте Idempotency-Key длиной от 8 до 160 символов.",
+        "The original Qwen3.8-Max model can understand videos, but the current "
+        "Neironych route supports text and image input only. The video_url, input_video "
+        "and video parts return HTTP 422 invalid_request_contract with "
+        "X-Validation-Error: video_input_unavailable before funds are reserved. "
+        "Do not silently replace video with still frames. Text requests require "
+        "an Idempotency-Key of 8 to 160 characters.",
+    )
     result += '<h3 id="text-reasoning">Reasoning / thinking</h3>'
     result += paragraph(
         "Для GLM и Kimi управляйте reasoning_effort через Chat Completions. Таблица описывает настройку "
