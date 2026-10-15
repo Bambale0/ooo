@@ -4,10 +4,10 @@ from decimal import Decimal
 
 import pytest
 from sqlalchemy import select
+from test_native_inference import setup
 
 from app.billing.models import LedgerEntry
 from app.generations.models import Generation
-from test_native_inference import setup
 
 MODEL = "qwen3.8-max"
 
