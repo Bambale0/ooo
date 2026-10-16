@@ -605,10 +605,23 @@ async def poll_generation_provider(
                         generation.status = attempt.status = "reconciliation_required"
                         generation.public_error_code = "usage_reconciliation_required"
                     else:
-                        charge = (Decimal(str(payload["unit_price_rub"])) * Decimal(seconds)).quantize(
-                            Decimal("0.01"), rounding=ROUND_HALF_UP
-                        )
-                        await settle_confirmed_partner_charge(db, generation, charge)
+                        # Early jobs and worker-synthetic fixtures do not always
+                        # have unit_price_rub; never substitute today's tariff.
+                        # Reconstruct their immutable accepted unit rate using
+                        # the original stored quote and stored billing units.
+                        unit_price = payload.get("unit_price_rub")
+                        if unit_price is None:
+                            units = int(payload.get("billable_units") or generation.duration_seconds)
+                            if units <= 0:
+                                generation.status = attempt.status = "reconciliation_required"
+                                generation.public_error_code = "usage_reconciliation_required"
+                            else:
+                                unit_price = Decimal(generation.partner_price_rub) / Decimal(units)
+                        if generation.status == "completed":
+                            charge = (Decimal(str(unit_price)) * Decimal(seconds)).quantize(
+                                Decimal("0.01"), rounding=ROUND_HALF_UP
+                            )
+                            await settle_confirmed_partner_charge(db, generation, charge)
                         generation.actual_charge_rub = charge
                         generation.usage_snapshot = {"seconds": seconds}
                 else:
