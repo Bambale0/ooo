@@ -119,9 +119,10 @@ and three Seedance 480p tiers. Procurement uses the current live catalog (H3
 0.044/0.072 USD per second), not older cached pages with different prices/limits.
 New tiers still need operator-set retail prices and successful configuration smoke.
 
-Reference video time is billable. The gateway reserves the documented upper bound
-for the request's reference inputs, then settles reported actual seconds. It never
-trusts a client-supplied reference duration. Seedance/Wan report
+Reference video time is billable. The gateway calculates the documented upper
+bound only for internal provider-capital admission. No advance debit or hold is
+placed on the partner's RUB balance. Final retail billing uses provider-confirmed
+actual seconds and never trusts a client-supplied reference duration. Seedance/Wan report
 `usage.billed_seconds`; live Grok responses instead report `video.duration`.
 Media metadata/format validation performed by ArgoLink can still reject a job.
 Gemini Omni is mentioned in documentation but absent from the reviewed priced
@@ -129,29 +130,39 @@ catalog; it is not advertised as an available resale model.
 
 ## Financial contract
 
-- Retail RUB and procurement rates are snapshotted before submission. Actual
-  usage adjusts the reserve with separate, idempotent ledger entries. Old prices
-  and original reservation snapshots are not rewritten.
+- Retail RUB and procurement rates are snapshotted before submission. Partner
+  balances are not debited or held at admission: one idempotent debit is posted
+  only after verified actual usage. Historical reserve entries remain immutable;
+  any release or late settlement uses separate compensating ledger entries.
+  Internal upstream procurement funding and holds are accounted separately.
 - Text tariffs use `million_tokens`: `input_tokens`, `cached_input_tokens`,
   `cache_write_tokens`, `output_tokens`, resolution `default`. Explicit 1-hour
   cache creation additionally requires a configured `cache_write_1h_tokens` tariff
   and capability; it is never priced as a 5-minute write.
-- Text holds use a conservative input allowance and requested output maximum.
-  Opaque multimodal/context references or an omitted output maximum need a larger
-  hold. These holds do not alter the native request. Final charges use actual
-  usage; tiny charges round once to 0.01 RUB with ROUND_HALF_UP.
+- Text admission uses an internal procurement-cost estimate. For omitted output
+  maximum, this uses a bounded 8192-token estimate (not an output cap).
+  Explicit token limits and opaque multimodal/context inputs affect that estimate.
+  No input or output estimate is held on the partner balance. Original upstream
+  input is unchanged. Confirmed usage is charged once; tiny charges round to
+  0.01 RUB with ROUND_HALF_UP.
 - Image tariffs use `generation`, mode `default`, resolution `1K`/`2K`/`4K` as
   applicable. Every returned image is charged. GPT's actual returned pixel size
   determines the tier, including URL outputs inspected through a DNS-pinned
   HTTPS transport. No generated image bytes are retained in the database.
 - Video tariffs use `second`, mode `default`, actual output + reference seconds.
 - Missing usage, unexpected server responses, interrupted streams or uncertain
-  submits retain their reserve for reconciliation. They are not automatically
-  submitted again. Definitive 4xx rejections release the reserve; 429 preserves
+  submits do not create partner-balance holds or charges. Internal provider-cost
+  exposure remains tracked pending reconciliation; submissions are not automatically
+  repeated. Definitive 4xx rejections never charge the partner; 429 preserves
   Retry-After. Terminal SSE usage is settled before emitting the terminal event.
-- Admission checks retail balance, current wallet-backed working capital and
-  current economics. Historical partner coverage is an accounting snapshot, not
-  an independent admission gate (product brief §89).
+  Any accidental post-policy legacy partner hold is released after 30 minutes;
+  pre-policy historical refunds require independently authorized reconciliation.
+- Admission checks a positive funded retail balance, current provider-wallet
+  procurement capital and current economics; it does not require the entire
+  hypothetical retail quote to be prepaid. Final verified charges can leave a
+  negative balance, which is auditable and blocks new funded requests until
+  repaid. Historical partner coverage is an accounting snapshot, not an
+  independent admission gate (product brief §89).
 
 ## Import, prices and upstream differences
 
