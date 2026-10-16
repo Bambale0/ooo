@@ -81,3 +81,12 @@ class MarginThresholdCreate(BaseModel):
     mode: str | None = None
     resolution: str | None = None
     value: Decimal | None = Field(default=None, ge=0, le=100, max_digits=5, decimal_places=2)
+
+
+class GenerationCompensationCreate(BaseModel):
+    idempotency_key: str = Field(min_length=8, max_length=160)
+    reason: str = Field(min_length=10, max_length=2000)
+    amount_rub: Decimal | None = Field(default=None, gt=0, max_digits=18, decimal_places=2)
+    source_ledger_entry_id: str | None = Field(default=None, min_length=1, max_length=36)
+
+    model_config = {"extra": "forbid"}

@@ -53,15 +53,15 @@ async def release_stale_partner_reserves_once(db: AsyncSession, *, limit: int = 
     """
     cutoff = utc_now() - timedelta(minutes=30)
     eligible = (
-        "queued", "submitting", "sent_to_provider", "processing",
-        "timeout", "reconciliation_required",
+        "queued",
+        "submitting",
+        "sent_to_provider",
+        "processing",
+        "timeout",
+        "reconciliation_required",
     )
-    reserved_ids = select(LedgerEntry.generation_id).where(
-        LedgerEntry.operation_type == "generation_reserve"
-    )
-    released_ids = select(LedgerEntry.generation_id).where(
-        LedgerEntry.operation_type == "generation_reserve_release"
-    )
+    reserved_ids = select(LedgerEntry.generation_id).where(LedgerEntry.operation_type == "generation_reserve")
+    released_ids = select(LedgerEntry.generation_id).where(LedgerEntry.operation_type == "generation_reserve_release")
     rows = await db.scalars(
         select(Generation)
         .where(
@@ -78,9 +78,7 @@ async def release_stale_partner_reserves_once(db: AsyncSession, *, limit: int = 
     )
     count = 0
     for generation in rows.all():
-        entry = await release_generation_reserve(
-            db, generation, reason="Unused partner hold expired after 30 minutes"
-        )
+        entry = await release_generation_reserve(db, generation, reason="Unused partner hold expired after 30 minutes")
         count += int(entry is not None)
     if count:
         logger.info("partner_holds_expired", extra={"count": count})
@@ -94,6 +92,9 @@ async def process_generation_work_once(
     provider: str | None = None,
 ) -> WorkerCycleResult:
     """Single-session worker path kept for focused tests and admin/debug use."""
+    from app.inference.recovery import recover_native_outcomes_once
+
+    await recover_native_outcomes_once(db, limit=max(100, limit))
     await release_stale_partner_reserves_once(db, limit=max(20, limit))
     dispatched = await _dispatch_queued_generations(db, limit=limit, provider=provider)
     polled = await _poll_active_generations(db, limit=limit, provider=provider)
@@ -114,8 +115,12 @@ async def process_generation_work_concurrently_once(
         limit=limit,
         provider=provider,
     )
+    from app.inference.recovery import recover_native_outcomes_once
     from app.providers.circuit import recovery_tick
 
+    async with session_factory() as db:
+        await recover_native_outcomes_once(db, limit=max(100, limit * 5))
+        await db.commit()
     async with session_factory() as db:
         for recovery_provider in [provider] if provider else [PRIMARY_PROVIDER, *FALLBACK_PROVIDERS]:
             await recovery_tick(db, recovery_provider)
@@ -309,7 +314,10 @@ async def _poll_generation_candidate(
             result = await db.execute(select(Generation).where(Generation.id == generation_id).with_for_update())
             generation = result.scalar_one_or_none()
             if generation is None or generation.status not in {
-                "sent_to_provider", "processing", "timeout", "reconciliation_required"
+                "sent_to_provider",
+                "processing",
+                "timeout",
+                "reconciliation_required",
             }:
                 await db.rollback()
                 return False

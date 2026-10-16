@@ -1,4 +1,5 @@
 """Regression for synchronous image replies lost after upstream completion."""
+
 import base64
 import io
 from decimal import Decimal
@@ -15,7 +16,10 @@ from tests.test_native_inference import setup
 
 
 async def test_completed_nano_banana_image_can_be_recovered_after_lost_sync_reply(
-    client, db_session, monkeypatch, tmp_path,
+    client,
+    db_session,
+    monkeypatch,
+    tmp_path,
 ):
     settings = get_settings()
     monkeypatch.setattr(settings, "media_storage_backend", "local")
@@ -28,16 +32,14 @@ async def test_completed_nano_banana_image_can_be_recovered_after_lost_sync_repl
     def handler(request):
         return httpx.Response(200, json={"data": [{"b64_json": encoded}]})
 
-    rates = [
-        ("default", tier, "generation", Decimal("2"), Decimal(".02"))
-        for tier in ("1K", "2K", "4K")
-    ]
+    rates = [("default", tier, "generation", Decimal("2"), Decimal(".02")) for tier in ("1K", "2K", "4K")]
     _partner, headers, upstream = await setup(
         db_session, monkeypatch, handler, model="nano-banana-2.1", category="image", rates=rates
     )
     headers = {**headers, "X-Client-Request-Id": "image-regression-1234"}
     response = await client.post(
-        "/v1/images/generations", headers=headers,
+        "/v1/images/generations",
+        headers=headers,
         json={"model": "nano-banana-2.1", "prompt": "test", "n": 1, "resolution": "1k", "response_format": "b64_json"},
     )
     assert response.status_code == 200
@@ -63,7 +65,10 @@ async def test_completed_nano_banana_image_can_be_recovered_after_lost_sync_repl
 
 
 async def test_image_storage_failure_must_not_mark_paid_generation_completed(
-    client, db_session, monkeypatch, tmp_path,
+    client,
+    db_session,
+    monkeypatch,
+    tmp_path,
 ):
     settings = get_settings()
     monkeypatch.setattr(settings, "media_storage_backend", "local")
@@ -86,13 +91,14 @@ async def test_image_storage_failure_must_not_mark_paid_generation_completed(
         db_session, monkeypatch, handler, model="nano-banana-2.1", category="image", rates=rates
     )
     response = await client.post(
-        "/v1/images/generations", headers=headers,
+        "/v1/images/generations",
+        headers=headers,
         json={"model": "nano-banana-2.1", "prompt": "test", "n": 1, "resolution": "1k", "response_format": "b64_json"},
     )
     assert response.status_code == 503
     assert "b64_json" not in response.text
     generation = (await db_session.execute(select(Generation))).scalar_one()
-    assert generation.status == "reconciliation_required"
+    assert generation.status == "failed" and generation.billing_status == "not_chargeable"
     assert generation.actual_charge_rub is None
     assert generation.result_url is None
     assert not (await db_session.execute(select(MediaAsset))).scalars().all()

@@ -76,9 +76,7 @@ async def test_real_usage_exceeding_remaining_balance_creates_debt_and_blocks_ne
             },
         )
 
-    partner, headers, upstream = await setup(
-        db_session, monkeypatch, provider_reply, model="qwen3.8-max"
-    )
+    partner, headers, upstream = await setup(db_session, monkeypatch, provider_reply, model="qwen3.8-max")
     partner.balance_rub = Decimal("0.01")
     await db_session.commit()
     try:
@@ -116,13 +114,13 @@ async def test_qwen_502_keeps_no_partner_hold_or_charge(client, db_session, monk
         result = await client.post("/v1/chat/completions", headers=headers, json=body)
         assert result.status_code == 503, result.text
         generation = (await db_session.scalars(select(Generation))).one()
-        assert generation.status == "reconciliation_required"
+        assert generation.status == "failed" and generation.billing_status == "not_chargeable"
         assert generation.actual_charge_rub is None
         await db_session.refresh(partner)
         assert partner.balance_rub == Decimal("0.50")
         assert await _entries(db_session, generation) == []
         second = await client.post("/v1/chat/completions", headers=headers, json=body)
-        assert second.status_code == 409
+        assert second.status_code == 503 and second.json() == result.json()
     finally:
         await provider.aclose()
 
@@ -166,9 +164,7 @@ async def test_video_charges_after_verified_seconds_and_never_advances_quote(cli
         await provider.aclose()
 
 
-async def test_older_legacy_hold_returns_once_and_late_success_only_charges_actual(
-    client, db_session, monkeypatch
-):
+async def test_older_legacy_hold_returns_once_and_late_success_only_charges_actual(client, db_session, monkeypatch):
     partner, headers, provider = await setup(
         db_session,
         monkeypatch,
@@ -192,8 +188,14 @@ async def test_older_legacy_hold_returns_once_and_late_success_only_charges_actu
         generation.status = "reconciliation_required"
         generation.created_at = utc_now() - timedelta(minutes=31)
         await apply_partner_balance_change(
-            db_session, partner, Decimal("-80.00"), "generation_reserve",
-            f"generation-reserve:{generation.id}", generation.id, "Historical partner hold", allow_negative=False,
+            db_session,
+            partner,
+            Decimal("-80.00"),
+            "generation_reserve",
+            f"generation-reserve:{generation.id}",
+            generation.id,
+            "Historical partner hold",
+            allow_negative=False,
         )
         await db_session.commit()
         assert partner.balance_rub == Decimal("120.00")
@@ -211,8 +213,10 @@ async def test_older_legacy_hold_returns_once_and_late_success_only_charges_actu
         ledger = await _entries(db_session, generation)
         assert sum((entry.amount_rub for entry in ledger), Decimal(0)) == Decimal("-60.00")
         assert {entry.operation_type for entry in ledger} == {
-            "generation_reserve", "generation_reserve_release",
-            "generation_late_charge", "generation_usage_adjustment",
+            "generation_reserve",
+            "generation_reserve_release",
+            "generation_late_charge",
+            "generation_usage_adjustment",
         }
     finally:
         await provider.aclose()
@@ -224,8 +228,12 @@ async def test_legacy_generation_api_collects_exact_charge_only_after_completion
             return httpx.Response(202, json={"request_id": "legacy-actual-only"})
         return httpx.Response(
             200,
-            json={"request_id": "legacy-actual-only", "model": "seedance-2.5", "status": "done",
-                  "usage": {"billed_seconds": 4, "output_seconds": 4, "reference_video_seconds": 0}},
+            json={
+                "request_id": "legacy-actual-only",
+                "model": "seedance-2.5",
+                "status": "done",
+                "usage": {"billed_seconds": 4, "output_seconds": 4, "reference_video_seconds": 0},
+            },
         )
 
     partner, headers, provider = await setup(
@@ -246,9 +254,14 @@ async def test_legacy_generation_api_collects_exact_charge_only_after_completion
         response = await client.post(
             "/api/v1/generations",
             headers=headers,
-            json={"model_slug": "seedance-2.5", "prompt": "Slow motion",
-                  "resolution": "480p", "mode": "default", "duration_seconds": 4,
-                  "idempotency_key": "legacy-actual-only-idem"},
+            json={
+                "model_slug": "seedance-2.5",
+                "prompt": "Slow motion",
+                "resolution": "480p",
+                "mode": "default",
+                "duration_seconds": 4,
+                "idempotency_key": "legacy-actual-only-idem",
+            },
         )
         assert response.status_code == 202, response.text
         generation = await db_session.get(Generation, response.json()["id"])
@@ -267,9 +280,7 @@ async def test_legacy_generation_api_collects_exact_charge_only_after_completion
         assert generation.actual_charge_rub == Decimal("80.00")
         assert partner.balance_rub == Decimal("10.00")
         ledger = await _entries(db_session, generation)
-        assert [(e.operation_type, e.amount_rub) for e in ledger] == [
-            ("generation_usage_charge", Decimal("-80.00"))
-        ]
+        assert [(e.operation_type, e.amount_rub) for e in ledger] == [("generation_usage_charge", Decimal("-80.00"))]
         await poll_generation_provider(db_session, generation)
         assert len(await _entries(db_session, generation)) == 1
     finally:
@@ -282,26 +293,38 @@ async def test_old_untagged_partner_holds_are_not_mass_refunded(db_session):
     from app.workers.generation_worker import release_stale_partner_reserves_once
 
     partner = Partner(
-        telegram_id="old-partner-holds", company_name="Historical", project_name="Historical",
+        telegram_id="old-partner-holds",
+        company_name="Historical",
+        project_name="Historical",
         balance_rub=Decimal("100"),
     )
     db_session.add(partner)
     await db_session.flush()
     generation = Generation(
-        partner_id=partner.id, model_id="historical-video",
-        model_slug="seedance-2.5", mode="videos/generations",
-        resolution="720p", duration_seconds=4,
-        status="reconciliation_required", prompt="Old request",
+        partner_id=partner.id,
+        model_id="historical-video",
+        model_slug="seedance-2.5",
+        mode="videos/generations",
+        resolution="720p",
+        duration_seconds=4,
+        status="reconciliation_required",
+        prompt="Old request",
         idempotency_key="historical-hold-no-policy",
         created_at=utc_now() - timedelta(days=8),
-        partner_price_rub=Decimal("80"), request_payload={},
+        partner_price_rub=Decimal("80"),
+        request_payload={},
     )
     db_session.add(generation)
     await db_session.flush()
     await apply_partner_balance_change(
-        db_session, partner, Decimal("-80"), "generation_reserve",
-        f"generation-reserve:{generation.id}", generation.id,
-        "Old unresolved partner hold", allow_negative=False,
+        db_session,
+        partner,
+        Decimal("-80"),
+        "generation_reserve",
+        f"generation-reserve:{generation.id}",
+        generation.id,
+        "Old unresolved partner hold",
+        allow_negative=False,
     )
     await db_session.commit()
     assert await release_stale_partner_reserves_once(db_session) == 0

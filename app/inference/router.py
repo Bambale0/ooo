@@ -6,12 +6,11 @@ from uuid import uuid4
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from sqlalchemy import select
 from starlette.datastructures import UploadFile
 
 from app.api.dependencies import DbSession, PartnerAuth, get_partner_auth
-from app.billing.service import release_generation_reserves
 from app.catalog.models import Model
 from app.contracts.registry import MODELS, PROTOCOLS, TEXT_PROTOCOLS, image_reference_limit, validate_request
 from app.contracts.validation_errors import validation_reason
@@ -21,6 +20,8 @@ from app.inference.correlation import derive_client_request_id, generation_clien
 from app.inference.diagnostics import NativeRequestTrace, log_rejection
 from app.inference.image_results import persist_single_image
 from app.inference.images import image_usage, inspect_url_images
+from app.inference.outcomes import finalize_native_failure, preserve_unbilled_result
+from app.inference.replay import replay_response, save_response
 from app.inference.service import reserve
 from app.inference.streams import SSEDecoder, UsageCollector, event_data
 from app.infrastructure.config import get_settings
@@ -38,7 +39,7 @@ def public_error(code, status=503, *, generation_id=None, headers=None):
     return JSONResponse(
         {"error": {"type": code, "message": code}, **({"request_id": generation_id} if generation_id else {})},
         status_code=status,
-        headers=headers,
+        headers={**(headers or {}), **({"X-Request-Id": generation_id} if generation_id else {})},
     )
 
 
@@ -305,9 +306,7 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
         )
         raise HTTPException(422, "invalid_idempotency_key", headers={"X-Request-Id": diagnostic_trace_id})
     client_request_id_header = request.headers.get("x-client-request-id")
-    if client_request_id_header is not None and not re.fullmatch(
-        r"[A-Za-z0-9._:/-]{8,160}", client_request_id_header
-    ):
+    if client_request_id_header is not None and not re.fullmatch(r"[A-Za-z0-9._:/-]{8,160}", client_request_id_header):
         raise HTTPException(422, "invalid_client_request_id", headers={"X-Request-Id": diagnostic_trace_id})
     client_request_id = client_request_id_header or derive_client_request_id(idem)
     try:
@@ -342,6 +341,9 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
             response_body["client_request_id"] = client_request_id
         return JSONResponse(response_body, status_code=202)
     if attempt is None:
+        recovered = await replay_response(db, generation)
+        if recovered is not None:
+            return recovered
         log_rejection(
             trace_id=generation.id,
             partner_id=auth.partner.id,
@@ -389,7 +391,7 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
             )
         ).scalar_one_or_none()
         if previous_attempt is None or not previous_attempt.provider_task_id:
-            await fail(db, generation, attempt, "invalid_previous_response", definitive=True)
+            await fail(db, generation, attempt, "invalid_previous_response", definitive=True, public_status=422)
             log_rejection(
                 trace_id=generation.id,
                 partner_id=auth.partner.id,
@@ -409,16 +411,18 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
     headers = {key: request.headers[key] for key in ("anthropic-version", "anthropic-beta") if key in request.headers}
     await db.commit()
     trace = NativeRequestTrace.begin(generation, attempt, wire_body, files)
+    deadline = asyncio.get_running_loop().time() + get_settings().native_request_timeout_seconds
     try:
-        response = await adapter.native_request(protocol, wire_body, files=files, headers=headers)
+        async with asyncio.timeout_at(deadline):
+            response = await adapter.native_request(protocol, wire_body, files=files, headers=headers)
     except (httpx.ConnectTimeout, httpx.PoolTimeout, httpx.ConnectError) as exc:
         trace.failed(attempt, exc, phase="awaiting_headers")
         await fail(db, generation, attempt, "provider_temporarily_unavailable", definitive=True)
         return public_error("provider_temporarily_unavailable", generation_id=generation.id)
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, TimeoutError) as exc:
         trace.failed(attempt, exc, phase="awaiting_headers")
-        await fail(db, generation, attempt, "submission_outcome_unknown", definitive=False)
-        return public_error("submission_outcome_unknown", generation_id=generation.id)
+        await fail(db, generation, attempt, "provider_temporarily_unavailable", definitive=False)
+        return public_error("provider_temporarily_unavailable", generation_id=generation.id)
     trace.received_headers(attempt, response)
     if not response.is_success:
         definitive = 400 <= response.status_code < 500 and response.status_code != 408
@@ -427,13 +431,21 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
             if response.status_code == 429
             else "provider_rejected_request"
             if definitive
-            else "submission_outcome_unknown"
+            else "provider_temporarily_unavailable"
         )
         retry = response.headers.get("retry-after")
         public_status = 429 if code == "provider_rate_limited" else 422 if response.status_code == 400 else 503
         trace.rejected(error_code=code, http_status=public_status)
         await response.aclose()
-        await fail(db, generation, attempt, code, definitive=definitive)
+        await fail(
+            db,
+            generation,
+            attempt,
+            code,
+            definitive=definitive,
+            public_status=public_status,
+            headers={"Retry-After": retry} if retry else None,
+        )
         return public_error(
             code,
             public_status,
@@ -446,106 +458,177 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
             await fail(db, generation, attempt, "unexpected_provider_stream", definitive=False)
             return public_error("unexpected_provider_stream", generation_id=generation.id)
         return StreamingResponse(
-            stream_result(db, generation, attempt, response, protocol),
+            stream_result(db, generation, attempt, response, protocol, deadline=deadline),
             media_type="text/event-stream",
             headers={"X-Request-Id": generation.id, "Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+    result_ready = False
     try:
-        await response.aread()
-        data = response.json()
-        if not isinstance(data, dict):
-            await fail(db, generation, attempt, "provider_response_invalid", definitive=False)
-            return public_error("provider_response_invalid", generation_id=generation.id)
-        if protocol in TEXT_PROTOCOLS:
-            units = token_usage(protocol, data.get("usage"))
-            if isinstance(data.get("id"), str):
-                attempt.provider_task_id = data["id"][:255]
-        else:
-            urls = [
-                item["url"]
-                for item in data.get("data", [])
-                if isinstance(item, dict) and isinstance(item.get("url"), str)
-            ]
-            if urls:
-                generation.result_url = urls[0]
-                generation.request_payload = {**(generation.request_payload or {}), "result_urls": urls}
-            units = image_usage(body, await inspect_url_images(body, data))
-            if generation.model_slug == "nano-banana-2.1" and len(data.get("data", [])) == 1:
-                await persist_single_image(db, generation, data)
-        await finish(db, generation, attempt, units)
+        async with asyncio.timeout_at(deadline):
+            chunks, size = [], 0
+            async for chunk in response.aiter_bytes(chunk_size=65536):
+                size += len(chunk)
+                if size > get_settings().native_response_max_bytes:
+                    raise ValueError("response_too_large")
+                chunks.append(chunk)
+            data = json.loads(b"".join(chunks))
+            if not isinstance(data, dict):
+                raise ValueError("provider_response_invalid")
+            if protocol in TEXT_PROTOCOLS:
+                # A parsed error envelope or missing result is not a successful delivery.
+                result_ready = not data.get("error") and bool(
+                    data.get("output") or data.get("choices") or data.get("content")
+                )
+                if not result_ready:
+                    raise ValueError("provider_response_invalid")
+                if isinstance(data.get("id"), str):
+                    attempt.provider_task_id = data["id"][:255]
+                units = token_usage(protocol, data.get("usage"))
+            else:
+                urls = [
+                    item["url"]
+                    for item in data.get("data", [])
+                    if isinstance(item, dict) and isinstance(item.get("url"), str)
+                ]
+                if urls:
+                    generation.result_url = urls[0]
+                    generation.request_payload = {**(generation.request_payload or {}), "result_urls": urls}
+                inspected = await inspect_url_images(body, data)
+                # Persist and validate bytes BEFORE the independent pricing step.
+                if generation.model_slug == "nano-banana-2.1" and len(data.get("data", [])) == 1:
+                    await persist_single_image(db, generation, data)
+                    result_ready = True
+                units = image_usage(body, inspected)
+                result_ready = True
+        public = JSONResponse(scrub(data, generation.id), headers={"X-Request-Id": generation.id})
+        if not await finish(db, generation, attempt, units, response=public):
+            return public_error(generation.public_error_code or "request_failed", generation_id=generation.id)
+        return public
     except (ValueError, TypeError, KeyError, OSError, httpx.HTTPError) as exc:
         trace.failed(attempt, exc, phase="response_body_or_usage")
-        await fail(db, generation, attempt, "usage_reconciliation_required", definitive=False)
-        # A successful result still belongs to the partner even if its cost needs reconciliation.
-        if protocol.startswith("images/") and generation.model_slug == "nano-banana-2.1":
-            return public_error("image_result_reconciliation_required", generation_id=generation.id)
-        if "data" not in locals():
-            return public_error("provider_response_invalid", generation_id=generation.id)
+        if result_ready:
+            public = JSONResponse(scrub(data, generation.id), headers={"X-Request-Id": generation.id})
+            if await preserve_unbilled_result(db, generation, attempt, public):
+                return public
+        return await fail(db, generation, attempt, "provider_response_invalid", definitive=False)
     finally:
         await response.aclose()
-    return JSONResponse(scrub(data, generation.id), headers={"X-Request-Id": generation.id})
 
 
-async def finish(db, generation, attempt, units):
+async def finish(db, generation, attempt, units, *, response=None):
     await db.execute(
         select(Generation)
         .where(Generation.id == generation.id)
         .with_for_update()
         .execution_options(populate_existing=True)
     )
-    await settle_actual(db, generation, units)
-    generation.status = attempt.status = "completed"
-    await ensure_terminal_webhook_event(db, generation)
-    await db.commit()
-
-
-async def fail(db, generation, attempt, code, *, definitive):
-    await db.execute(
-        select(Generation)
-        .where(Generation.id == generation.id)
-        .with_for_update()
-        .execution_options(populate_existing=True)
-    )
-    if generation.actual_charge_rub is not None:
-        return
-    generation.status = attempt.status = "failed" if definitive else "reconciliation_required"
-    generation.public_error_code = attempt.public_error_code = code
-    from app.providers.circuit import observe
-
-    await observe(db, generation)
-    if definitive:
-        await release_generation_reserves(db, generation, reason="Request definitively rejected")
-        await ensure_terminal_webhook_event(db, generation)
-    await db.commit()
-
-
-async def stream_result(db, generation, attempt, response, protocol):
-    decoder, usage = SSEDecoder(), UsageCollector(protocol)
+    if generation.billing_status in {"not_chargeable", "waived"}:
+        return False
     try:
-        async for chunk in response.aiter_text():
-            for event in decoder.feed(chunk):
-                value = event_data(event)
-                if value is None:
-                    yield event + "\n\n"
-                    continue
-                usage.accept(value)
-                candidate = value.get("response", value.get("message", value))
-                if isinstance(candidate, dict) and isinstance(candidate.get("id"), str):
-                    attempt.provider_task_id = candidate["id"][:255]
-                if usage.complete and not usage.failed:
-                    await finish(db, generation, attempt, token_usage(protocol, usage.usage))
-                prefix = "".join(line + "\n" for line in event.split("\n") if line.startswith("event:"))
-                yield prefix + "data: " + json.dumps(scrub(value, generation.id), ensure_ascii=False) + "\n\n"
-        if usage.complete and not usage.failed:
-            await finish(db, generation, attempt, token_usage(protocol, usage.usage))
+        # Cache, charge and terminal outbox succeed together. A recoverable usage
+        # error must not commit half a settlement before delivering a free result.
+        async with db.begin_nested():
+            if response is not None:
+                await save_response(db, generation, response)
+            await settle_actual(db, generation, units)
+            generation.status = attempt.status = "completed"
+            from app.infrastructure.retry import utc_now
+
+            generation.client_finalized_at = generation.client_finalized_at or utc_now()
+            generation.provider_cost_hold_usdt = 0
+            generation.provider_cost_hold_rub = 0
+            generation.request_payload = {**(generation.request_payload or {}), "usage_reconciliation_pending": False}
+            attempt.cost_status = "settled"
+            attempt.cost_reserve_usdt = 0
+            attempt.provider_cost_usdt = generation.actual_provider_cost_usdt
+            attempt.usage_snapshot = dict(units)
+            await ensure_terminal_webhook_event(db, generation)
+    except Exception:
+        # Savepoint rollback expires changed ORM fields. Restore them before the
+        # error handler decides whether the validated result can be delivered.
+        await db.refresh(generation)
+        await db.refresh(attempt)
+        raise
+    await db.commit()
+    return True
+
+
+async def fail(db, generation, attempt, code, *, definitive, public_status=503, headers=None, response=None):
+    await finalize_native_failure(db, generation, attempt, code, definitive=definitive)
+    response = response or public_error(code, public_status, generation_id=generation.id, headers=headers)
+    if generation.billing_status == "not_chargeable":
+        await save_response(db, generation, response)
+    await db.commit()
+    return response
+
+
+async def stream_result(db, generation, attempt, response, protocol, *, deadline=None):
+    decoder, usage = SSEDecoder(), UsageCollector(protocol)
+    output = []
+    size = 0
+    deadline = deadline or asyncio.get_running_loop().time() + get_settings().native_request_timeout_seconds
+
+    def append(frame):
+        nonlocal size
+        size += len(frame.encode("utf-8"))
+        if size > get_settings().native_response_max_bytes:
+            raise ValueError("stream_too_large")
+        output.append(frame)
+
+    def saved_stream():
+        return Response("".join(output), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+
+    try:
+        async with asyncio.timeout_at(deadline):
+            async for chunk in response.aiter_text():
+                if (
+                    len(decoder.buffer.encode("utf-8")) + len(chunk.encode("utf-8"))
+                    > get_settings().native_response_max_bytes
+                ):
+                    raise ValueError("stream_frame_too_large")
+                for event in decoder.feed(chunk):
+                    value = event_data(event)
+                    if value is None:
+                        frame = event + "\n\n"
+                    else:
+                        if not isinstance(value, dict):
+                            raise ValueError("invalid_stream_event")
+                        usage.accept(value)
+                        candidate = value.get("response", value.get("message", value))
+                        if isinstance(candidate, dict) and isinstance(candidate.get("id"), str):
+                            attempt.provider_task_id = candidate["id"][:255]
+                        prefix = "".join(line + "\n" for line in event.split("\n") if line.startswith("event:"))
+                        frame = prefix + "data: " + json.dumps(scrub(value, generation.id), ensure_ascii=False) + "\n\n"
+                    append(frame)
+                    if usage.failed:
+                        raise ValueError("stream_failed")
+                    if usage.complete:
+                        if protocol == "chat/completions":
+                            append("data: [DONE]\n\n")
+                            frame += "data: [DONE]\n\n"
+                        # Persist before sending the final event: a disconnect
+                        # after this commit can recover the identical stream.
+                        if not await finish(
+                            db, generation, attempt, token_usage(protocol, usage.usage), response=saved_stream()
+                        ):
+                            raise ValueError("stream_closed")
+                        yield frame
+                        return
+                    yield frame
+        raise ValueError("stream_incomplete")
+    except (ValueError, TypeError, httpx.HTTPError, TimeoutError):
+        frame = 'data: {"error":{"type":"stream_interrupted","message":"stream_interrupted"}}\n\n'
+        # Reserve room for the terminal error without exceeding replay bounds.
+        if size + len(frame) <= get_settings().native_response_max_bytes:
+            append(frame)
+            public = saved_stream()
         else:
-            await fail(db, generation, attempt, "stream_outcome_unknown", definitive=False)
-    except (ValueError, httpx.HTTPError):
-        await fail(db, generation, attempt, "stream_outcome_unknown", definitive=False)
-        yield 'data: {"error":{"type":"stream_interrupted","message":"stream_interrupted"}}\n\n'
+            public = Response(frame, media_type="text/event-stream")
+        await fail(db, generation, attempt, "stream_interrupted", definitive=False, response=public)
+        yield frame
     finally:
-        # On client cancellation/process death the committed submission intent and
-        # full reserve remain visible to reconciliation. No automatic paid replay.
+        # Cancellation/process death is bounded by the durable native deadline
+        # sweep; it never creates a second provider job.
         await asyncio.shield(response.aclose())
 
 

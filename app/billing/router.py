@@ -9,6 +9,7 @@ from app.billing.schemas import (
     CoverageAdjustmentCreate,
     CoverageLedgerEntryRead,
     CoverageRead,
+    GenerationCompensationCreate,
     LedgerEntryRead,
     ManualAdjustmentCreate,
     MarginThresholdCreate,
@@ -133,3 +134,22 @@ async def create_profit_withdrawal(payload: ProfitWithdrawalCreate, db: DbSessio
     from app.billing.safe_to_withdraw import record_profit_withdrawal
 
     return await record_profit_withdrawal(db, **payload.model_dump())
+
+
+@router.get("/generations/{generation_id}/compensations", dependencies=[Depends(require_admin)])
+async def read_generation_compensation(generation_id: str, db: DbSession):
+    from app.billing.compensations import compensation_totals
+    from app.generations.models import Generation
+
+    generation = await db.get(Generation, generation_id)
+    if generation is None:
+        raise HTTPException(404, "generation_not_found")
+    return await compensation_totals(db, generation)
+
+
+@router.post("/generations/{generation_id}/compensations", dependencies=[Depends(require_admin)])
+async def create_generation_compensation(generation_id: str, payload: GenerationCompensationCreate, db: DbSession):
+    from app.billing.compensations import allocation_read, compensate_generation
+
+    allocation = await compensate_generation(db, generation_id, payload, actor="admin_api")
+    return allocation_read(allocation)

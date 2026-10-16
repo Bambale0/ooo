@@ -871,14 +871,22 @@ def render_errors(lang):
             "409",
             "request_already_submitted",
             t(
-                "Синхронный запрос уже принят, результат повторно не возвращается.",
-                "The synchronous request was accepted; its result is not replayed.",
+                "Синхронный запрос ещё выполняется либо был создан до поддержки восстановления ответа.",
+                "The synchronous request is still running or predates durable response recovery.",
             ),
         ),
         (
             "409",
             "capability_mismatch / media_asset_not_ready",
             t("Режим/размер недоступен либо файл ещё не готов.", "Mode/size unavailable, or file not ready."),
+        ),
+        (
+            "410",
+            "idempotent_result_expired",
+            t(
+                "Срок хранения ответа истёк. Старый ключ не запускает новую платную генерацию.",
+                "Response retention expired. The old key never starts a new paid generation.",
+            ),
         ),
         (
             "415",
@@ -930,11 +938,13 @@ def render_errors(lang):
         ),
         (
             "503",
-            "submission_outcome_unknown / provider_response_invalid / unexpected_provider_stream",
+            "provider_response_invalid / unexpected_provider_stream / request_deadline_exceeded",
             t(
-                "Результат отправки не определён. Не создавайте новый платный запрос автоматически; "
+                "Запрос завершён без результата и без оплаты. Для восстановления исходного ответа повторите тот же "
+                "ключ; "
                 "обратитесь в поддержку.",
-                "Submission outcome is uncertain. Do not automatically create another paid request; contact support.",
+                "Request closed without a result or charge. Reuse the original key to recover its response; contact "
+                "support if needed.",
             ),
         ),
     ]
@@ -943,7 +953,8 @@ def render_errors(lang):
         "<p>"
         + t(
             "Для видео повторите то же тело с тем же Idempotency-Key: вернётся исходный request_id. "
-            "При наличии ID достаточно GET статуса. Для текста/изображений повтор с тем же ключом возвращает 409; "
+            "При наличии ID достаточно GET статуса. Для завершённых новых запросов текста/изображений тот же ключ "
+            "возвращает исходный ответ; "
             "сохранённый статус изображения доступен по нашему ID или X-Client-Request-Id. Новый ключ означает новую "
             "операцию и может привести к повторной оплате. "
             "При timeout, обрыве сети или 5xx не меняйте ключ для автоматической повторной отправки. "
@@ -951,7 +962,8 @@ def render_errors(lang):
             "исправленный новый запрос отправляют с новым ключом. Фиксированная общая квота RPS здесь не "
             "гарантируется.",
             "For video, resubmit the same body with the same Idempotency-Key to get the original request_id. "
-            "If you have the ID, simply GET its status. For text/images, the same key returns 409; retrieve saved "
+            "If you have the ID, simply GET its status. Completed new text/image requests replay the original "
+            "response for the same key; retrieve saved "
             "image status by our ID or X-Client-Request-Id. "
             "A new key means a new operation and may incur another charge. After a timeout, network "
             "interruption or 5xx, "

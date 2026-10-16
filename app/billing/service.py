@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.accounts.models import Partner
@@ -16,15 +16,73 @@ if TYPE_CHECKING:
 
 async def lock_partner_for_update(db: AsyncSession, partner_id: str) -> Partner:
     result = await db.execute(
-        select(Partner)
-        .where(Partner.id == partner_id)
-        .with_for_update()
-        .execution_options(populate_existing=True)
+        select(Partner).where(Partner.id == partner_id).with_for_update().execution_options(populate_existing=True)
     )
     partner = result.scalar_one_or_none()
     if partner is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="partner_not_found")
     return partner
+
+
+def exact_rub_amount(value) -> Decimal:
+    """RUB ledgers accept finite, representable, explicit kopeck amounts only."""
+    if isinstance(value, (bool, float)):
+        raise HTTPException(422, "invalid_ledger_amount")
+    try:
+        amount = Decimal(value)
+        if (
+            not amount.is_finite()
+            or abs(amount) >= Decimal("10000000000000000")
+            or amount.quantize(Decimal("0.01")) != amount
+        ):
+            raise ValueError("invalid_ledger_amount")
+    except (InvalidOperation, TypeError, ValueError):
+        raise HTTPException(422, "invalid_ledger_amount") from None
+    return amount
+
+
+def _ensure_same_financial_operation(entry, partner_id, amount, operation_type, generation_id):
+    _ensure_entry_belongs_to_partner(entry.partner_id, partner_id)
+    if entry.amount_rub != amount or entry.operation_type != operation_type or entry.generation_id != generation_id:
+        raise HTTPException(409, "financial_idempotency_conflict")
+
+
+async def _lock_generation_for_money(db, partner_id, generation_id, *, customer_debit=False):
+    if generation_id is None:
+        return
+    from app.generations.models import Generation
+
+    generation = await db.scalar(
+        select(Generation)
+        .where(Generation.id == generation_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    # Preserve imported legacy references that predate durable generations.
+    if generation is None:
+        return
+    if generation.partner_id != partner_id:
+        raise HTTPException(409, "generation_partner_mismatch")
+    if customer_debit and generation.billing_status in {"not_chargeable", "waived"}:
+        raise HTTPException(409, "generation_not_chargeable")
+    if customer_debit and generation.actual_charge_rub is None:
+        from app.billing.models import CompensationAllocation
+
+        compensated = await db.scalar(
+            select(CompensationAllocation.id).where(CompensationAllocation.generation_id == generation.id).limit(1)
+        )
+        if compensated is not None:
+            raise HTTPException(409, "compensated_generation_not_chargeable")
+
+
+async def _lock_financial_key(db, namespace, key):
+    # Partner -> key is consistent even for callers that already lock a partner.
+    # Cross-partner key collisions then return a stable conflict, not a late
+    # unique-constraint exception after an in-memory balance mutation.
+    if db.get_bind().dialect.name == "postgresql":
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": namespace + ":" + key}
+        )
 
 
 async def apply_partner_balance_change(
@@ -38,19 +96,21 @@ async def apply_partner_balance_change(
     *,
     allow_negative: bool = True,
 ) -> LedgerEntry:
+    amount = exact_rub_amount(amount_rub)
     existing = await _find_ledger_entry_by_idempotency_key(db, idempotency_key)
     if existing is not None:
-        _ensure_entry_belongs_to_partner(existing.partner_id, partner.id)
+        _ensure_same_financial_operation(existing, partner.id, amount, operation_type, generation_id)
         return existing
 
+    await _lock_generation_for_money(db, partner.id, generation_id, customer_debit=amount < 0)
     locked_partner = await lock_partner_for_update(db, partner.id)
+    await _lock_financial_key(db, "partner-ledger", idempotency_key)
     existing = await _find_ledger_entry_by_idempotency_key(db, idempotency_key)
     if existing is not None:
-        _ensure_entry_belongs_to_partner(existing.partner_id, partner.id)
+        _ensure_same_financial_operation(existing, partner.id, amount, operation_type, generation_id)
         return existing
 
-    amount = Decimal(amount_rub)
-    next_balance = Decimal(locked_partner.balance_rub) + amount
+    next_balance = exact_rub_amount(Decimal(locked_partner.balance_rub) + amount)
     if not allow_negative and next_balance < Decimal("0.00"):
         raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail="insufficient_balance")
 
@@ -82,19 +142,21 @@ async def apply_cost_coverage_change(
     *,
     allow_negative: bool = True,
 ) -> CoverageLedgerEntry:
+    amount = exact_rub_amount(amount_rub)
     existing = await _find_coverage_entry_by_idempotency_key(db, idempotency_key)
     if existing is not None:
-        _ensure_entry_belongs_to_partner(existing.partner_id, partner.id)
+        _ensure_same_financial_operation(existing, partner.id, amount, operation_type, generation_id)
         return existing
 
+    await _lock_generation_for_money(db, partner.id, generation_id, customer_debit=False)
     locked_partner = await lock_partner_for_update(db, partner.id)
+    await _lock_financial_key(db, "coverage-ledger", idempotency_key)
     existing = await _find_coverage_entry_by_idempotency_key(db, idempotency_key)
     if existing is not None:
-        _ensure_entry_belongs_to_partner(existing.partner_id, partner.id)
+        _ensure_same_financial_operation(existing, partner.id, amount, operation_type, generation_id)
         return existing
 
-    amount = Decimal(amount_rub)
-    next_coverage = Decimal(locked_partner.cost_coverage_rub) + amount
+    next_coverage = exact_rub_amount(Decimal(locked_partner.cost_coverage_rub) + amount)
     if not allow_negative and next_coverage < Decimal("0.00"):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -128,11 +190,23 @@ async def release_generation_reserve(
     if reserve is None or Decimal(reserve.amount_rub) >= Decimal("0.00"):
         return None
 
+    from app.billing.compensations import compensation_totals
+
+    await _lock_generation_for_money(db, generation.partner_id, generation.id)
+    existing = await _find_generation_ledger_entry(db, generation.id, "generation_reserve_release")
+    if existing is not None:
+        return existing
+    # An explicitly linked manual compensation has already returned cash. The
+    # original reserve remains immutable; cleanup releases only the unpaid rest.
+    totals = await compensation_totals(db, generation)
+    amount = min(-Decimal(reserve.amount_rub), Decimal(totals["remaining_rub"]))
+    if amount <= 0:
+        return None
     partner = await _get_partner_or_404(db, generation.partner_id)
     return await apply_partner_balance_change(
         db=db,
         partner=partner,
-        amount_rub=-Decimal(reserve.amount_rub),
+        amount_rub=amount,
         operation_type="generation_reserve_release",
         idempotency_key=f"generation-reserve-release:{generation.id}",
         generation_id=generation.id,
@@ -178,6 +252,8 @@ async def settle_generation_reserve(
     db: AsyncSession,
     generation: Generation,
 ) -> LedgerEntry | None:
+    if generation.billing_status in {"not_chargeable", "waived"}:
+        raise HTTPException(409, "generation_not_chargeable")
     reserve = await _find_generation_ledger_entry(db, generation.id, "generation_reserve")
     if reserve is None:
         return None
@@ -198,9 +274,7 @@ async def settle_generation_reserve(
     )
 
 
-async def settle_confirmed_partner_charge(
-    db: AsyncSession, generation: Generation, charge: Decimal
-) -> None:
+async def settle_confirmed_partner_charge(db: AsyncSession, generation: Generation, charge: Decimal) -> None:
     """Bill confirmed usage once, with append-only compatibility for old holds.
 
     New generations have no partner reserve; old generations may have one
@@ -208,6 +282,8 @@ async def settle_confirmed_partner_charge(
     The caller holds the generation lock and sets actual_charge_rub after
     finishing the whole transaction.
     """
+    if generation.billing_status in {"not_chargeable", "waived"}:
+        raise HTTPException(409, "generation_not_chargeable")
     amount = Decimal(charge)
     if not amount.is_finite() or amount < 0:
         raise ValueError("invalid_confirmed_partner_charge")
@@ -291,9 +367,7 @@ async def _find_coverage_entry_by_idempotency_key(
     db: AsyncSession,
     idempotency_key: str,
 ) -> CoverageLedgerEntry | None:
-    result = await db.execute(
-        select(CoverageLedgerEntry).where(CoverageLedgerEntry.idempotency_key == idempotency_key)
-    )
+    result = await db.execute(select(CoverageLedgerEntry).where(CoverageLedgerEntry.idempotency_key == idempotency_key))
     return result.scalar_one_or_none()
 
 

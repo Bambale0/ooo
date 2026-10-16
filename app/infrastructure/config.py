@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     required_provider_float_usdt: Decimal = Field(default=Decimal("0"), ge=0)
     wallet_refresh_seconds: int = Field(default=60, ge=1)
     native_request_timeout_seconds: float = Field(default=600, gt=0)
+    native_response_max_bytes: int = Field(default=32 * 1024 * 1024, ge=1024, le=128 * 1024 * 1024)
+    native_response_replay_ttl_seconds: int = Field(default=86400, ge=60, le=604800)
+    native_usage_reconciliation_seconds: int = Field(default=1800, ge=60, le=86400)
+    native_abandonment_grace_seconds: int = Field(default=30, ge=0, le=300)
     argolink_timeout_seconds: float = 30.0
     argolink_http_connect_timeout_seconds: float = Field(default=5.0, gt=0)
     argolink_http_read_timeout_seconds: float = Field(default=30.0, gt=0)

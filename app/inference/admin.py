@@ -8,9 +8,10 @@ from sqlalchemy import func, or_, select
 
 from app.api.dependencies import DbSession, require_admin
 from app.billing.models import CoverageLedgerEntry
-from app.billing.service import apply_cost_coverage_change, lock_partner_for_update, release_generation_reserves
+from app.billing.service import apply_cost_coverage_change, lock_partner_for_update
 from app.generations.models import Generation
 from app.inference.accounting import settle_actual
+from app.inference.outcomes import finalize_native_failure
 from app.providers.models import ProviderAttempt
 from app.providers.service import get_partner_provider_adapter
 from app.webhooks.service import ensure_terminal_webhook_event
@@ -126,7 +127,11 @@ async def reconcile_attempt_cost(
     fx = Decimal(generation.rub_per_usdt_snapshot)
     held_rub = (held_usdt * fx).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     total_actual_cost = Decimal(generation.actual_provider_cost_usdt or 0) + actual_cost
-    desired_coverage_net = -(total_actual_cost * fx).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    remaining_hold_usdt = max(Decimal(0), Decimal(generation.provider_cost_hold_usdt or 0) - held_usdt)
+    remaining_hold_rub = max(Decimal("0.00"), Decimal(generation.provider_cost_hold_rub or 0) - held_rub)
+    desired_coverage_net = (
+        -(total_actual_cost * fx).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) - remaining_hold_rub
+    )
     current_coverage_net = Decimal(
         await db.scalar(
             select(func.coalesce(func.sum(CoverageLedgerEntry.amount_rub), 0)).where(
@@ -135,6 +140,10 @@ async def reconcile_attempt_cost(
         )
         or 0
     )
+    if generation.status in {"queued", "sent_to_provider", "processing", "submitting"}:
+        # Do not release the still-running attempt's capital when an earlier
+        # attempt is reconciled. Final settlement computes the remaining net.
+        desired_coverage_net = min(desired_coverage_net, current_coverage_net)
     coverage_delta = desired_coverage_net - current_coverage_net
     owner = await lock_partner_for_update(db, generation.partner_id)
     if coverage_delta:
@@ -150,14 +159,9 @@ async def reconcile_attempt_cost(
         )
     attempt.provider_cost_usdt = actual_cost
     attempt.cost_status = final_status
-    generation.provider_cost_hold_usdt = max(
-        Decimal(0),
-        Decimal(generation.provider_cost_hold_usdt or 0) - held_usdt,
-    )
-    generation.provider_cost_hold_rub = max(
-        Decimal("0.00"),
-        Decimal(generation.provider_cost_hold_rub or 0) - held_rub,
-    )
+    generation.provider_cost_hold_usdt = remaining_hold_usdt
+    generation.provider_cost_hold_rub = remaining_hold_rub
+    attempt.cost_reserve_usdt = Decimal(0)
     generation.actual_provider_cost_usdt = total_actual_cost
     snapshot = generation.request_payload or {}
     history = snapshot.get("provider_cost_reconciliation_history", [])
@@ -194,8 +198,13 @@ async def reconcile(generation_id: str, payload: Reconciliation, db: DbSession):
         return {"id": g.id, "status": g.status}
     if history and (history[-1]["outcome"] != "attach_video" or payload.outcome == "attach_video"):
         raise HTTPException(409, "already_reconciled")
-    if g.status not in {"submitting", "reconciliation_required", "sent_to_provider"}:
+    if g.billing_status in {"not_chargeable", "waived"}:
+        raise HTTPException(409, "generation_not_chargeable_use_attempt_cost_reconciliation")
+    pending_result_usage = g.status == "completed" and snapshot.get("usage_reconciliation_pending")
+    if g.status not in {"submitting", "reconciliation_required", "sent_to_provider"} and not pending_result_usage:
         raise HTTPException(409, "request_not_reconcilable")
+    if pending_result_usage and payload.outcome != "completed":
+        raise HTTPException(409, "delivered_result_cannot_be_reopened")
     attempt = (
         await db.execute(
             select(ProviderAttempt)
@@ -219,9 +228,7 @@ async def reconcile(generation_id: str, payload: Reconciliation, db: DbSession):
         attempt.status = g.status = "processing"
         attempt.next_poll_at = attempt.next_attempt_at = None
     elif payload.outcome == "not_accepted":
-        await release_generation_reserves(db, g, reason=payload.reason)
-        g.status = attempt.status = "failed"
-        g.public_error_code = "provider_rejected_request"
+        await finalize_native_failure(db, g, attempt, "provider_rejected_request", definitive=True)
     else:
         rates = snapshot.get("rates", {})
         if (
@@ -232,8 +239,13 @@ async def reconcile(generation_id: str, payload: Reconciliation, db: DbSession):
             raise HTTPException(422, "valid_usage_required")
         await settle_actual(db, g, payload.units)
         g.status = attempt.status = "completed"
+        g.provider_cost_hold_usdt = g.provider_cost_hold_rub = Decimal(0)
+        attempt.provider_cost_usdt = g.actual_provider_cost_usdt
+        attempt.cost_reserve_usdt = Decimal(0)
+        attempt.cost_status = "settled"
+        attempt.usage_snapshot = payload.units
     g.request_payload = {
-        **snapshot,
+        **(g.request_payload or snapshot),
         "reconciliation": payload.model_dump(),
         "reconciliation_history": [*history, payload.model_dump()],
         "reconciliation_actor": "admin_api",
