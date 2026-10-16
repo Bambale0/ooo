@@ -49,7 +49,7 @@ async def test_qwen_actual_only_charge_does_not_require_huge_quoted_balance(clie
         )
         assert response.status_code == 200, response.text
         generation = await db_session.get(Generation, response.json()["id"])
-        assert generation.partner_price_rub > Decimal("0.50")
+        assert Decimal("0.50") < generation.partner_price_rub < Decimal("100")
         assert generation.actual_charge_rub == Decimal("0.03")
         await db_session.refresh(partner)
         assert partner.balance_rub == Decimal("0.47")
