@@ -190,7 +190,7 @@ async def test_mixed_reference_full_admission_usage_settlement_and_idempotency(c
         await db_session.refresh(owner)
         assert owner.balance_rub == Decimal("999535.90")
         rows = list((await db_session.scalars(select(LedgerEntry).where(LedgerEntry.generation_id == job_id))).all())
-        assert len(rows) == 2
+        assert len(rows) == 1 and rows[0].operation_type == "generation_usage_charge"
         assert sum((r.amount_rub for r in rows), Decimal(0)) == Decimal("-464.10")
     finally:
         await upstream.aclose()
