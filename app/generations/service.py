@@ -597,7 +597,10 @@ async def poll_generation_provider(
                 payload = generation.request_payload or {}
                 if payload.get("billing_unit") == "second":
                     usage = result.usage if isinstance(result.usage, dict) else {}
-                    seconds = usage.get("billed_seconds")
+                    # Legacy DTO accepts output duration but no reference-video
+                    # inputs. If the completed provider reply omits billed_seconds,
+                    # the contracted output duration is the verified billable unit.
+                    seconds = usage.get("billed_seconds", generation.duration_seconds)
                     if isinstance(seconds, bool) or not isinstance(seconds, int) or seconds <= 0:
                         generation.status = attempt.status = "reconciliation_required"
                         generation.public_error_code = "usage_reconciliation_required"
