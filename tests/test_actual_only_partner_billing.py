@@ -60,6 +60,48 @@ async def test_qwen_actual_only_charge_does_not_require_huge_quoted_balance(clie
         await provider.aclose()
 
 
+async def test_real_usage_exceeding_remaining_balance_creates_debt_and_blocks_next_request(
+    client, db_session, monkeypatch
+):
+    requests = []
+
+    def provider_reply(request):
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "id": "cost-exceeds-small-wallet",
+                "choices": [{"message": {"content": "OK"}}],
+                "usage": {"prompt_tokens": 70, "completion_tokens": 30, "total_tokens": 100},
+            },
+        )
+
+    partner, headers, upstream = await setup(
+        db_session, monkeypatch, provider_reply, model="qwen3.8-max"
+    )
+    partner.balance_rub = Decimal("0.01")
+    await db_session.commit()
+    try:
+        body = {"model": "qwen3.8-max", "messages": [{"role": "user", "content": "Hello"}]}
+        response = await client.post("/v1/chat/completions", headers=headers, json=body)
+        assert response.status_code == 200, response.text
+        await db_session.refresh(partner)
+        assert partner.balance_rub == Decimal("-0.09")
+        generation = await db_session.get(Generation, response.json()["id"])
+        assert generation.actual_charge_rub == Decimal("0.10")
+        assert len(requests) == 1
+        rejected = await client.post(
+            "/v1/chat/completions",
+            headers={**headers, "Idempotency-Key": "different-qwen-task"},
+            json=body,
+        )
+        assert rejected.status_code == 402
+        assert len(requests) == 1
+        assert len(list(await db_session.scalars(select(Generation)))) == 1
+    finally:
+        await upstream.aclose()
+
+
 async def test_qwen_502_keeps_no_partner_hold_or_charge(client, db_session, monkeypatch):
     partner, headers, provider = await setup(
         db_session,
