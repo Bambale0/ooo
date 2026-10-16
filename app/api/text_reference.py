@@ -998,13 +998,13 @@ def render_text_reference(lang: str) -> str:
         "Оригинальная модель Qwen3.8-Max понимает видео, но текущий маршрут Нейроныча "
         "принимает для неё только текст и изображения. Блоки video_url, input_video и video "
         "отклоняются с HTTP 422 invalid_request_contract и заголовком "
-        "X-Validation-Error: video_input_unavailable до резерва средств. "
+        "X-Validation-Error: video_input_unavailable до создания задачи и оплаты. "
         "Не заменяйте видео кадрами без явного выбора такого режима. Для текстовых "
         "запросов обязательно указывайте Idempotency-Key длиной от 8 до 160 символов.",
         "The original Qwen3.8-Max model can understand videos, but the current "
         "Neironych route supports text and image input only. The video_url, input_video "
         "and video parts return HTTP 422 invalid_request_contract with "
-        "X-Validation-Error: video_input_unavailable before funds are reserved. "
+        "X-Validation-Error: video_input_unavailable before task creation or charging. "
         "Do not silently replace video with still frames. Text requests require "
         "an Idempotency-Key of 8 to 160 characters.",
     )
