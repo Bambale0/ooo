@@ -184,7 +184,9 @@ async def load_rows(db, start: datetime, end: datetime) -> list[dict]:
     # outcome was an error. A submit date is never a completed-job date.
     settled = (
         select(LedgerEntry.generation_id, LedgerEntry.partner_id, func.min(LedgerEntry.created_at).label("at"))
-        .where(LedgerEntry.operation_type.in_(["generation_usage_adjustment", "generation_charge"]))
+        .where(LedgerEntry.operation_type.in_([
+            "generation_usage_adjustment", "generation_usage_charge", "generation_charge"
+        ]))
         .group_by(LedgerEntry.generation_id, LedgerEntry.partner_id).subquery()
     )
     success = (
