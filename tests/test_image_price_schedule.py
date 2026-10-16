@@ -57,7 +57,7 @@ async def test_flat_image_price_reserves_then_charges_returned_count_once(
         assert sum((item.amount_rub for item in ledger), Decimal(0)) == -Decimal("3.50") * returned
 
         duplicate = await client.post("/v1/images/generations", headers=headers, json=body)
-        assert duplicate.status_code == 409
+        assert duplicate.status_code == 200 and duplicate.json() == response.json()
         await settle_actual(db_session, generation, {tier: returned})
         assert calls == [body]
         assert len(list((await db_session.execute(select(LedgerEntry))).scalars())) == len(ledger)

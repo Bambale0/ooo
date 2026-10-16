@@ -110,7 +110,7 @@ def create_app() -> FastAPI:
             )
         ).scalar()
         PAYMENTS_PENDING_CREDIT.set(pending)
-        capital = await capital_state(db)
+        capital = await capital_state(db, refresh_wallet=False)
         SAFE_TO_WITHDRAW_USDT.set(capital["safe"] if capital["safe"] is not None else "NaN")
         refresh_db_pool_metrics(engine.sync_engine.pool)
         payload, content_type = metrics_payload()

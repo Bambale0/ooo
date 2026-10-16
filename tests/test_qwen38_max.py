@@ -39,10 +39,13 @@ def test_qwen38_max_reviewed_contract_and_passthrough():
     native = {
         "model": MODEL,
         "messages": [
-            {"role": "user", "content": [
-                {"type": "text", "text": "Describe this chart"},
-                {"type": "image_url", "image_url": {"url": "https://example.org/chart.png"}},
-            ]}
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe this chart"},
+                    {"type": "image_url", "image_url": {"url": "https://example.org/chart.png"}},
+                ],
+            }
         ],
         "max_completion_tokens": 256,
         "stream": False,
@@ -89,9 +92,7 @@ async def test_qwen38_max_native_chat_completion_settles_actual_usage_once(clien
         (mode, "default", "million_tokens", retail[mode], COSTS[mode])
         for mode in ("input_tokens", "output_tokens", "cached_input_tokens", "cache_write_tokens")
     ]
-    partner, headers, upstream = await setup(
-        db_session, monkeypatch, upstream_handler, model=MODEL, rates=rates
-    )
+    partner, headers, upstream = await setup(db_session, monkeypatch, upstream_handler, model=MODEL, rates=rates)
     body = {
         "model": MODEL,
         "messages": [{"role": "user", "content": "Reply with OK."}],
@@ -110,9 +111,7 @@ async def test_qwen38_max_native_chat_completion_settles_actual_usage_once(clien
         assert result["id"] != "private-qwen-provider-id"
         assert "provider" not in result
 
-        generation = (
-            await db_session.execute(select(Generation).where(Generation.model_slug == MODEL))
-        ).scalar_one()
+        generation = (await db_session.execute(select(Generation).where(Generation.model_slug == MODEL))).scalar_one()
         assert generation.status == "completed"
         assert generation.actual_charge_rub == Decimal("0.06")
         assert generation.actual_provider_cost_usdt == Decimal("0.000446062500000000")
@@ -123,7 +122,7 @@ async def test_qwen38_max_native_chat_completion_settles_actual_usage_once(clien
             "output_tokens": 80,
         }
         repeated = await client.post("/v1/chat/completions", headers=headers, json=body)
-        assert repeated.status_code == 409
+        assert repeated.status_code == 200 and repeated.json() == response.json()
         assert calls == [body]
         await db_session.refresh(partner)
         assert partner.balance_rub == Decimal("999999.94")

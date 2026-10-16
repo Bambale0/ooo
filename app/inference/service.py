@@ -249,6 +249,9 @@ async def reserve(
         "rates": rates,
         "reserved_units": units,
         "partner_billing_policy": "actual_only",
+        "native_finality_policy": "v1",
+        "native_deadline_seconds": get_settings().native_request_timeout_seconds,
+        "native_usage_reconciliation_seconds": get_settings().native_usage_reconciliation_seconds,
         "api_key_id": auth.api_key.id,
     }
     if client_request_id is not None:

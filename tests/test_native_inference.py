@@ -198,7 +198,7 @@ async def test_native_actual_usage_and_duplicate_never_resubmits(client, db_sess
     await db_session.refresh(partner)
     assert partner.balance_rub == Decimal("999999.97")
     again = await client.post("/v1/responses", json=body, headers=headers)
-    assert again.status_code == 409 and len(calls) == 1
+    assert again.status_code == 200 and again.json() == result and len(calls) == 1
     changed = await client.post("/v1/responses", json={**body, "input": "different"}, headers=headers)
     assert changed.status_code == 409 and changed.json()["detail"] == "idempotency_conflict"
     entries = list((await db_session.execute(select(LedgerEntry))).scalars())
@@ -244,7 +244,7 @@ async def test_grok_local_tool_small_balance_and_separate_reasoning_settle_once(
     await db_session.refresh(partner)
     assert partner.balance_rub == Decimal("99.54")
     duplicate = await client.post("/v1/chat/completions", json=body, headers=headers)
-    assert duplicate.status_code == 409
+    assert duplicate.status_code == 200 and duplicate.json() == response.json()
     assert len(calls) == 1
     await db_session.refresh(partner)
     assert partner.balance_rub == Decimal("99.54")
@@ -265,8 +265,14 @@ async def test_native_rejections_and_ambiguous_outcomes(client, db_session, monk
     await db_session.refresh(partner)
     assert partner.balance_rub == Decimal("1000000")  # Even ambiguous responses have no advance hold
     g = (await db_session.execute(select(Generation))).scalar_one()
-    assert g.status == ("reconciliation_required" if held else "failed")
-    assert (await client.post("/v1/responses", json=body, headers=headers)).status_code == 409
+    assert g.status == "failed" and g.billing_status == "not_chargeable"
+    from app.providers.models import ProviderAttempt
+
+    attempt = await db_session.scalar(select(ProviderAttempt))
+    assert attempt.status == ("reconciliation_required" if held else "failed")
+    assert attempt.cost_status == ("unknown" if held else "confirmed_free")
+    replay = await client.post("/v1/responses", json=body, headers=headers)
+    assert replay.status_code == result.status_code and replay.json() == result.json()
     await upstream.aclose()
 
 
@@ -321,7 +327,7 @@ async def test_sse_usage_split_chunks_and_messages_auth(client, db_session, monk
     await upstream.aclose()
 
 
-async def test_truncated_stream_retains_reserve(client, db_session, monkeypatch):
+async def test_truncated_stream_retains_only_procurement_obligation(client, db_session, monkeypatch):
     def handler(request):
         return httpx.Response(
             200, content=b'data: {"type":"response.created"}\n\n', headers={"Content-Type": "text/event-stream"}
@@ -335,7 +341,8 @@ async def test_truncated_stream_retains_reserve(client, db_session, monkeypatch)
     )
     assert result.status_code == 200
     g = (await db_session.execute(select(Generation))).scalar_one()
-    assert g.status == "reconciliation_required" and g.actual_charge_rub is None
+    assert g.status == "failed" and g.actual_charge_rub is None
+    assert g.billing_status == "not_chargeable" and "stream_interrupted" in result.text
     await upstream.aclose()
 
 
@@ -422,7 +429,7 @@ async def test_nano_pro_fourteen_references_and_4k_settle_once(client, db_sessio
         Decimal("10.00"),
     )
     duplicate = await client.post("/v1/images/edits", headers=headers, **payload)
-    assert duplicate.status_code == 409 and len(submitted) == 1
+    assert duplicate.status_code == 200 and duplicate.json() == response.json() and len(submitted) == 1
     await upstream.aclose()
 
 
@@ -486,7 +493,11 @@ async def test_edit_extra_media_rejected_before_money_or_job(client, db_session,
         raise AssertionError("Invalid edit must not contact the provider")
 
     partner, headers, upstream = await setup(
-        db_session, monkeypatch, forbidden, model="seedance-2.5", category="video",
+        db_session,
+        monkeypatch,
+        forbidden,
+        model="seedance-2.5",
+        category="video",
         rates=[("default", "480p", "second", Decimal("20"), Decimal(".078"))],
     )
     body = {
@@ -591,9 +602,7 @@ async def test_seedance_reference_queue_content_and_settlement_are_idempotent(cl
     assert status.json()["client_request_id"] == client_request_id
     durable = await client.get(f"/api/v1/generations/{identity}", headers=headers)
     assert durable.status_code == 200 and durable.json()["client_request_id"] == client_request_id
-    by_client_id = await client.get(
-        f"/api/v1/generations/by-client-request-id/{client_request_id}", headers=headers
-    )
+    by_client_id = await client.get(f"/api/v1/generations/by-client-request-id/{client_request_id}", headers=headers)
     assert by_client_id.status_code == 200 and by_client_id.json()["id"] == identity
     video = status.json()["video"]
     assert video["authenticated_url"] == f"http://localhost:8000/v1/videos/{identity}/content"

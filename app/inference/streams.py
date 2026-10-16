@@ -36,7 +36,7 @@ class UsageCollector:
         if not isinstance(value, dict):
             return
         kind = value.get("type")
-        if kind == "error" or value.get("error") or kind == "response.failed":
+        if kind == "error" or value.get("error") or kind in {"response.failed", "response.incomplete"}:
             self.failed = True
         candidate = value.get("response", value.get("message", value))
         if isinstance(candidate, dict) and isinstance(candidate.get("usage"), dict):

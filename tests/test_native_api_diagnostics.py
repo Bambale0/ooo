@@ -57,12 +57,13 @@ async def test_native_524_preserves_diagnostics_without_replaying_or_exposing_pr
     response = await client.post("/v1/images/edits", headers=headers, json=body)
     assert response.status_code == 503
     result = response.json()
-    assert result["error"]["type"] == "submission_outcome_unknown"
+    assert result["error"]["type"] == "provider_temporarily_unavailable"
     generation = await db_session.get(Generation, result["request_id"])
     attempt = (
         await db_session.execute(select(ProviderAttempt).where(ProviderAttempt.generation_id == generation.id))
     ).scalar_one()
-    assert generation.status == attempt.status == "reconciliation_required"
+    assert generation.status == "failed" and generation.billing_status == "not_chargeable"
+    assert attempt.status == "reconciliation_required" and attempt.cost_status == "unknown"
     assert attempt.provider_task_id is None
     assert json.loads(calls[0].content) == body
     assert calls[0].extensions["timeout"]["read"] == 600
@@ -80,7 +81,7 @@ async def test_native_524_preserves_diagnostics_without_replaying_or_exposing_pr
     assert "0123456789abcdef-FRA" not in response.text
     assert "argolink" not in response.text
     duplicate = await client.post("/v1/images/edits", headers=headers, json=body)
-    assert duplicate.status_code == 409 and duplicate.json()["request_id"] == generation.id
+    assert duplicate.status_code == 503 and duplicate.json() == response.json()
     assert len(calls) == 1
     await db_session.refresh(partner)
     assert partner.balance_rub == Decimal("1000000")
@@ -258,9 +259,8 @@ async def test_transport_failure_category_is_retained_without_secret_or_paid_rep
     assert partner.balance_rub == expected_balance
     assert "PRIVATE_TRANSPORT_MESSAGE_DO_NOT_LOG" not in attempt.raw_error + caplog.text + response.text
     duplicate = await client.post("/v1/images/edits", headers=headers, json=nano_body())
-    assert duplicate.status_code == 409 and len(calls) == 1
+    assert duplicate.status_code == 503 and duplicate.json() == response.json() and len(calls) == 1
     await upstream.aclose()
-
 
 
 async def test_validation_rejection_logs_partner_key_and_stage(client, db_session, monkeypatch, caplog):
@@ -275,9 +275,7 @@ async def test_validation_rejection_logs_partner_key_and_stage(client, db_sessio
     )
     await db_session.refresh(partner)
     partner_id = partner.id
-    key = (
-        await db_session.execute(select(ApiKey).where(ApiKey.partner_id == partner_id))
-    ).scalar_one()
+    key = (await db_session.execute(select(ApiKey).where(ApiKey.partner_id == partner_id))).scalar_one()
     key_id = key.id
     caplog.set_level(logging.WARNING, logger="app.inference.diagnostics")
     response = await client.post("/v1/images/edits", headers=headers, json={**nano_body(), "n": 0})
@@ -306,9 +304,7 @@ async def test_balance_rejection_logs_exact_stage_and_key(client, db_session, mo
     partner, headers, upstream = await nano_setup(db_session, monkeypatch, handler)
     await db_session.refresh(partner)
     partner_id = partner.id
-    key = (
-        await db_session.execute(select(ApiKey).where(ApiKey.partner_id == partner_id))
-    ).scalar_one()
+    key = (await db_session.execute(select(ApiKey).where(ApiKey.partner_id == partner_id))).scalar_one()
     key_id = key.id
     partner.balance_rub = Decimal("0")
     await db_session.commit()
@@ -342,9 +338,7 @@ async def test_provider_rejection_logs_provider_stage_without_body_or_secret(
     partner, headers, upstream = await nano_setup(db_session, monkeypatch, handler)
     await db_session.refresh(partner)
     partner_id = partner.id
-    key = (
-        await db_session.execute(select(ApiKey).where(ApiKey.partner_id == partner_id))
-    ).scalar_one()
+    key = (await db_session.execute(select(ApiKey).where(ApiKey.partner_id == partner_id))).scalar_one()
     key_id = key.id
     caplog.set_level(logging.WARNING, logger="app.inference.diagnostics")
     response = await client.post("/v1/images/edits", headers=headers, json=nano_body())

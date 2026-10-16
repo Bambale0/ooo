@@ -1,6 +1,18 @@
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.database import Base
@@ -84,4 +96,27 @@ class MarginThresholdHistory(Base):
     old_value: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
     new_value: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
     actor: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[object] = utc_created_at()
+
+
+class CompensationAllocation(Base):
+    """Append-only attribution of a real credit to an original generation debit."""
+
+    __tablename__ = "compensation_allocations"
+    __table_args__ = (
+        UniqueConstraint("partner_id", "idempotency_key", name="uq_compensation_partner_idem"),
+        CheckConstraint("amount_rub > 0", name="compensation_positive_amount"),
+        CheckConstraint("mode IN ('credit', 'link')", name="compensation_mode"),
+    )
+
+    id: Mapped[str] = uuid_pk()
+    partner_id: Mapped[str] = mapped_column(ForeignKey("partners.id"), nullable=False, index=True)
+    generation_id: Mapped[str] = mapped_column(ForeignKey("generations.id"), nullable=False, index=True)
+    source_ledger_entry_id: Mapped[str] = mapped_column(ForeignKey("ledger_entries.id"), nullable=False, index=True)
+    amount_rub: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    actor: Mapped[str] = mapped_column(String(80), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[object] = utc_created_at()

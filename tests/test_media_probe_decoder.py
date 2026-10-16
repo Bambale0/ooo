@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -92,7 +93,7 @@ async def test_rejects_non_mp4_without_invoking_native_decoder(tmp_path, monkeyp
 
 async def test_subprocess_output_is_bounded():
     with pytest.raises(ProbeError, match="resource_limit"):
-        await run_bounded(["/usr/bin/python3", "-c", "print('x'*100000)"], stdout_limit=100)
+        await run_bounded([sys.executable, "-c", "print('x'*100000)"], stdout_limit=100)
 
 
 async def test_subprocess_timeout_kills_and_reaps_child(monkeypatch):
@@ -110,17 +111,19 @@ async def test_subprocess_timeout_kills_and_reaps_child(monkeypatch):
     task = asyncio.create_task(
         run_bounded(
             [
-                "/usr/bin/python3",
+                sys.executable,
                 "-c",
                 "import time; time.sleep(30)",
             ],
             stdout_limit=100,
         )
     )
-    await started.wait()
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5)
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
     assert children[0].returncode is not None
     assert not Path(f"/proc/{children[0].pid}").exists()  # noqa: ASYNC240 - local verification only
 
@@ -318,14 +321,12 @@ def test_actual_decoded_audio_rate_samples_and_channels_must_match(field, value)
 
 async def test_decoder_zero_exit_with_error_output_is_rejected():
     with pytest.raises(ProbeError, match="decode_failed"):
-        await run_bounded(
-            ["/usr/bin/python3", "-c", "import sys;sys.stderr.write('malformed input')"], stdout_limit=100
-        )
+        await run_bounded([sys.executable, "-c", "import sys;sys.stderr.write('malformed input')"], stdout_limit=100)
 
 
 async def test_decoder_nonzero_exit_is_rejected():
     with pytest.raises(ProbeError, match="decode_failed"):
-        await run_bounded(["/usr/bin/python3", "-c", "raise SystemExit(3)"], stdout_limit=100)
+        await run_bounded([sys.executable, "-c", "raise SystemExit(3)"], stdout_limit=100)
 
 
 async def test_native_process_resource_limits_and_empty_secret_environment():
@@ -333,7 +334,7 @@ async def test_native_process_resource_limits_and_empty_secret_environment():
 
     result = await run_bounded(
         [
-            "/usr/bin/python3",
+            sys.executable,
             "-c",
             "import json,os,resource; print(json.dumps({'env':sorted(os.environ),"
             "'memory':resource.getrlimit(resource.RLIMIT_AS), 'cpu':resource.getrlimit(resource.RLIMIT_CPU),"
@@ -395,13 +396,13 @@ async def test_rejects_ambiguous_container_structure_before_native_decode(
 
 async def test_native_allocation_beyond_address_space_limit_is_rejected():
     with pytest.raises(ProbeError, match="decode_failed"):
-        await run_bounded(["/usr/bin/python3", "-c", "bytearray(2 * 1024**3)"], stdout_limit=100)
+        await run_bounded([sys.executable, "-c", "bytearray(2 * 1024**3)"], stdout_limit=100)
 
 
 async def test_native_cpu_spinner_is_killed_at_short_test_deadline(monkeypatch):
     monkeypatch.setattr("media_probe.decoder.MAX_SECONDS", 0.05)
     with pytest.raises(ProbeError, match="timeout"):
-        await run_bounded(["/usr/bin/python3", "-c", "while True: pass"], stdout_limit=100)
+        await run_bounded([sys.executable, "-c", "while True: pass"], stdout_limit=100)
 
 
 @pytest.mark.parametrize("stream_name", ["stdout", "stderr"])
@@ -434,14 +435,14 @@ async def test_overflowed_pipe_is_drained_and_child_reaped_without_hanging(monke
         with pytest.raises(ProbeError, match="resource_limit"):
             await asyncio.wait_for(
                 run_bounded(
-                    ["/usr/bin/python3", "-c", f"import sys; sys.{stream_name}.buffer.write(b'x' * 1048576)"],
+                    [sys.executable, "-c", f"import sys; sys.{stream_name}.buffer.write(b'x' * 1048576)"],
                     stdout_limit=64,
                 ),
                 timeout=2,
             )
         assert children[0].returncode is not None
         assert not Path(f"/proc/{children[0].pid}").exists()  # noqa: ASYNC240 - local synthetic child only
-        assert await run_bounded(["/usr/bin/python3", "-c", "print('ready')"], stdout_limit=64) == b"ready\n"
+        assert await run_bounded([sys.executable, "-c", "print('ready')"], stdout_limit=64) == b"ready\n"
     finally:
         # Keep a failing pre-fix regression from leaving paused test transports.
         for process in children:
@@ -472,9 +473,12 @@ async def test_repeated_cancellation_waits_for_owned_cleanup_and_preserves_cance
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", record)
     monkeypatch.setattr(decoder, "_discard_pipe", paused_discard)
-    task = asyncio.create_task(run_bounded(
-        ["/usr/bin/python3", "-c", "import time; time.sleep(30)"], stdout_limit=64,
-    ))
+    task = asyncio.create_task(
+        run_bounded(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            stdout_limit=64,
+        )
+    )
     try:
         await asyncio.wait_for(started.wait(), timeout=2)
         task.cancel()

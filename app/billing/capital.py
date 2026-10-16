@@ -25,7 +25,7 @@ async def lock_capital(db):
         await db.execute(text("SELECT pg_advisory_xact_lock(728346019)"))
 
 
-async def wallet_balance(db):
+async def cached_wallet_balance(db):
     latest = (
         await db.execute(select(WalletSnapshot).order_by(WalletSnapshot.created_at.desc()).limit(1))
     ).scalar_one_or_none()
@@ -37,12 +37,20 @@ async def wallet_balance(db):
             - (latest.created_at.astimezone(UTC) if latest.created_at.tzinfo else latest.created_at.replace(tzinfo=UTC))
         ).total_seconds()
     )
-    if age is not None and age < get_settings().wallet_refresh_seconds:
-        return latest.available_usdt, age, "fresh"
+    if latest is None:
+        return None, None, "unavailable"
+    freshness = "fresh" if age < get_settings().wallet_refresh_seconds else "stale"
+    return latest.available_usdt, age, freshness
+
+
+async def wallet_balance(db):
+    cached, age, freshness = await cached_wallet_balance(db)
+    if freshness == "fresh":
+        return cached, age, freshness
     try:
         balance = await get_crypto_pay_client().get_available_usdt()
     except (CryptoPayError, ValueError):
-        return (latest.available_usdt, age, "stale") if latest else (None, None, "unavailable")
+        return (cached, age, "stale") if cached is not None else (None, None, "unavailable")
     db.add(WalletSnapshot(available_usdt=balance))
     await db.flush()
     return balance, 0, "fresh"
@@ -62,9 +70,9 @@ def paid_usdt(invoice):
     return amount * (Decimal(1) - invoice.refunded_rub / invoice.requested_rub)
 
 
-async def capital_state(db):
+async def capital_state(db, *, refresh_wallet=True):
     settings = get_settings()
-    wallet, age, freshness = await wallet_balance(db)
+    wallet, age, freshness = await (wallet_balance(db) if refresh_wallet else cached_wallet_balance(db))
     gross = case(
         (PaymentInvoice.paid_asset == "USDT", PaymentInvoice.paid_amount),
         else_=PaymentInvoice.paid_amount * PaymentInvoice.paid_usd_rate,
@@ -105,6 +113,7 @@ async def capital_state(db):
                 select(func.coalesce(func.sum(Generation.provider_cost_usdt_snapshot), 0)).where(
                     Generation.status == "completed",
                     Generation.actual_provider_cost_usdt.is_(None),
+                    Generation.client_finalized_at.is_(None),
                 )
             )
         ).scalar()
@@ -126,11 +135,7 @@ async def capital_state(db):
     )
     active = Decimal(
         (
-            await db.execute(
-                select(func.coalesce(func.sum(active_reserve), 0)).where(
-                    Generation.status.in_(ACTIVE)
-                )
-            )
+            await db.execute(select(func.coalesce(func.sum(active_reserve), 0)).where(Generation.status.in_(ACTIVE)))
         ).scalar()
     )
     rows = (
@@ -210,13 +215,8 @@ async def provider_capital_state(db, partner_id, provider="argolink"):
         (
             await db.execute(
                 select(func.coalesce(func.sum(active_reserve), 0)).where(
-                    (
-                        Generation.status.in_(live_statuses)
-                    )
-                    | (
-                        Generation.status.in_(uncertain_statuses)
-                        & (Generation.created_at >= uncertain_cutoff)
-                    )
+                    (Generation.status.in_(live_statuses))
+                    | (Generation.status.in_(uncertain_statuses) & (Generation.created_at >= uncertain_cutoff))
                 )
             )
         ).scalar()
@@ -230,6 +230,16 @@ async def provider_capital_state(db, partner_id, provider="argolink"):
         if amount is None:
             raise HTTPException(503, "provider_temporarily_unavailable")
         pending += amount
+    # Closed customer requests can still have an unresolved procurement cost.
+    terminal_hold = Decimal(
+        await db.scalar(
+            select(func.coalesce(func.sum(Generation.provider_cost_hold_usdt), 0)).where(
+                Generation.status.not_in(ACTIVE)
+            )
+        )
+        or 0
+    )
+    active += terminal_hold
     required_float = get_settings().required_provider_float_usdt
     return {
         "balance": balance,
