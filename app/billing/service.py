@@ -218,8 +218,6 @@ async def settle_confirmed_partner_charge(
         await settle_generation_reserve(db, generation)
     partner = await lock_partner_for_update(db, generation.partner_id)
     adjustment = (Decimal(generation.partner_price_rub) if reserve is not None else Decimal(0)) - amount
-    if adjustment == 0:
-        return  # No phantom zero-valued ledger event; settlement is recorded on generation.
     await apply_partner_balance_change(
         db=db,
         partner=partner,
