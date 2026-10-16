@@ -1,0 +1,42 @@
+name: Import reviewed release candidate
+on:
+  push:
+    branches: [ops/import-reviewed-release-20261016]
+    paths: [.github/workflows/import-reviewed-release.yml]
+permissions:
+  contents: write
+concurrency:
+  group: import-reviewed-release-20261016
+  cancel-in-progress: false
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout candidate base
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 3ee1efd1b21d09e0183abdb8c53af3d31550285e
+          fetch-depth: 1
+      - name: Verify and import tested public source patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=3ee1efd1b21d09e0183abdb8c53af3d31550285e
+          target=fix/client-finality-and-billing-invariants
+          test "$(git rev-parse HEAD)" = "$base"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$base"
+          test "$(git ls-remote origin "refs/heads/$target" | cut -f1)" = "$base"
+          patch="$RUNNER_TEMP/reviewed-release.patch"
+          curl --fail --show-error --silent --location --proto '=https' --proto-redir '=https' --max-time 60 \
+            'https://drop.pensa.ar/f/-JxO-PqgW_cTN/release-reviewed.patch' -o "$patch"
+          printf '51ebb0a923843faf31566e4829b31cf0f90ea1a3e9fde6e8986eb07232102226  %s\n' "$patch" | sha256sum --check --status
+          git apply --index --check "$patch"
+          git apply --index "$patch"
+          git diff --cached --check
+          test "$(git write-tree)" = 021a39df1e796772edb7ff45df6f63550b653278
+          git diff --cached --stat
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -m 'fix: durable customer finality, response recovery and financial invariants'
+          git push origin "HEAD:refs/heads/$target"
+          rm -f "$patch"
