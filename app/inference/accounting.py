@@ -5,8 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.billing.service import (
     apply_cost_coverage_change,
-    settle_confirmed_partner_charge,
     lock_partner_for_update,
+    settle_confirmed_partner_charge,
     settle_generation_reserves,
 )
 from app.generations.models import Generation
