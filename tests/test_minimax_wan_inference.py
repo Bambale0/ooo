@@ -72,7 +72,7 @@ async def test_native_video_reference_accounting_and_idempotency(
             assert generation.actual_provider_cost_usdt == cost * 10
         else:
             assert generation.status == "failed"
-            assert any(row.operation_type == "generation_reserve_release" for row in entries)
+            assert entries == []  # Failed provider work never takes partner funds
         await poll_generation_provider(db_session, generation)
         await db_session.refresh(partner)
         assert partner.balance_rub == Decimal("1000000") - expected

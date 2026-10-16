@@ -64,7 +64,7 @@ async def test_trial_flag_in_api_body_does_not_grant_free_billing(client, db_ses
     body = {"model": "grok-imagine-video-1.5", "prompt": "test", "duration": 6, "trial_telegram_id": "native-1"}
     result = await client.post("/v1/videos/generations", json=body, headers=headers)
     assert result.status_code == 202
-    assert partner.balance_rub == Decimal("999940")
+    assert partner.balance_rub == Decimal("1000000")  # Non-trial task is still queued
     assert not list((await db_session.execute(select(TrialEntitlement))).scalars())
     await upstream.aclose()
 

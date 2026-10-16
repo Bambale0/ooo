@@ -202,7 +202,7 @@ async def test_native_actual_usage_and_duplicate_never_resubmits(client, db_sess
     changed = await client.post("/v1/responses", json={**body, "input": "different"}, headers=headers)
     assert changed.status_code == 409 and changed.json()["detail"] == "idempotency_conflict"
     entries = list((await db_session.execute(select(LedgerEntry))).scalars())
-    assert len(entries) == 2
+    assert len(entries) == 1
     await upstream.aclose()
 
 
@@ -263,7 +263,7 @@ async def test_native_rejections_and_ambiguous_outcomes(client, db_session, monk
     result = await client.post("/v1/responses", json=body, headers=headers)
     assert "private provider detail" not in result.text
     await db_session.refresh(partner)
-    assert (partner.balance_rub < Decimal("1000000")) is held
+    assert partner.balance_rub == Decimal("1000000")  # Even ambiguous responses have no advance hold
     g = (await db_session.execute(select(Generation))).scalar_one()
     assert g.status == ("reconciliation_required" if held else "failed")
     assert (await client.post("/v1/responses", json=body, headers=headers)).status_code == 409
@@ -476,7 +476,7 @@ async def test_native_video_reserves_references_and_preserves_controls(client, d
     await settle_actual(db_session, g, {"seconds": 9})
     assert g.actual_charge_rub == Decimal("180")
     entries = list((await db_session.execute(select(LedgerEntry))).scalars())
-    assert len(entries) == 2
+    assert len(entries) == 1
     await upstream.aclose()
 
 

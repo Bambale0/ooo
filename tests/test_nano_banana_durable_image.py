@@ -97,7 +97,7 @@ async def test_image_storage_failure_must_not_mark_paid_generation_completed(
     assert generation.result_url is None
     assert not (await db_session.execute(select(MediaAsset))).scalars().all()
     await db_session.refresh(partner)
-    assert partner.balance_rub < Decimal("1000000")  # held, not double-refunded or charged
+    assert partner.balance_rub == Decimal("1000000")  # No advance hold or charge
     await upstream.aclose()
 
 

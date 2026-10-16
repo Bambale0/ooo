@@ -287,7 +287,7 @@ async def test_provider_funding_reject_preserves_request_for_retry_without_walle
         again = await client.post(url, headers=headers, json=body)
         assert again.status_code == 202, again.text
         assert len((await db_session.execute(select(Generation))).scalars().all()) == 1
-        assert len((await db_session.execute(select(LedgerEntry))).scalars().all()) == 1
+        assert len((await db_session.execute(select(LedgerEntry))).scalars().all()) == 0
     finally:
         if upstream is not None:
             await upstream.aclose()
