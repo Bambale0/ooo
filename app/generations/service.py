@@ -622,8 +622,8 @@ async def poll_generation_provider(
                                 Decimal("0.01"), rounding=ROUND_HALF_UP
                             )
                             await settle_confirmed_partner_charge(db, generation, charge)
-                        generation.actual_charge_rub = charge
-                        generation.usage_snapshot = {"seconds": seconds}
+                            generation.actual_charge_rub = charge
+                            generation.usage_snapshot = {"seconds": seconds}
                 else:
                     charge = Decimal(generation.partner_price_rub)
                     await settle_confirmed_partner_charge(db, generation, charge)
