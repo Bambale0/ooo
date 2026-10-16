@@ -53,6 +53,21 @@ async def generation(db, owner, *, status="completed", actual="499.80", entries=
     return row, lines
 
 
+async def test_actual_only_partner_charge_appears_once(cabinet, db_session):
+    feed, _ = cabinet
+    owner = await partner(db_session)
+    gen, entries = await generation(
+        db_session, owner, actual="0.58",
+        entries=[("generation_usage_charge", "-0.58")],
+    )
+    text = (await feed(callback="history:0"))[-1].text
+    assert "-0.58" in text and text.count(gen.id) == 1
+    assert "975.80" not in text
+    assert "резерв" not in text.lower()
+    assert len(entries) == 1
+    assert entries[0].operation_type == "generation_usage_charge"
+
+
 async def test_final_charge_replaces_reserve_and_adjustment_in_partner_history(cabinet, db_session):
     feed, _ = cabinet
     owner = await partner(db_session)

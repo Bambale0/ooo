@@ -5,8 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.billing.service import (
     apply_cost_coverage_change,
-    apply_partner_balance_change,
     lock_partner_for_update,
+    settle_confirmed_partner_charge,
     settle_generation_reserves,
 )
 from app.generations.models import Generation
@@ -81,8 +81,8 @@ async def settle_actual(
 ) -> None:
     """Append only compensations, once, using the immutable accepted price schedule.
 
-    Caller holds the generation lock. A late successful job first restores the
-    original reserve and then applies exactly one usage adjustment.
+    Caller holds the generation lock. New work is charged only after
+    confirmed usage; old reservations and late refunds settle idempotently.
     """
     await db.execute(
         select(Generation)
@@ -101,16 +101,8 @@ async def settle_actual(
         cost = provider_cost
     covered = (cost * generation.rub_per_usdt_snapshot).quantize(Decimal(".01"), rounding=ROUND_HALF_UP)
     await settle_generation_reserves(db, generation)
+    await settle_confirmed_partner_charge(db, generation, charge)
     partner = await lock_partner_for_update(db, generation.partner_id)
-    await apply_partner_balance_change(
-        db,
-        partner,
-        generation.partner_price_rub - charge,
-        "generation_usage_adjustment",
-        f"generation-usage:{generation.id}",
-        generation.id,
-        "Actual usage settlement",
-    )
     hold_rub = Decimal(provider_cost_hold_rub)
     if not hold_rub.is_finite() or hold_rub < 0:
         raise ValueError("invalid_provider_cost_hold")

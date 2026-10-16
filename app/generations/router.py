@@ -8,7 +8,6 @@ from app.accounts.models import Partner
 from app.api.dependencies import DbSession, PartnerAuth, get_current_partner, get_partner_auth, require_admin
 from app.billing.service import (
     apply_cost_coverage_change,
-    apply_partner_balance_change,
     lock_partner_for_update,
     require_sufficient_balance,
 )
@@ -127,8 +126,9 @@ async def create_generation(
     if existing is not None:
         return existing
 
-    # Both funding gates happen before a generation UUID/row or either reserve is created.
-    await require_sufficient_balance(locked_partner, price_rub)
+    # Partner price is charged only for confirmed usage; upstream procurement
+    # capital is still checked and reserved independently.
+    await require_sufficient_balance(locked_partner, Decimal("0.01"))
     from app.billing.capital import require_provider_capital
 
     await require_provider_capital(db, provider_cost_reserve_usdt, partner_id=locked_partner.id)
@@ -161,6 +161,7 @@ async def create_generation(
             "billing_unit": price.billing_unit,
             "unit_price_rub": str(price.price_rub),
             "billable_units": billable_units,
+            "partner_billing_policy": "actual_only",
         },
     )
     db.add(generation)
@@ -168,16 +169,6 @@ async def create_generation(
     from app.providers.circuit import require_admission
 
     await require_admission(db, generation.id, claim=False)
-    await apply_partner_balance_change(
-        db=db,
-        partner=locked_partner,
-        amount_rub=-price_rub,
-        operation_type="generation_reserve",
-        idempotency_key=f"generation-reserve:{generation.id}",
-        generation_id=generation.id,
-        description=f"Reserved partner price for {model.slug} ({billable_units} {price.billing_unit})",
-        allow_negative=False,
-    )
     await apply_cost_coverage_change(
         db=db,
         partner=locked_partner,
@@ -190,7 +181,7 @@ async def create_generation(
     )
     await db.refresh(generation)
     logger.info(
-        "generation_reserved",
+        "generation_admitted",
         extra={
             "trace_id": generation.id,
             "generation_id": generation.id,

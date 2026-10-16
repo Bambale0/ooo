@@ -148,6 +148,7 @@ async def test_seedance_cost_and_internal_fx_snapshots_settle_once(
         )
         assert sum(x.amount_rub for x in coverage) == -expected_coverage
         ledger = list(await db_session.scalars(select(LedgerEntry).where(LedgerEntry.generation_id == generation.id)))
-        assert len(ledger) == 2 and sum(x.amount_rub for x in ledger) == -expected_charge
+        assert len(ledger) == 1 and ledger[0].operation_type == "generation_usage_charge"
+        assert sum(x.amount_rub for x in ledger) == -expected_charge
     finally:
         await upstream.aclose()

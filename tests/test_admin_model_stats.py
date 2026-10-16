@@ -182,6 +182,66 @@ async def test_database_completion_boundaries_ledger_and_cost_aggregation(db_ses
     assert totals['historical'] == 0
 
 
+async def test_actual_only_settlement_is_reported_by_settlement_date(db_session):
+    from datetime import timedelta
+
+    from app.accounts.models import Partner
+    from app.billing.models import LedgerEntry
+    from app.catalog.models import Model, PartnerPrice
+    from app.generations.models import Generation
+    from app.providers.models import ProviderAttempt, ProviderOutcome
+
+    owner = Partner(telegram_id="report-actual-only", company_name="Actual", project_name="Actual")
+    model = Model(slug="report-actual-only", name="Actual only", modality="video", status="production")
+    db_session.add_all([owner, model])
+    await db_session.flush()
+    db_session.add(
+        PartnerPrice(
+            model_id=model.id, mode="default", resolution="720p",
+            price_rub=Decimal("12.50"), provider_cost_usdt=Decimal("0.10"),
+            billing_unit="second",
+        )
+    )
+    generation = Generation(
+        partner_id=owner.id, model_id=model.id, model_slug=model.slug,
+        mode="videos/generations", resolution="720p", duration_seconds=1,
+        status="completed", prompt="Actual usage", idempotency_key="actual-only-report",
+        created_at=START - timedelta(days=1), partner_price_rub=Decimal("12.50"),
+        actual_charge_rub=Decimal("12.50"), actual_provider_cost_usdt=Decimal("0.10"),
+        provider_cost_reserve_rub=Decimal("10.00"), rub_per_usdt_snapshot=Decimal("100"),
+        request_payload={"rates": {"seconds": {"retail": "12.50", "cost": "0.10"}}},
+    )
+    db_session.add(generation)
+    await db_session.flush()
+    db_session.add(
+        LedgerEntry(
+            partner_id=owner.id, generation_id=generation.id,
+            operation_type="generation_usage_charge", amount_rub=Decimal("-12.50"),
+            balance_after_rub=Decimal("100.00"), idempotency_key="actual-only-settlement",
+            created_at=START + timedelta(minutes=10),
+        )
+    )
+    db_session.add(
+        ProviderOutcome(
+            generation_id=generation.id, provider="argolink", outcome="error",
+            created_at=generation.created_at,
+        )
+    )
+    db_session.add(
+        ProviderAttempt(
+            generation_id=generation.id, provider="argolink",
+            status="completed", provider_task_id="confirmed-completed-video",
+            usage_snapshot={"billed_seconds": 1}, provider_cost_usdt=Decimal("0.10"),
+            cost_status="settled",
+        )
+    )
+    await db_session.commit()
+    rows = await report.load_rows(db_session, START, END)
+    assert [row["id"] for row in rows] == [generation.id]
+    assert rows[0]["revenue_rub"] == Decimal("12.50")
+    assert rows[0]["cost_usd"] == Decimal("0.10")
+
+
 async def test_database_notifications_are_admin_only_and_idempotent(db_session):
     import pytest
     from sqlalchemy import select

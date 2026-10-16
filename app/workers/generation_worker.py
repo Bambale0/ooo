@@ -4,10 +4,13 @@ import signal
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
+from datetime import timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.billing.models import LedgerEntry
+from app.billing.service import release_generation_reserve
 from app.generations.models import Generation
 from app.generations.service import (
     FALLBACK_PROVIDERS,
@@ -40,6 +43,50 @@ class WorkerCycleResult:
         return any((self.dispatched, self.polled))
 
 
+async def release_stale_partner_reserves_once(db: AsyncSession, *, limit: int = 100) -> int:
+    """Release accidental old-style holds after 30m for policy-tagged work.
+
+    New actual-only requests carry an immutable billing-policy marker and must
+    never have a partner reserve. This defensive sweep handles rollout races.
+    Pre-policy historical holds require separately approved reconciliation:
+    do NOT mass-refund them (APIX historical scope is Qwen only).
+    """
+    cutoff = utc_now() - timedelta(minutes=30)
+    eligible = (
+        "queued", "submitting", "sent_to_provider", "processing",
+        "timeout", "reconciliation_required",
+    )
+    reserved_ids = select(LedgerEntry.generation_id).where(
+        LedgerEntry.operation_type == "generation_reserve"
+    )
+    released_ids = select(LedgerEntry.generation_id).where(
+        LedgerEntry.operation_type == "generation_reserve_release"
+    )
+    rows = await db.scalars(
+        select(Generation)
+        .where(
+            Generation.created_at <= cutoff,
+            Generation.status.in_(eligible),
+            Generation.actual_charge_rub.is_(None),
+            Generation.request_payload["partner_billing_policy"].as_string() == "actual_only",
+            Generation.id.in_(reserved_ids),
+            Generation.id.not_in(released_ids),
+        )
+        .order_by(Generation.created_at, Generation.id)
+        .limit(limit)
+        .with_for_update(skip_locked=True)
+    )
+    count = 0
+    for generation in rows.all():
+        entry = await release_generation_reserve(
+            db, generation, reason="Unused partner hold expired after 30 minutes"
+        )
+        count += int(entry is not None)
+    if count:
+        logger.info("partner_holds_expired", extra={"count": count})
+    return count
+
+
 async def process_generation_work_once(
     db: AsyncSession,
     *,
@@ -47,6 +94,7 @@ async def process_generation_work_once(
     provider: str | None = None,
 ) -> WorkerCycleResult:
     """Single-session worker path kept for focused tests and admin/debug use."""
+    await release_stale_partner_reserves_once(db, limit=max(20, limit))
     dispatched = await _dispatch_queued_generations(db, limit=limit, provider=provider)
     polled = await _poll_active_generations(db, limit=limit, provider=provider)
     await _refresh_generation_queue_metrics_with_session(db)
@@ -71,6 +119,7 @@ async def process_generation_work_concurrently_once(
     async with session_factory() as db:
         for recovery_provider in [provider] if provider else [PRIMARY_PROVIDER, *FALLBACK_PROVIDERS]:
             await recovery_tick(db, recovery_provider)
+        await release_stale_partner_reserves_once(db, limit=max(100, limit * 5))
         await db.commit()
 
     dispatched = await _run_bounded(

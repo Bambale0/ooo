@@ -64,9 +64,9 @@ async def test_measured_video_admission_preserves_original_identity_and_staged_b
     duplicate = await client.post("/v1/videos/generations", json=body, headers=headers)
     assert duplicate.json() == response.json()
     assert prepare.await_count == 1
-    assert len(list(await db_session.scalars(select(LedgerEntry)))) == 1
+    assert len(list(await db_session.scalars(select(LedgerEntry)))) == 0
     assert len(list(await db_session.scalars(select(CoverageLedgerEntry)))) == 1
-    assert partner.balance_rub == Decimal("1000000") - expected_seconds * 20
+    assert partner.balance_rub == Decimal("1000000")  # No partner hold at admission
     await upstream.aclose()
 
 
@@ -124,7 +124,7 @@ async def test_real_inspection_copy_admission_and_restart_dispatch_share_identic
         assert submitted == [{**BODY, "reference_videos": [{"url": COPY}]}]
         await dispatch_generation_to_provider(restarted, durable)
         assert len(submitted) == 1
-    assert partner.balance_rub == Decimal("999800")
+    assert partner.balance_rub == Decimal("1000000")
     await upstream.aclose()
 
 
@@ -154,7 +154,7 @@ async def test_expired_first_submit_releases_existing_reserves_once_without_paid
     assert partner.balance_rub == partner.cost_coverage_rub == Decimal("1000000")
     await dispatch_generation_to_provider(db_session, generation)
     entries = list(await db_session.scalars(select(LedgerEntry)))
-    assert [item.operation_type for item in entries].count("generation_reserve_release") == 1
+    assert entries == []  # Nothing was debited, therefore nothing needs refunding
     from app.webhooks.models import WebhookEvent
 
     events = list(await db_session.scalars(select(WebhookEvent)))
@@ -178,7 +178,7 @@ async def test_expiry_preserves_prior_unknown_obligation_without_replay_or_credi
     assert await dispatch_generation_to_provider(db_session, generation) is attempt
     assert not submitted and not attempt.provider_task_id
     assert (partner.balance_rub, partner.cost_coverage_rub) == before
-    assert len(list(await db_session.scalars(select(LedgerEntry)))) == 1
+    assert len(list(await db_session.scalars(select(LedgerEntry)))) == 0
     assert len(list(await db_session.scalars(select(CoverageLedgerEntry)))) == 1
     await upstream.aclose()
 
@@ -234,10 +234,10 @@ async def test_measured_video_with_photo_retains_edit_retail_and_video_procureme
         assert generation.provider_cost_usdt_snapshot == Decimal("2.457")
         assert _provider_request_for_generation(generation).native_body == staged
         await db_session.refresh(partner)
-        assert partner.balance_rub == Decimal("999535.90")
+        assert partner.balance_rub == Decimal("1000000")
         duplicate = await client.post("/v1/videos/generations", json=original, headers=headers)
         assert duplicate.json() == response.json()
         assert prepare.await_count == 1
-        assert len(list(await db_session.scalars(select(LedgerEntry)))) == 1
+        assert len(list(await db_session.scalars(select(LedgerEntry)))) == 0
     finally:
         await upstream.aclose()

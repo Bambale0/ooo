@@ -40,6 +40,7 @@ class FakeArgoLinkAdapter:
         return ProviderPollResult(
             status="completed",
             result_url=f"https://argolink.io/v1/videos/{provider_task_id}/content",
+            usage={"billed_seconds": 5, "output_seconds": 5, "reference_video_seconds": 0},
         )
 
     async def open_result_stream(self, provider_content_url: str, *, range_header: str | None = None):
@@ -356,7 +357,8 @@ async def test_partner_can_create_idempotent_generation_after_manual_credit(
         headers=admin_headers,
     )
     assert ledger_response.status_code == 200
-    assert len(ledger_response.json()) == 2
+    assert len(ledger_response.json()) == 2  # Manual top-up plus confirmed generation charge.
+    assert any(row["operation_type"] == "generation_usage_charge" for row in ledger_response.json())
 
     api_key_id = key_response.json()["id"]
     revoke_response = await client.post(
@@ -435,6 +437,7 @@ async def test_worker_reconciles_late_provider_success_after_local_timeout(
             return ProviderPollResult(
                 status="completed",
                 result_url=f"https://argolink.io/v1/videos/{provider_task_id}/content",
+                usage={"billed_seconds": 5, "output_seconds": 5, "reference_video_seconds": 0},
             )
 
     adapter = LateSuccessAdapter(api_key="argolink-secret")
@@ -529,6 +532,7 @@ async def test_worker_reconciles_late_provider_success_after_local_timeout(
             "generation_reserve",
             "generation_reserve_release",
             "generation_late_charge",
+            "generation_usage_adjustment",
         ]
 
         events_result = await db_session.execute(

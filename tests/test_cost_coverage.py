@@ -140,7 +140,7 @@ async def test_generation_checks_real_capital_not_historical_coverage(
     partner = await db_session.get(Partner, partner_id)
     assert partner is not None
     await db_session.refresh(partner)
-    assert Decimal(partner.balance_rub) == Decimal("900.00")
+    assert Decimal(partner.balance_rub) == Decimal("1000.00")
     assert Decimal(partner.cost_coverage_rub) == Decimal("-85.00")
 
     generation = await db_session.get(Generation, accepted.json()["id"])

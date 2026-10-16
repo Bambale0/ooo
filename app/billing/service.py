@@ -198,6 +198,38 @@ async def settle_generation_reserve(
     )
 
 
+async def settle_confirmed_partner_charge(
+    db: AsyncSession, generation: Generation, charge: Decimal
+) -> None:
+    """Bill confirmed usage once, with append-only compatibility for old holds.
+
+    New generations have no partner reserve; old generations may have one
+    which was already refunded. Original debits and reversals stay auditable.
+    The caller holds the generation lock and sets actual_charge_rub after
+    finishing the whole transaction.
+    """
+    amount = Decimal(charge)
+    if not amount.is_finite() or amount < 0:
+        raise ValueError("invalid_confirmed_partner_charge")
+    reserve = await _find_generation_ledger_entry(db, generation.id, "generation_reserve")
+    if reserve is not None and Decimal(reserve.amount_rub) >= 0:
+        raise ValueError("invalid_original_partner_reserve")
+    if reserve is not None:
+        await settle_generation_reserve(db, generation)
+    partner = await lock_partner_for_update(db, generation.partner_id)
+    adjustment = (Decimal(generation.partner_price_rub) if reserve is not None else Decimal(0)) - amount
+    await apply_partner_balance_change(
+        db=db,
+        partner=partner,
+        amount_rub=adjustment,
+        operation_type="generation_usage_adjustment" if reserve is not None else "generation_usage_charge",
+        idempotency_key=f"generation-usage:{generation.id}",
+        generation_id=generation.id,
+        description="Confirmed actual partner usage",
+        allow_negative=True,
+    )
+
+
 async def settle_generation_cost_reserve(
     db: AsyncSession,
     generation: Generation,

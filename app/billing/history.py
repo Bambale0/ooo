@@ -20,6 +20,7 @@ GENERATION_ENTRIES = (
     "generation_reserve_release",
     "generation_late_charge",
     "generation_usage_adjustment",
+    "generation_usage_charge",
     "generation_charge",
     "generation_refund",
 )

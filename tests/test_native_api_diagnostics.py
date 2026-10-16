@@ -83,7 +83,7 @@ async def test_native_524_preserves_diagnostics_without_replaying_or_exposing_pr
     assert duplicate.status_code == 409 and duplicate.json()["request_id"] == generation.id
     assert len(calls) == 1
     await db_session.refresh(partner)
-    assert partner.balance_rub == Decimal("999990")
+    assert partner.balance_rub == Decimal("1000000")
     assert any(getattr(r, "generation_id", None) == generation.id for r in caplog.records)
     await upstream.aclose()
 
@@ -222,9 +222,9 @@ async def test_body_read_failure_is_distinguished_from_connect_or_header_timeout
 @pytest.mark.parametrize(
     "exception, expected_state, expected_balance",
     [
-        (httpx.ReadTimeout, "reconciliation_required", Decimal("999990")),
-        (httpx.WriteTimeout, "reconciliation_required", Decimal("999990")),
-        (httpx.RemoteProtocolError, "reconciliation_required", Decimal("999990")),
+        (httpx.ReadTimeout, "reconciliation_required", Decimal("1000000")),
+        (httpx.WriteTimeout, "reconciliation_required", Decimal("1000000")),
+        (httpx.RemoteProtocolError, "reconciliation_required", Decimal("1000000")),
         (httpx.ConnectTimeout, "failed", Decimal("1000000")),
         (httpx.PoolTimeout, "failed", Decimal("1000000")),
         (httpx.ConnectError, "failed", Decimal("1000000")),

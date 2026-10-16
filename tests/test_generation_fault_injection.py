@@ -457,6 +457,7 @@ async def test_late_provider_success_recharges_released_reserves_exactly_once(
             ("generation_reserve", Decimal("-80.00")),
             ("generation_reserve_release", Decimal("80.00")),
             ("generation_late_charge", Decimal("-80.00")),
+            ("generation_usage_adjustment", Decimal("0.00")),
         ]
     )
 

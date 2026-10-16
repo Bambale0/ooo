@@ -70,15 +70,15 @@ def render_native_video_reference(lang: str, enabled_models: set[str]) -> str:
             parts.append("<pre><code>POST /v1/videos/generations\n" +
                          escape(json.dumps(example, ensure_ascii=False, indent=2)) + "</code></pre>")
         ru = (
-            "Референсы передаются как HTTPS URL. Первоначальный резерв включает запас на входные видео; "
-            "финальный расчёт использует usage.billed_seconds, остаток резерва возвращается. "
+            "Референсы передаются как HTTPS URL. Предварительного удержания с партнёрского баланса нет. "
+            "Списание выполняется после успешной генерации по подтверждённым usage.billed_seconds. "
             "Изображения и аудио отдельно не оплачиваются. Один запрос — одно видео. "
             "Сохраняйте request_id из HTTP 202, опрашивайте GET /v1/videos/{request_id}; "
             "при done скачайте /v1/videos/{request_id}/content. Не повторяйте POST с новым ключом при задержке."
         )
         en = (
-            "References are HTTPS URLs. The initial reserve includes a bound for input video; final billing "
-            "uses usage.billed_seconds and releases the excess reserve. Images and audio have no extra fee. "
+            "References are HTTPS URLs. No upfront hold is placed on partner funds. "
+            "Confirmed usage.billed_seconds determines the final charge. Images and audio have no extra fee. "
             "One request produces one video. Save request_id from HTTP 202, poll GET /v1/videos/{request_id}; "
             "on done download /v1/videos/{request_id}/content. Do not replay a slow POST with a new key."
         )

@@ -11,7 +11,6 @@ from sqlalchemy import select
 from app.api.dependencies import PartnerAuth
 from app.billing.service import (
     apply_cost_coverage_change,
-    apply_partner_balance_change,
     lock_partner_for_update,
     require_sufficient_balance,
 )
@@ -227,10 +226,13 @@ async def reserve(
     coverage = (provider_cost_reserve_usdt * fx).quantize(Decimal(".01"), rounding=ROUND_HALF_UP)
     if trial_telegram_id is None and charge < cost * fx:
         raise InferenceAdmissionError(503, "provider_temporarily_unavailable", failure_stage="pricing")
-    try:
-        await require_sufficient_balance(partner, charge)
-    except HTTPException as exc:
-        raise _admission_error(exc, "balance") from exc
+    # A worst-case token / video quote is not an upfront partner debit.
+    # Require a positive funded balance; settle confirmed usage afterward.
+    if trial_telegram_id is None:
+        try:
+            await require_sufficient_balance(partner, Decimal("0.01"))
+        except HTTPException as exc:
+            raise _admission_error(exc, "balance") from exc
     from app.billing.capital import require_provider_capital
 
     try:
@@ -246,6 +248,7 @@ async def reserve(
         "request_hash": request_hash,
         "rates": rates,
         "reserved_units": units,
+        "partner_billing_policy": "actual_only",
         "api_key_id": auth.api_key.id,
     }
     if client_request_id is not None:
@@ -290,16 +293,6 @@ async def reserve(
         await require_admission(db, generation.id, claim=not video)
     except HTTPException as exc:
         raise _admission_error(exc, "provider_circuit") from exc
-    await apply_partner_balance_change(
-        db,
-        partner,
-        -charge,
-        "generation_reserve",
-        f"generation-reserve:{generation.id}",
-        generation.id,
-        "Native inference reserve",
-        allow_negative=False,
-    )
     await apply_cost_coverage_change(
         db,
         partner,
@@ -318,7 +311,7 @@ async def reserve(
         db.add(attempt)
     await db.commit()
     logger.info(
-        "generation_reserved",
+        "generation_admitted",
         extra={
             "trace_id": generation.id,
             "generation_id": generation.id,
@@ -395,11 +388,12 @@ def quote(protocol, body, prices, *, fx=None, trial=False, video_seconds=None):
                 key: {kind: str(Decimal(value) * multiplier) for kind, value in rate.items()}
                 for key, rate in rates.items()
             }
-        # Reserve a conservative context allowance for opaque multimodal/tool inputs.
-        # This is a financial hold, not a cap or a modification of the native body.
+        # An omitted output-token limit must not imply an enormous 2M-token
+        # procurement hold. 8192 is an admission estimate, NOT an output cap;
+        # the provider request remains unchanged and final billing uses usage.
         maximum = max(
             (body[k] for k in ("max_tokens", "max_completion_tokens", "max_output_tokens") if k in body),
-            default=2_097_152,
+            default=8192,
         )
         serialized = json.dumps(body)
         opaque = has_opaque_input(body)

@@ -101,12 +101,12 @@ async def test_media_preflight_does_not_lock_out_ordinary_or_duplicate_admission
             generations = list(await db.scalars(select(Generation)))
             retail = list(await db.scalars(select(LedgerEntry)))
             procurement = list(await db.scalars(select(CoverageLedgerEntry)))
-            assert len(generations) == len(retail) == len(procurement) == (1 if duplicate else 2)
+            assert len(generations) == len(procurement) == (1 if duplicate else 2)
+            assert retail == []  # Awaiting provider work cannot debit the partner.
             assert (measured_id == ordinary_id) is duplicate
-            assert all(item.operation_type == "generation_reserve" for item in retail)
             assert all(item.operation_type == "provider_cost_reserve" for item in procurement)
             partner = await db.get(Partner, partner_id)
-            assert partner.balance_rub == Decimal("1000000") - sum(g.partner_price_rub for g in generations)
+            assert partner.balance_rub == Decimal("1000000")
             if not duplicate:
                 measured_row = await db.get(Generation, measured_id)
                 assert measured_row.request_payload["reserved_units"] == {"seconds": 10}
