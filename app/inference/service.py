@@ -388,11 +388,12 @@ def quote(protocol, body, prices, *, fx=None, trial=False, video_seconds=None):
                 key: {kind: str(Decimal(value) * multiplier) for kind, value in rate.items()}
                 for key, rate in rates.items()
             }
-        # Reserve a conservative context allowance for opaque multimodal/tool inputs.
-        # This is a financial hold, not a cap or a modification of the native body.
+        # An omitted output-token limit must not imply an enormous 2M-token
+        # procurement hold. 8192 is an admission estimate, NOT an output cap;
+        # the provider request remains unchanged and final billing uses usage.
         maximum = max(
             (body[k] for k in ("max_tokens", "max_completion_tokens", "max_output_tokens") if k in body),
-            default=2_097_152,
+            default=8192,
         )
         serialized = json.dumps(body)
         opaque = has_opaque_input(body)
