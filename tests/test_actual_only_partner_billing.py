@@ -274,3 +274,40 @@ async def test_legacy_generation_api_collects_exact_charge_only_after_completion
         assert len(await _entries(db_session, generation)) == 1
     finally:
         await provider.aclose()
+
+
+async def test_old_untagged_partner_holds_are_not_mass_refunded(db_session):
+    """Earlier APIX Seedance/Nano jobs are outside the approved Qwen refund."""
+    from app.accounts.models import Partner
+    from app.workers.generation_worker import release_stale_partner_reserves_once
+
+    partner = Partner(
+        telegram_id="old-partner-holds", company_name="Historical", project_name="Historical",
+        balance_rub=Decimal("100"),
+    )
+    db_session.add(partner)
+    await db_session.flush()
+    generation = Generation(
+        partner_id=partner.id, model_id="historical-video",
+        model_slug="seedance-2.5", mode="videos/generations",
+        resolution="720p", duration_seconds=4,
+        status="reconciliation_required", prompt="Old request",
+        idempotency_key="historical-hold-no-policy",
+        created_at=utc_now() - timedelta(days=8),
+        partner_price_rub=Decimal("80"), request_payload={},
+    )
+    db_session.add(generation)
+    await db_session.flush()
+    await apply_partner_balance_change(
+        db_session, partner, Decimal("-80"), "generation_reserve",
+        f"generation-reserve:{generation.id}", generation.id,
+        "Old unresolved partner hold", allow_negative=False,
+    )
+    await db_session.commit()
+    assert await release_stale_partner_reserves_once(db_session) == 0
+    await db_session.commit()
+    await db_session.refresh(partner)
+    assert partner.balance_rub == Decimal("20")
+    assert [(entry.operation_type, entry.amount_rub) for entry in await _entries(db_session, generation)] == [
+        ("generation_reserve", Decimal("-80"))
+    ]
