@@ -9,6 +9,7 @@ from app.billing.service import (
     release_generation_cost_reserve,
     release_generation_reserve,
     release_generation_reserves,
+    settle_confirmed_partner_charge,
     settle_generation_reserves,
 )
 from app.contracts.registry import normalized_video
@@ -592,6 +593,26 @@ async def poll_generation_provider(
                     provider=provider,
                     actual_cost=Decimal(generation.provider_cost_usdt_snapshot),
                 )
+            if generation.status == "completed" and generation.actual_charge_rub is None:
+                payload = generation.request_payload or {}
+                if payload.get("billing_unit") == "second":
+                    usage = result.usage if isinstance(result.usage, dict) else {}
+                    seconds = usage.get("billed_seconds")
+                    if isinstance(seconds, bool) or not isinstance(seconds, int) or seconds <= 0:
+                        generation.status = attempt.status = "reconciliation_required"
+                        generation.public_error_code = "usage_reconciliation_required"
+                    else:
+                        charge = (Decimal(str(payload["unit_price_rub"])) * Decimal(seconds)).quantize(
+                            Decimal("0.01"), rounding=ROUND_HALF_UP
+                        )
+                        await settle_confirmed_partner_charge(db, generation, charge)
+                        generation.actual_charge_rub = charge
+                        generation.usage_snapshot = {"seconds": seconds}
+                else:
+                    charge = Decimal(generation.partner_price_rub)
+                    await settle_confirmed_partner_charge(db, generation, charge)
+                    generation.actual_charge_rub = charge
+                    generation.usage_snapshot = {}
         if result.result_url:
             await create_provider_ready_asset(
                 db=db,
