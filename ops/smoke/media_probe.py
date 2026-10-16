@@ -16,11 +16,13 @@ import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-# Docker Official Images mirror; index and amd64/arm64 manifests were verified
-# against docker-library/repo-info on 2026-10-09. Keep this immutable pin reviewed.
+# Docker Official Images python 3.12 slim-trixie linux/amd64 manifest,
+# independently resolved through the official Docker Hub registry 2026-10-16.
+# ECR mirror served HTTP 429 and blocked the production release; keep the
+# replacement immutable and verify its manifest digest before each smoke build.
 OFFICIAL_BASE = (
-    "public.ecr.aws/docker/library/python:3.12-slim-trixie@"
-    "sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1"
+    "docker.io/library/python:3.12-slim-trixie@"
+    "sha256:2b4f19dae3a777dfc3b76730bda1e82e1f66ab2a2686fa93ca78edbfb4f04ffe"
 )
 
 # Generated wholly inside a networkless container; native parsers on the host are
