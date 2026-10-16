@@ -357,8 +357,8 @@ async def test_partner_can_create_idempotent_generation_after_manual_credit(
         headers=admin_headers,
     )
     assert ledger_response.status_code == 200
-    assert len(ledger_response.json()) == 1
-    assert ledger_response.json()[0]["operation_type"] == "generation_usage_charge"
+    assert len(ledger_response.json()) == 2  # Manual top-up plus confirmed generation charge.
+    assert any(row["operation_type"] == "generation_usage_charge" for row in ledger_response.json())
 
     api_key_id = key_response.json()["id"]
     revoke_response = await client.post(
