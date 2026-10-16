@@ -15,7 +15,6 @@ from app.generations.service import dispatch_generation_to_provider, poll_genera
 from app.inference.accounting import settle_actual
 from app.infrastructure.retry import utc_now
 from app.providers.argolink import ArgoLinkAdapter
-from app.workers.generation_worker import release_stale_partner_reserves_once
 
 
 async def _entries(db, generation):
@@ -138,6 +137,8 @@ async def test_older_legacy_hold_returns_once_and_late_success_only_charges_actu
     )
     partner.balance_rub = Decimal("200.00")
     await db_session.commit()
+    from app.workers.generation_worker import release_stale_partner_reserves_once
+
     try:
         response = await client.post(
             "/v1/videos/generations",
