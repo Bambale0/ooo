@@ -22,7 +22,7 @@ from app.inference.image_results import persist_single_image
 from app.inference.images import image_usage, inspect_url_images
 from app.inference.outcomes import finalize_native_failure, preserve_unbilled_result
 from app.inference.replay import replay_response, save_response
-from app.inference.service import reserve
+from app.inference.service import InferenceAdmissionError, reserve
 from app.inference.streams import SSEDecoder, UsageCollector, event_data
 from app.infrastructure.config import get_settings
 from app.media.models import MediaAsset
@@ -330,10 +330,27 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
             error_code=str(exc.detail),
             http_status=exc.status_code,
         )
+        rejection_headers = {**(exc.headers or {}), "X-Request-Id": diagnostic_trace_id}
+        if (
+            isinstance(exc, InferenceAdmissionError)
+            and exc.failure_stage == "provider_capital"
+            and exc.status_code == 503
+            and exc.detail == "provider_temporarily_unavailable"
+            and client_request_id is not None
+        ):
+            # reserve() checked idempotency under the partner lock before this
+            # stage. No provider attempt was dispatched. Complete rollback before
+            # attesting rejection; a rollback failure must not authorize failover.
+            await db.rollback()
+            rejection_headers.update({
+                "X-Submission-State": "not-accepted-v1",
+                "X-Client-Request-Id": client_request_id,
+                "X-Idempotency-Key-Sha256": hashlib.sha256(idem.encode()).hexdigest(),
+            })
         raise HTTPException(
             exc.status_code,
             exc.detail,
-            headers={**(exc.headers or {}), "X-Request-Id": diagnostic_trace_id},
+            headers=rejection_headers,
         ) from exc
     if protocol == "videos/generations":
         response_body = {"request_id": generation.id}
