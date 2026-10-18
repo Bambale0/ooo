@@ -143,3 +143,55 @@ async def test_overlapping_acceptance_after_rollback_prevents_rejection_receipt(
             first.cancel()
         await asyncio.gather(first, return_exceptions=True)
         await upstream.aclose()
+
+
+@pytest.mark.integration
+async def test_rotating_concurrent_keys_cannot_exceed_partner_storage_quota(receipt_postgres_sessions, monkeypatch):
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from fastapi import HTTPException
+
+    from app.inference import admission_receipts
+
+    sessions = receipt_postgres_sessions
+    partner_id, headers, upstream = await seeded(sessions, monkeypatch)
+    monkeypatch.setattr(
+        admission_receipts, "get_settings", lambda: SimpleNamespace(native_rejection_receipts_max_per_partner=2)
+    )
+    async with sessions() as db:
+        key_id = await db.scalar(select(ApiKey.id).where(ApiKey.partner_id == partner_id))
+        other = Partner(telegram_id=str(uuid4()), company_name="Other", project_name="Other")
+        db.add(other)
+        await db.commit()
+        other_id = other.id
+
+    async def fence(index, tenant=partner_id):
+        async with sessions() as db:
+            try:
+                await fence_rejected_admission(
+                    db,
+                    partner_id=tenant,
+                    api_key_id=key_id,
+                    protocol="videos/generations",
+                    body=BODY,
+                    idempotency_key=f"quota-key-{index}",
+                    client_request_id=f"quota-request-{index}",
+                )
+                return True
+            except HTTPException as error:
+                assert error.status_code == 503
+                return False
+
+    try:
+        results = await asyncio.wait_for(asyncio.gather(*(fence(i) for i in range(10))), timeout=15)
+        assert sum(results) == 2
+        assert await fence(99, tenant=other_id)
+        async with sessions() as db:
+            rows = (await db.execute(select(Generation))).scalars().all()
+            assert len(rows) == 3
+            assert sum(g.partner_id == partner_id for g in rows) == 2
+            for model in (ProviderAttempt, LedgerEntry, CoverageLedgerEntry):
+                assert (await db.execute(select(model))).scalars().all() == []
+    finally:
+        await upstream.aclose()

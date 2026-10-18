@@ -228,3 +228,48 @@ async def test_receipt_does_not_identify_procurement_failure_stage(client, db_se
     assert response.headers.get("X-Submission-State") == "not-accepted-v1"
     assert stage not in response.text and stage not in str(response.headers)
     await upstream.aclose()
+
+
+async def test_partner_receipt_quota_stops_new_keys_but_preserves_prior_fence(client, db_session, monkeypatch):
+    from types import SimpleNamespace
+
+    from app.inference import admission_receipts
+
+    _, headers, upstream = await setup(
+        db_session,
+        monkeypatch,
+        lambda request: httpx.Response(202),
+        model="seedance-2.5",
+        category="video",
+        rates=[("default", "480p", "second", Decimal("20"), Decimal(".078"))],
+    )
+    headers.update({"X-Client-Request-Id": RID, "X-Submission-Receipt": "v1"})
+    body = {"model": "seedance-2.5", "prompt": "test", "duration": 4, "resolution": "480p"}
+    monkeypatch.setattr(ArgoLinkAdapter, "prepaid_balance_usdt", AsyncMock(return_value=Decimal(0)))
+    quota = SimpleNamespace(native_rejection_receipts_max_per_partner=1)
+    monkeypatch.setattr(admission_receipts, "get_settings", lambda: quota, raising=False)
+    first = await client.post("/v1/videos/generations", headers=headers, json=body)
+    assert first.status_code == 503 and first.headers.get("X-Submission-State") == "not-accepted-v1"
+    for i in range(4):
+        response = await client.post(
+            "/v1/videos/generations",
+            headers={**headers, "Idempotency-Key": f"new-rejected-key-{i}", "X-Client-Request-Id": f"new-request-{i}"},
+            json=body,
+        )
+        assert response.status_code == 503 and "X-Submission-State" not in response.headers
+    quota.native_rejection_receipts_max_per_partner = 0
+    replay = await client.post("/v1/videos/generations", headers=headers, json=body)
+    assert replay.headers.get("X-Submission-State") == "not-accepted-v1"
+    assert len((await db_session.execute(select(Generation))).scalars().all()) == 1
+    assert (await db_session.execute(select(LedgerEntry))).scalars().all() == []
+    await upstream.aclose()
+
+
+@pytest.mark.parametrize("quota", [-1, 100001])
+def test_receipt_storage_ceiling_is_configuration_validated(quota):
+    from pydantic import ValidationError
+
+    from app.infrastructure.config import Settings
+
+    with pytest.raises(ValidationError):
+        Settings(native_rejection_receipts_max_per_partner=quota)

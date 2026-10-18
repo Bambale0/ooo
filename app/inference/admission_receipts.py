@@ -6,13 +6,14 @@ from typing import Any
 
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.billing.service import lock_partner_for_update
 from app.catalog.models import Model
 from app.generations.models import Generation
 from app.inference.service import _existing_generation, fingerprint
+from app.infrastructure.config import get_settings
 from app.infrastructure.retry import utc_now
 
 REJECTION_KEY = "native_admission_rejection"
@@ -43,6 +44,22 @@ async def fence_rejected_admission(
     if existing is not None:
         await db.commit()
         return existing
+    quota = get_settings().native_rejection_receipts_max_per_partner
+    if quota == 0:
+        raise HTTPException(503, REJECTION_CODE)
+    # The partner row remains locked: rotating keys or simultaneous requests
+    # cannot exceed the cumulative storage budget. Never delete old fences.
+    fenced_keys = (
+        select(Generation.id)
+        .where(
+            Generation.partner_id == partner_id,
+            Generation.request_payload[REJECTION_KEY]["version"].as_integer() == 1,
+        )
+        .limit(quota)
+        .subquery()
+    )
+    if (await db.scalar(select(func.count()).select_from(fenced_keys))) >= quota:
+        raise HTTPException(503, REJECTION_CODE)
     model = await db.scalar(select(Model).where(Model.slug == body["model"]))
     if model is None:
         # Cannot establish a durable identity; remain ambiguous to the caller.
