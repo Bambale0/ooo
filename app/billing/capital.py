@@ -15,6 +15,7 @@ from app.infrastructure.retry import utc_now
 from app.payments.crypto_pay import CryptoPayError, get_crypto_pay_client
 from app.payments.models import PaymentInvoice
 from app.providers.base import ProviderAdapterError
+from app.providers.models import ProviderAttempt
 from app.providers.service import get_partner_provider_adapter
 
 ACTIVE = ("queued", "sent_to_provider", "processing", "timeout", "submitting", "reconciliation_required")
@@ -230,11 +231,22 @@ async def provider_capital_state(db, partner_id, provider="argolink"):
         if amount is None:
             raise HTTPException(503, "provider_temporarily_unavailable")
         pending += amount
-    # Closed customer requests can still have an unresolved procurement cost.
+    # Admission covers recent unsettled work, not the entire historical risk
+    # ledger. The latter remains in capital_state() and cost reconciliation.
+    # Use the attempt's provider, amount and age: a generation may also include
+    # a different provider's fallback cost, or an old but already settled hold.
+    # Do not infer independent wallets from different partner credentials;
+    # same-provider reservations remain conservatively shared until accounts
+    # are explicitly mapped. Keep this under the existing admission lock.
     terminal_hold = Decimal(
         await db.scalar(
-            select(func.coalesce(func.sum(Generation.provider_cost_hold_usdt), 0)).where(
-                Generation.status.not_in(ACTIVE)
+            select(func.coalesce(func.sum(ProviderAttempt.cost_reserve_usdt), 0))
+            .join(Generation, Generation.id == ProviderAttempt.generation_id)
+            .where(
+                Generation.status.not_in(ACTIVE),
+                ProviderAttempt.provider == provider,
+                ProviderAttempt.cost_status == "unknown",
+                ProviderAttempt.created_at >= uncertain_cutoff,
             )
         )
         or 0
