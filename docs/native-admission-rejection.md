@@ -1,6 +1,14 @@
 # Native inference admission rejection receipt
 
-A native capital-stage rejection can be distinguished from an HTTP 503 after upstream submission. After `reserve()` checks existing request identity under the partner row lock and raises `InferenceAdmissionError` at `provider_capital`, the router completes rollback and may return these response headers:
+## Explicit opt-in and compatibility
+
+Clients may send `X-Submission-Receipt: v1` with their validated `X-Client-Request-Id` and `Idempotency-Key`. This opts into terminal rejection of a logical key: after a receipted failure, a genuinely new user action must use a new key. Legacy requests without the opt-in retain the original retryable rejection behavior and receive no receipt.
+
+## Durable receipt
+
+For a typed definitive service-unavailable admission error, the gateway first rolls back. It then re-acquires the existing partner lock and rechecks the idempotency key. If an overlapping retry already won admission, the gateway returns that accepted identity instead of a rejection receipt. Otherwise it commits an unbilled terminal generation as the existing durable idempotency tombstone. No provider attempt, customer charge, cost reservation or ledger entry is created. The tombstone prevents that key from ever being accepted later.
+
+Only after this commit does the rejection carry:
 
 ```
 X-Submission-State: not-accepted-v1
@@ -8,8 +16,12 @@ X-Client-Request-Id: <the validated invocation ID>
 X-Idempotency-Key-Sha256: <SHA-256 of the supplied idempotency key>
 ```
 
-The status and body are unchanged: HTTP 503 and `{"detail":"provider_temporarily_unavailable"}`. The receipt attests that this admission did not create accepted generation work. It is not emitted for a generic HTTPException, another admission stage, post-acceptance failures, accepted idempotent replay, or failed rollback. Legacy requests without a correlated client ID do not get a receipt.
+The HTTP response remains 503 with `{"detail":"provider_temporarily_unavailable"}`. The receipt is provider-agnostic: credential, pricing, funding and circuit admission rejections use the same state. It does not reveal the internal failure stage, provider balance, routing or credentials.
 
-Callers must verify the version, status/body, invocation ID and idempotency digest together over their authenticated provider connection before switching provider. Unmarked responses, timeouts and failed lookups remain ambiguous. Do not replay an already accepted generation. A rejected request may be retried with its original identity under the normal idempotency contract.
+## Failure semantics
 
-This contract does not disable funding checks, alter balances, clear procurement holds, expose supplier credentials or change prices. No database migration is required. Deploying this gateway first is backward-compatible: older clients ignore the receipt. New clients must remain fail-closed until they receive it.
+Generic HTTP exceptions, accepted or post-acceptance failures, failed rollback or failed fence persistence never issue no-acceptance authority. Failed persistence is logged with its actual response status, not as a successful 503 receipt. An accepted idempotent replay has no rejection marker. A tombstoned key replays the rejection and never resumes provider work; changed content under that key retains the normal conflict protection.
+
+Callers must verify the version, exact status/body, invocation ID and idempotency digest together over the authenticated provider connection before switching provider. Timeouts, unmarked errors and failed status lookup stay ambiguous. Older clients ignore the receipt safely. Gateway-first rollout is required for the corresponding client fix.
+
+No treasury controls, prices, historical balances or procurement holds are changed. No schema migration is needed; the existing terminal finality and unique partner/idempotency constraints protect the tombstone. Real PostgreSQL regressions exercise ten concurrent fences and a retry that wins admission between rollback and re-locking.
