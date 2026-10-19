@@ -50,6 +50,27 @@ EXAMPLES = {
             "response_format": "b64_json",
         },
     ),
+    "image-seedream-pro": (
+        "images/generations",
+        {
+            "model": "seedream-5.0-pro",
+            "prompt": "A ceramic cup on a plain background",
+            "resolution": "2k",
+            "aspect_ratio": "16:9",
+            "n": 1,
+            "response_format": "b64_json",
+        },
+    ),
+    "image-seedream-pro-edit": (
+        "images/edits",
+        {
+            "model": "seedream-5.0-pro",
+            "prompt": "Change the cup color to green",
+            "images": [{"image_url": "https://media.example.com/cup.png"}],
+            "resolution": "2k",
+            "n": 1,
+        },
+    ),
     "image-sunburst": (
         "images/generations",
         {
@@ -254,15 +275,15 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
                 "string · required",
                 t("Непустое описание результата/изменений.", "Non-empty output/edit description."),
             ),
-            ("n", "integer · optional, 1", "GPT Image: 1–7; Nano Banana: 1–4; Grok Image: 1–10."),
+            ("n", "integer · optional, 1", "GPT Image: 1–7; Nano Banana: 1–4; Grok Image: 1–10; Seedream 5.0 Pro: 1."),
             (
                 "images",
                 "array<object> · edits",
                 t(
                     'JSON: [{"image_url":"https://…"}] или image_url с data:image/…;base64,…; '
-                    "GPT до 16, Nano Banana Pro до 14, остальные до 3.",
+                    "GPT до 16, Nano Banana Pro до 14, Seedream 5.0 Pro до 8, остальные до 3.",
                     'JSON: [{"image_url":"https://…"}] or a data:image/…;base64,… image_url; '
-                    "GPT up to 16, Nano Banana Pro up to 14, others up to 3.",
+                    "GPT up to 16, Nano Banana Pro up to 14, Seedream 5.0 Pro up to 8, others up to 3.",
                 ),
             ),
             (
@@ -328,15 +349,28 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
     body += example("image") + example("image-edit")
     body += "<h3>Nano Banana 2 · 4K</h3>" + example("image-nano-2")
     body += "<h3>Nano Banana Pro · 4K</h3>" + example("image-nano-pro")
+    body += "<h3>Seedream 5.0 Pro</h3>" + example("image-seedream-pro") + example("image-seedream-pro-edit")
+    body += p(
+        "Seedream 5.0 Pro: 1k или 2k (по умолчанию), только n=1; PNG. "
+        "Соотношения: 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 21:9, 5:4, 4:5. "
+        "Редактирование: до 8 референсов через JSON images или multipart image[]; суммарно до 14 MiB. "
+        "Размер HTTPS-референсов проверяет поставщик. Формат ответа: b64_json или url. "
+        "Параметры size, quality и stream не поддерживаются. Доступность модели проверяйте в /v1/models.",
+        "Seedream 5.0 Pro: 1k or 2k (default), n=1 only; PNG. "
+        "Aspect ratios: 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 21:9, 5:4, 4:5. "
+        "Edits accept up to 8 JSON images or multipart image[] references, 14 MiB combined. "
+        "The provider validates the size of HTTPS references. Response format: b64_json or url. "
+        "size, quality and stream are unsupported. Check /v1/models for availability.",
+    )
     body += "<h3>GPT Image 2.5 Sunburst · 4K</h3>" + example("image-sunburst")
     body += p(
         "В multipart передавайте model, prompt, n как поля формы; файлы — повторяющимся image[] "
         "(также принимаются image, images, images[]). Лимиты файлов: GPT 16, Nano Banana Pro 14, "
-        "другие Nano 3, Grok 1; "
+        "другие Nano 3, Grok 1, Seedream 5.0 Pro 8; "
         "плюс одна mask у GPT. Не задавайте Content-Type вручную: клиент добавит boundary.",
         "For multipart, send model, prompt and n as form fields; repeat image[] for files "
         "(image, images and images[] are also accepted). File limits: GPT 16, Nano Banana Pro 14, "
-        "other Nano 3, Grok 1; "
+        "other Nano 3, Grok 1, Seedream 5.0 Pro 8; "
         "plus one GPT mask. Do not set Content-Type manually: the client supplies the boundary.",
     )
     body += code(

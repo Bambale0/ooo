@@ -41,12 +41,14 @@ def integer(value: Any, name: str, minimum: int, maximum: int) -> int:
 
 
 def image_reference_limit(model: str, *, multipart: bool = False) -> int:
+    profile = MODELS.get(model, {}).get("image")
+    if profile:
+        return profile["max_references"]
     if model.startswith("gpt-image"):
         return 16
     if model in {"nano-banana-pro", "nano-banana-2.1"}:
         return 14
     return 1 if multipart and not model.startswith("nano-") else 3
-
 
 
 def _contains_video_input(value: Any) -> bool:
@@ -62,7 +64,7 @@ def _contains_video_input(value: Any) -> bool:
     return any(_contains_video_input(item) for item in value.values())
 
 
-def validate_request(protocol: str, original: dict[str, Any]) -> dict[str, Any]:
+def validate_request(protocol: str, original: dict[str, Any], *, multipart: bool = False) -> dict[str, Any]:
     """Return a copy without dropping or injecting provider request controls."""
     body = copy.deepcopy(original)
     model = body.get("model")
@@ -91,7 +93,12 @@ def validate_request(protocol: str, original: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(body.get("prompt", ""), str):
         raise ValueError("invalid_prompt")
     if protocol in IMAGE_PROTOCOLS:
-        maximum = 7 if model.startswith("gpt-image") else 4 if model.startswith("nano-") else 10
+        profile = MODELS[model].get("image")
+        maximum = (
+            profile["max_outputs"]
+            if profile
+            else (7 if model.startswith("gpt-image") else 4 if model.startswith("nano-") else 10)
+        )
         integer(body.get("n", 1), "n", 1, maximum)
         if not body.get("prompt", "").strip():
             raise ValueError("prompt_required")
@@ -99,6 +106,10 @@ def validate_request(protocol: str, original: dict[str, Any]) -> dict[str, Any]:
             refs = body["images"]
             if not isinstance(refs, list) or not 1 <= len(refs) <= image_reference_limit(model):
                 raise ValueError("invalid_reference_images")
+        if profile:
+            from app.contracts.image_profiles import validate_profile_request
+
+            validate_profile_request(protocol, body, profile, multipart=multipart)
         if model.startswith("nano-"):
             if body.get("response_format", "b64_json") != "b64_json":
                 raise ValueError("unsupported_response_format")
@@ -117,12 +128,17 @@ def validate_request(protocol: str, original: dict[str, Any]) -> dict[str, Any]:
         # so a newly contracted model cannot silently lose a resolution the provider
         # actually serves (or gain one it rejects).
         resolutions = {tier["label"].lower() for tier in MODELS[model]["procurement"]["tiers"]}
-        if not model.startswith("gpt-image") and str(body.get("resolution", "1k")).lower() not in resolutions:
+        if not model.startswith("gpt-image") and image_resolution(body).lower() not in resolutions:
             raise ValueError("unsupported_resolution")
         image_tier(body)
         return body
     validate_video(body)
     return body
+
+
+def image_resolution(body: dict[str, Any]) -> str:
+    default = MODELS.get(body.get("model"), {}).get("image", {}).get("default_resolution", "1K")
+    return str(body.get("resolution", default)).upper()
 
 
 def image_tier(body: dict[str, Any]) -> str:
@@ -136,7 +152,7 @@ def image_tier(body: dict[str, Any]) -> str:
             raise ValueError("invalid_size")
         edge = max(dimensions)
         return "1K" if edge <= 1024 else "2K" if edge <= 2048 else "4K"
-    return str(body.get("resolution", "1K")).upper()
+    return image_resolution(body)
 
 
 def _alias(body: dict, canonical: str, alias: str) -> Any:

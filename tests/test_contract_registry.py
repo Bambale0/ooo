@@ -101,6 +101,13 @@ def test_every_catalog_model_has_valid_native_request_and_decimal_procurement(mo
                 "prompt": "Edit reference",
                 "images": [{"image_url": {"url": "https://example.com/image.png"}}],
             }
+            if entry.get("image"):
+                # Reviewed profiles use image_url strings on edits only.
+                # Preserve the existing legacy-model fixture independently.
+                if protocol == "images/generations":
+                    body.pop("images")
+                else:
+                    body["images"] = [{"image_url": "https://example.com/image.png"}]
             assert validate_request(protocol, body) == body
     else:
         body = {

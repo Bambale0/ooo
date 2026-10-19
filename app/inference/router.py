@@ -247,8 +247,13 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
             body = await request.json()
         if not isinstance(body, dict):
             raise ValueError("invalid_request_body")
-        body = validate_request(protocol, body)
+        body = validate_request(protocol, body, multipart=bool(files))
         if files:
+            profile = MODELS[body["model"]].get("image")
+            if profile:
+                from app.contracts.image_profiles import validate_profile_files
+
+                validate_profile_files(files, profile)
             image_count = sum(name in {"image", "image[]", "images", "images[]"} for name, _ in files)
             maximum = image_reference_limit(body["model"], multipart=True)
             if sum(name == "mask" for name, _ in files) > 1:
