@@ -798,6 +798,139 @@
       },
       "checked_at": "2026-10-14",
       "source": "https://argolink.io/en/models/qwen3.8-max"
+    },
+    "seedream-5.0-pro": {
+      "category": "image",
+      "endpoint": "/v1/images/generations",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "image",
+        "unit": "generation",
+        "tiers": [
+          {
+            "label": "1K",
+            "price": 0.03
+          },
+          {
+            "label": "2K",
+            "price": 0.03
+          }
+        ]
+      },
+      "image": {
+        "frame": "aspect_ratio",
+        "resolutions": [
+          "1k",
+          "2k"
+        ],
+        "default_resolution": "2k",
+        "aspect_ratios": [
+          "1:1",
+          "16:9",
+          "9:16",
+          "4:3",
+          "3:4",
+          "3:2",
+          "2:3",
+          "21:9",
+          "5:4",
+          "4:5"
+        ],
+        "default_aspect_ratio": "1:1",
+        "edit_frame": "default",
+        "output_sizes": [
+          {
+            "aspect_ratio": "1:1",
+            "pixels": {
+              "1k": "1024x1024",
+              "2k": "2048x2048"
+            }
+          },
+          {
+            "aspect_ratio": "16:9",
+            "pixels": {
+              "1k": "1376x768",
+              "2k": "2736x1520"
+            }
+          },
+          {
+            "aspect_ratio": "9:16",
+            "pixels": {
+              "1k": "768x1376",
+              "2k": "1520x2736"
+            }
+          },
+          {
+            "aspect_ratio": "4:3",
+            "pixels": {
+              "1k": "1184x896",
+              "2k": "2352x1776"
+            }
+          },
+          {
+            "aspect_ratio": "3:4",
+            "pixels": {
+              "1k": "896x1184",
+              "2k": "1776x2352"
+            }
+          },
+          {
+            "aspect_ratio": "3:2",
+            "pixels": {
+              "1k": "1248x832",
+              "2k": "2496x1664"
+            }
+          },
+          {
+            "aspect_ratio": "2:3",
+            "pixels": {
+              "1k": "832x1248",
+              "2k": "1664x2496"
+            }
+          },
+          {
+            "aspect_ratio": "21:9",
+            "pixels": {
+              "1k": "1568x672",
+              "2k": "3120x1344"
+            }
+          },
+          {
+            "aspect_ratio": "5:4",
+            "pixels": {
+              "1k": "1152x928",
+              "2k": "2272x1840"
+            }
+          },
+          {
+            "aspect_ratio": "4:5",
+            "pixels": {
+              "1k": "928x1152",
+              "2k": "1840x2272"
+            }
+          }
+        ],
+        "max_outputs": 1,
+        "max_references": 8,
+        "max_reference_mb": 14,
+        "response_formats": [
+          "b64_json",
+          "url"
+        ],
+        "request_fields": [
+          "model",
+          "prompt",
+          "aspect_ratio",
+          "resolution",
+          "n",
+          "response_format",
+          "images"
+        ],
+        "output_format": "PNG"
+      },
+      "checked_at": "2026-10-19",
+      "source": "https://argolink.io/en/models/seedream-5.0-pro",
+      "source_revision": "8aad252c5bb4e203"
     }
   }
 }
