@@ -101,6 +101,13 @@ def test_every_catalog_model_has_valid_native_request_and_decimal_procurement(mo
                 "prompt": "Edit reference",
                 "images": [{"image_url": {"url": "https://example.com/image.png"}}],
             }
+            if entry.get("image"):
+                # Reviewed profiles use image_url strings on edits only.
+                # Preserve the existing legacy-model fixture independently.
+                if protocol == "images/generations":
+                    body.pop("images")
+                else:
+                    body["images"] = [{"image_url": "https://example.com/image.png"}]
             assert validate_request(protocol, body) == body
     else:
         body = {
@@ -128,7 +135,7 @@ def test_video_asset_limits_and_billable_references(model, images, videos, audio
         "model": model,
         "prompt": "References",
         "duration": 5,
-        "resolution": "720p",
+        "resolution": "480p",
         "reference_images": [{"url": "https://example.com/image.png"}] * images,
         "reference_videos": [{"url": "https://example.com/video.mp4"}] * videos,
     }
