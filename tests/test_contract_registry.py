@@ -135,7 +135,7 @@ def test_video_asset_limits_and_billable_references(model, images, videos, audio
         "model": model,
         "prompt": "References",
         "duration": 5,
-        "resolution": "480p",
+        "resolution": "720p",
         "reference_images": [{"url": "https://example.com/image.png"}] * images,
         "reference_videos": [{"url": "https://example.com/video.mp4"}] * videos,
     }
