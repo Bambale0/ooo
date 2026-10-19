@@ -14,8 +14,13 @@ from app.generations.models import Generation
 from app.infrastructure import public_http
 
 
-@pytest.mark.parametrize("requested,representation", [(None, "url"), ("b64_json", "url"), ("url", "b64_json"), (None, "empty_b64")])
-async def test_wrong_seedream_response_format_is_not_billable(client, db_session, monkeypatch, requested, representation):
+@pytest.mark.parametrize(
+    "requested,representation",
+    [(None, "url"), ("b64_json", "url"), ("url", "b64_json"), (None, "empty_b64")],
+)
+async def test_wrong_seedream_response_format_is_not_billable(
+    client, db_session, monkeypatch, requested, representation
+):
     raw = base64.b64decode(rendered()["b64_json"])
     reads = []
 
@@ -31,8 +36,12 @@ async def test_wrong_seedream_response_format_is_not_billable(client, db_session
         item["b64_json"] = ""
     rates = [("default", tier, "generation", Decimal("3.85"), Decimal(".03")) for tier in ("1K", "2K")]
     partner, headers, upstream = await setup(
-        db_session, monkeypatch, lambda request: httpx.Response(200, json={"data": [item]}),
-        model="seedream-5.0-pro", category="image", rates=rates,
+        db_session,
+        monkeypatch,
+        lambda request: httpx.Response(200, json={"data": [item]}),
+        model="seedream-5.0-pro",
+        category="image",
+        rates=rates,
     )
     body = {"model": "seedream-5.0-pro", "prompt": "Cup"}
     if requested is not None:
