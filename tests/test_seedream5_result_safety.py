@@ -96,7 +96,11 @@ async def test_seedream_result_url_overall_deadline_is_terminal(client, db_sessi
         rates=RATES,
     )
     try:
-        response = await client.post("/v1/images/generations", headers=headers, json={"model": MODEL, "prompt": "Cup"})
+        response = await client.post(
+            "/v1/images/generations",
+            headers=headers,
+            json={"model": MODEL, "prompt": "Cup", "response_format": "url"},
+        )
         assert response.status_code == 503
         generation = await db_session.scalar(select(Generation))
         assert generation.status == "failed" and generation.billing_status == "not_chargeable"
