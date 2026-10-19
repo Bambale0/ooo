@@ -1,0 +1,42 @@
+name: Import reviewed Seedream support
+on:
+  push:
+    branches: [ops/import-seedream5-tested-20261019]
+    paths: [.github/workflows/import-seedream5-tested.yml]
+permissions:
+  contents: write
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 7f255ce89635e336138878308ee293eaa6453998
+      - name: Verify patch and create feature commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          BASE=7f255ce89635e336138878308ee293eaa6453998
+          TARGET=feat/seedream5-pro-20261019
+          current=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${TARGET}" --jq .object.sha)
+          test "$current" = "$BASE"
+          test "$(git rev-parse HEAD)" = "$BASE"
+          gh api "repos/${GITHUB_REPOSITORY}/git/blobs/63718363f92fb07398b7163ade3df5a60c9ea5e9" > /tmp/seedream-blob.json
+          python - <<'PY'
+          import base64, hashlib, json
+          from pathlib import Path
+          data = json.loads(Path('/tmp/seedream-blob.json').read_text())
+          assert data['encoding'] == 'base64'
+          patch = base64.b64decode(data['content'])
+          assert hashlib.sha256(patch).hexdigest() == '538d13c9dc78b68f98b75a75ee6a3f1605f7d01f4afbce74942c9f7dfe75870d'
+          Path('/tmp/seedream-reviewed.patch').write_bytes(patch)
+          PY
+          git apply --check /tmp/seedream-reviewed.patch
+          git apply --index /tmp/seedream-reviewed.patch
+          test "$(git write-tree)" = 577bcdf3e2f2cada2427b4ee61aa36212d298818
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat: reviewed Seedream 5.0 Pro contract and billing support; keep model gated'
+          git push origin "HEAD:refs/heads/${TARGET}"
