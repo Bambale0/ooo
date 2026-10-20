@@ -1,7 +1,7 @@
 name: Refresh aiohttp security locks
 on:
   pull_request:
-    types: [opened]
+    types: [opened, synchronize]
 permissions:
   contents: read
 jobs:
@@ -36,7 +36,10 @@ jobs:
 
           old, new = metadata('3.14.3'), metadata('3.14.4')
           assert new['info']['version'] == '3.14.4'
-          assert sorted(old['info']['requires_dist']) == sorted(new['info']['requires_dist'])
+          before = set(old['info']['requires_dist'])
+          after = set(new['info']['requires_dist'])
+          assert before - after == {'yarl<2.0,>=1.17.0'}
+          assert after - before == {'yarl<2.0,>=1.25.1'}
           hashes = sorted({item['digests']['sha256'] for item in new['urls'] if not item['yanked']})
           assert hashes and all(re.fullmatch('[0-9a-f]{64}', value) for value in hashes)
           slash = chr(92)
@@ -44,6 +47,7 @@ jobs:
           block += '\n'.join('    --hash=sha256:' + value + (' ' + slash if i < len(hashes)-1 else '') for i, value in enumerate(hashes)) + '\n'
           for name in ('requirements.lock', 'requirements-dev.lock'):
               path = Path(name)
+              assert 'yarl==1.25.1 ' in path.read_text()
               lines = path.read_text().splitlines(keepends=True)
               start = next(i for i, line in enumerate(lines) if line.startswith('aiohttp==3.14.3 '))
               end = start + 1
