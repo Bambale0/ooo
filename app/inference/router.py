@@ -16,13 +16,14 @@ from app.contracts.registry import MODELS, PROTOCOLS, TEXT_PROTOCOLS, image_refe
 from app.contracts.validation_errors import validation_reason
 from app.generations.models import Generation
 from app.inference.accounting import settle_actual, token_usage
+from app.inference.admission_receipts import fence_rejected_admission, rejected_admission_response
 from app.inference.correlation import derive_client_request_id, generation_client_request_id
 from app.inference.diagnostics import NativeRequestTrace, log_rejection
 from app.inference.image_results import persist_single_image
 from app.inference.images import image_usage, inspect_url_images
 from app.inference.outcomes import finalize_native_failure, preserve_unbilled_result
 from app.inference.replay import replay_response, save_response
-from app.inference.service import reserve
+from app.inference.service import InferenceAdmissionError, reserve
 from app.inference.streams import SSEDecoder, UsageCollector, event_data
 from app.infrastructure.config import get_settings
 from app.media.models import MediaAsset
@@ -314,6 +315,9 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
     if client_request_id_header is not None and not re.fullmatch(r"[A-Za-z0-9._:/-]{8,160}", client_request_id_header):
         raise HTTPException(422, "invalid_client_request_id", headers={"X-Request-Id": diagnostic_trace_id})
     client_request_id = client_request_id_header or derive_client_request_id(idem)
+    partner_id, api_key_id = auth.partner.id, auth.api_key.id
+    receipt_requested = request.headers.get("X-Submission-Receipt") == "v1" and client_request_id is not None
+    rejection_stage = "admission_replay"
     try:
         generation, attempt = await reserve(
             db,
@@ -325,21 +329,57 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
             client_request_id=client_request_id,
         )
     except HTTPException as exc:
+        if (
+            receipt_requested
+            and isinstance(exc, InferenceAdmissionError)
+            and exc.status_code == 503
+            and exc.detail == "provider_temporarily_unavailable"
+        ):
+            rejection_stage = exc.failure_stage
+            try:
+                # Snapshot IDs above: rollback expires ORM auth objects.
+                await db.rollback()
+                generation = await fence_rejected_admission(
+                    db, partner_id=partner_id, api_key_id=api_key_id,
+                    protocol=protocol, body=body, idempotency_key=idem,
+                    client_request_id=client_request_id, files_digest=digest,
+                )
+                attempt = None
+            except HTTPException as fence_error:
+                log_rejection(
+                    trace_id=diagnostic_trace_id, partner_id=partner_id, api_key_id=api_key_id,
+                    protocol=protocol, model=body.get("model"), failure_stage="admission_fence",
+                    error_code=str(fence_error.detail), http_status=fence_error.status_code,
+                )
+                raise
+            except Exception:
+                log_rejection(
+                    trace_id=diagnostic_trace_id, partner_id=partner_id, api_key_id=api_key_id,
+                    protocol=protocol, model=body.get("model"), failure_stage="admission_fence",
+                    error_code="internal_error", http_status=500,
+                )
+                raise
+        else:
+            log_rejection(
+                trace_id=diagnostic_trace_id, partner_id=partner_id, api_key_id=api_key_id,
+                protocol=protocol, model=body.get("model"),
+                failure_stage=getattr(exc, "failure_stage", "admission"),
+                error_code=str(exc.detail), http_status=exc.status_code,
+            )
+            raise HTTPException(
+                exc.status_code, exc.detail,
+                headers={**(exc.headers or {}), "X-Request-Id": diagnostic_trace_id},
+            ) from exc
+    rejected = rejected_admission_response(
+        generation, trace_id=diagnostic_trace_id, receipt_requested=receipt_requested,
+    )
+    if rejected is not None:
         log_rejection(
-            trace_id=diagnostic_trace_id,
-            partner_id=auth.partner.id,
-            api_key_id=auth.api_key.id,
-            protocol=protocol,
-            model=body.get("model"),
-            failure_stage=getattr(exc, "failure_stage", "admission"),
-            error_code=str(exc.detail),
-            http_status=exc.status_code,
+            trace_id=diagnostic_trace_id, partner_id=partner_id, api_key_id=api_key_id,
+            protocol=protocol, model=body.get("model"), failure_stage=rejection_stage,
+            error_code="provider_temporarily_unavailable", http_status=503, generation_id=generation.id,
         )
-        raise HTTPException(
-            exc.status_code,
-            exc.detail,
-            headers={**(exc.headers or {}), "X-Request-Id": diagnostic_trace_id},
-        ) from exc
+        return rejected
     if protocol == "videos/generations":
         response_body = {"request_id": generation.id}
         if client_request_id is not None:
