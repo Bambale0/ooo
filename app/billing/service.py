@@ -7,7 +7,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.accounts.models import Partner
+from app.accounts.models import Partner, PartnerCreditLimitHistory
 from app.billing.models import CoverageLedgerEntry, LedgerEntry
 
 if TYPE_CHECKING:
@@ -336,8 +336,27 @@ async def settle_generation_reserves(db: AsyncSession, generation: Generation) -
 
 
 async def require_sufficient_balance(partner: Partner, amount_rub: Decimal) -> None:
-    if Decimal(partner.balance_rub) < amount_rub:
+    if partner.available_balance_rub < amount_rub:
         raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail="insufficient_balance")
+
+
+async def set_partner_credit_limit(
+    db: AsyncSession, partner_id: str, credit_limit_rub: Decimal, *, actor: str, reason: str
+) -> Partner:
+    limit = exact_rub_amount(credit_limit_rub)
+    if limit < 0:
+        raise HTTPException(422, "invalid_credit_limit")
+    partner = await lock_partner_for_update(db, partner_id)
+    if partner.status == "deleted":
+        raise HTTPException(409, "partner_deleted")
+    previous = Decimal(partner.credit_limit_rub)
+    if previous != limit:
+        db.add(PartnerCreditLimitHistory(
+            partner_id=partner.id, old_limit_rub=previous, new_limit_rub=limit, actor=actor, reason=reason
+        ))
+        partner.credit_limit_rub = limit
+        await db.flush()
+    return partner
 
 
 async def require_sufficient_cost_coverage(partner: Partner, amount_rub: Decimal) -> None:

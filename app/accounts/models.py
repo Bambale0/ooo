@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from sqlalchemy import ForeignKey, Numeric, String, Text
+from sqlalchemy import CheckConstraint, ForeignKey, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.infrastructure.database import Base
@@ -23,6 +23,7 @@ class PartnerApplication(Base):
 
 class Partner(Base):
     __tablename__ = "partners"
+    __table_args__ = (CheckConstraint("credit_limit_rub >= 0", name="partner_credit_limit_nonnegative"),)
 
     id: Mapped[str] = uuid_pk()
     application_id: Mapped[str | None] = mapped_column(ForeignKey("partner_applications.id"))
@@ -31,11 +32,33 @@ class Partner(Base):
     project_name: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
     balance_rub: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=Decimal("0.00"))
+    credit_limit_rub: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), nullable=False, default=Decimal("0.00"), server_default="0.00"
+    )
     cost_coverage_rub: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=Decimal("0.00"))
     is_admin: Mapped[bool] = mapped_column(default=False, nullable=False)
     created_at: Mapped[object] = utc_created_at()
 
     api_keys: Mapped[list["ApiKey"]] = relationship(back_populates="partner")
+
+    @property
+    def available_balance_rub(self) -> Decimal:
+        return Decimal(self.balance_rub) + Decimal(self.credit_limit_rub or 0)
+
+
+class PartnerCreditLimitHistory(Base):
+    __tablename__ = "partner_credit_limit_history"
+    __table_args__ = (
+        CheckConstraint("old_limit_rub >= 0 AND new_limit_rub >= 0", name="credit_limit_history_nonnegative"),
+    )
+
+    id: Mapped[str] = uuid_pk()
+    partner_id: Mapped[str] = mapped_column(ForeignKey("partners.id"), nullable=False, index=True)
+    old_limit_rub: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    new_limit_rub: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    actor: Mapped[str] = mapped_column(String(80), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[object] = utc_created_at()
 
 
 class ApiKey(Base):

@@ -9,13 +9,14 @@ from app.billing.schemas import (
     CoverageAdjustmentCreate,
     CoverageLedgerEntryRead,
     CoverageRead,
+    CreditLimitUpdate,
     GenerationCompensationCreate,
     LedgerEntryRead,
     ManualAdjustmentCreate,
     MarginThresholdCreate,
     ProfitWithdrawalCreate,
 )
-from app.billing.service import apply_cost_coverage_change, apply_partner_balance_change
+from app.billing.service import apply_cost_coverage_change, apply_partner_balance_change, set_partner_credit_limit
 from app.infrastructure.security import hash_secret
 
 router = APIRouter()
@@ -81,7 +82,24 @@ async def read_partner_balance(partner_id: str, db: DbSession) -> BalanceRead:
     partner = await db.get(Partner, partner_id)
     if partner is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="partner_not_found")
-    return BalanceRead(partner_id=partner.id, balance_rub=partner.balance_rub)
+    return partner_balance_read(partner)
+
+
+def partner_balance_read(partner: Partner) -> BalanceRead:
+    return BalanceRead(
+        partner_id=partner.id, balance_rub=partner.balance_rub,
+        credit_limit_rub=partner.credit_limit_rub, available_balance_rub=partner.available_balance_rub,
+    )
+
+
+@router.put(
+    "/partners/{partner_id}/credit-limit", response_model=BalanceRead, dependencies=[Depends(require_admin)]
+)
+async def update_partner_credit_limit(partner_id: str, payload: CreditLimitUpdate, db: DbSession) -> BalanceRead:
+    partner = await set_partner_credit_limit(
+        db, partner_id, payload.credit_limit_rub, actor="admin_api", reason=payload.reason
+    )
+    return partner_balance_read(partner)
 
 
 @router.get(
