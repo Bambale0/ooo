@@ -236,7 +236,13 @@ async def handle_callback(event, db, dialog) -> None:
         reset(dialog)
         await show(
             event,
-            f"Доступный баланс: {partner.balance_rub:.2f} ₽\n\n"
+            f"Баланс: {partner.balance_rub:.2f} ₽\n"
+            + (
+                f"Кредитный лимит: {partner.credit_limit_rub:.2f} ₽\n"
+                f"Порог для новых запросов: −{partner.credit_limit_rub:.2f} ₽\n"
+                if partner.credit_limit_rub else ""
+            )
+            + f"Доступный баланс: {partner.available_balance_rub:.2f} ₽\n\n"
             "Для пополнения нажмите «Пополнить» и укажите сумму от 1 000 ₽. "
             "После подтверждения создадим счёт Crypto Pay с оплатой в USDT или TON. "
             "Рубли зачислятся автоматически после подтверждения платежа.\n\n"

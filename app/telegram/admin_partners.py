@@ -291,6 +291,8 @@ async def show_partner_card(event, db, dialog, partner_id: str) -> None:
         f"{(' · @' + username) if username else ''}\n"
         f"Статус: {_status(partner)}\n"
         f"Баланс: {partner.balance_rub:.2f} ₽\n"
+        f"Кредитный лимит: {partner.credit_limit_rub:.2f} ₽\n"
+        f"Доступный баланс: {partner.available_balance_rub:.2f} ₽\n"
         f"Покрытие себестоимости: {partner.cost_coverage_rub:.2f} ₽\n"
         f"Создан: {_date(partner.created_at)}\n"
         f"Заявка: {partner.application_id or '—'}\n\n"

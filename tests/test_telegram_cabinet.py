@@ -76,6 +76,20 @@ async def partner(db, user="123"):
     return row
 
 
+async def test_balance_screen_distinguishes_cash_and_credit(cabinet, db_session):
+    feed, _ = cabinet
+    owner = await partner(db_session)
+    owner.balance_rub = Decimal("-100")
+    owner.credit_limit_rub = Decimal("5000")
+    await db_session.commit()
+    messages = await feed(callback="balance")
+    text = messages[-1].text
+    assert "Баланс: -100.00 ₽" in text
+    assert "Кредитный лимит: 5000.00 ₽" in text
+    assert "Порог для новых запросов: −5000.00 ₽" in text
+    assert "Доступный баланс: 4900.00 ₽" in text
+
+
 async def test_document_change_notice_dedup_and_explicit_acceptance(cabinet, db_session, monkeypatch):
     from app.telegram.legal import document_notices, needs_acceptance
 

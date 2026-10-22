@@ -227,7 +227,7 @@ async def reserve(
     if trial_telegram_id is None and charge < cost * fx:
         raise InferenceAdmissionError(503, "provider_temporarily_unavailable", failure_stage="pricing")
     # A worst-case token / video quote is not an upfront partner debit.
-    # Require a positive funded balance; settle confirmed usage afterward.
+    # Require positive available balance (cash + approved credit); settle actual usage afterward.
     if trial_telegram_id is None:
         try:
             await require_sufficient_balance(partner, Decimal("0.01"))
