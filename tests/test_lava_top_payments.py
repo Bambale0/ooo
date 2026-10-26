@@ -82,6 +82,27 @@ def test_partner_payment_email_migration_backfills_latest_invoice_and_rolls_back
     engine.dispose()
 
 
+def test_lava_webhook_timestamp_migration_sets_and_removes_server_default(monkeypatch):
+    path = Path(__file__).parents[1] / "alembic/versions/20261026_0035_lava_webhook_created_at_default.py"
+    spec = spec_from_file_location("lava_webhook_timestamp_migration", path)
+    migration = module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    calls: list[dict[str, object]] = []
+
+    def capture(table_name, column_name, **kwargs):
+        calls.append({"table_name": table_name, "column_name": column_name, **kwargs})
+
+    monkeypatch.setattr(migration.op, "alter_column", capture)
+    migration.upgrade()
+    migration.downgrade()
+
+    assert calls[0]["table_name"] == "lava_top_webhook_events"
+    assert calls[0]["column_name"] == "created_at"
+    assert str(calls[0]["server_default"]) == "now()"
+    assert calls[0]["existing_nullable"] is False
+    assert calls[1]["server_default"] is None
+
+
 async def test_lava_top_client_sends_exact_sbp_contract_and_parses_confirmation():
     requests: list[httpx.Request] = []
 
