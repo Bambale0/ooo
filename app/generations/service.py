@@ -222,7 +222,7 @@ async def has_active_provider_credential(
     partner_id: str,
     provider: str = PRIMARY_PROVIDER,
 ) -> bool:
-    return await get_active_provider_credential(db, partner_id, provider) is not None
+    return await has_provider_runtime_credential(db, partner_id, provider)
 
 
 async def _guard_expired_video_inputs(db, generation, provider, attempt) -> bool:

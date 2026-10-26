@@ -1,16 +1,29 @@
 from datetime import datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class PaymentInvoiceCreate(BaseModel):
     requested_rub: int = Field(ge=1000)
     idempotency_key: str = Field(min_length=8, max_length=160)
+    buyer_email: str | None = Field(default=None, min_length=3, max_length=320)
+
+    @field_validator("buyer_email")
+    @classmethod
+    def validate_buyer_email(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        local, separator, domain = value.rpartition("@")
+        if not separator or not local or "." not in domain or domain.startswith(".") or domain.endswith("."):
+            raise ValueError("invalid buyer email")
+        return value
 
 
 class PaymentInvoiceRead(BaseModel):
     id: str
+    provider: str
     status: str
     requested_rub: Decimal
     accepted_assets: str
@@ -43,5 +56,5 @@ class PaymentRefundRead(BaseModel):
 
 
 class PaymentReconcileCreate(BaseModel):
-    provider_invoice_id: int = Field(gt=0)
+    provider_invoice_id: str | int
     reason: str = Field(min_length=10, max_length=2000)

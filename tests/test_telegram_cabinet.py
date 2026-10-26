@@ -199,9 +199,12 @@ async def test_registration_survives_restart_and_records_consents(cabinet, db_se
     await feed(callback="accept_legal")
     await feed(text="Компания")
     methods = await feed(text="Проект API")
-    assert "принята" in methods[-1].text
+    assert "активирован автоматически" in methods[-1].text
+    assert "nrn_" in methods[-1].text
     row = (await db_session.execute(select(PartnerApplication))).scalar_one()
-    assert row.telegram_id == "123"
+    assert row.telegram_id == "123" and row.status == "approved"
+    assert (await db_session.execute(select(func.count()).select_from(Partner))).scalar() == 1
+    assert (await db_session.execute(select(func.count()).select_from(ApiKey))).scalar() == 1
     assert (await db_session.execute(select(func.count()).select_from(ConsentAcceptance))).scalar() == 2
     assert (await db_session.execute(select(func.count()).select_from(BotNotification))).scalar() == 1
     assert (await db_session.get(BotDialog, "123")).state == "menu"
