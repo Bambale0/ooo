@@ -17,7 +17,7 @@ async def test_partner_key_reads_only_own_rub_balance(client, db_session, admin_
     beta.balance_rub = Decimal("5999.25")
     await db_session.commit()
 
-    endpoint = "/api/v1/billing/self/balance"
+    endpoint = "/v1/balance"
     response_a = await client.get(endpoint, headers={"Authorization": "Bearer nrn_balance_alpha_secret"})
     assert response_a.status_code == 200
     assert response_a.headers["cache-control"] == "no-store"
@@ -42,7 +42,7 @@ async def test_partner_key_reads_only_own_rub_balance(client, db_session, admin_
 
 
 async def test_balance_endpoint_rejects_missing_revoked_and_inactive_partner_keys(client, db_session):
-    endpoint = "/api/v1/billing/self/balance"
+    endpoint = "/v1/balance"
     partner, api_key = await _create_partner_with_key(
         db_session, telegram_id="balance-client-disabled", token="nrn_balance_revoked_secret",
     )
