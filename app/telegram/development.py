@@ -277,9 +277,12 @@ async def my_requests(event, db) -> None:
         for row in rows
     ]
     buttons.append(("➕ Новая заявка", "dev:start"))
+    status_list = "\n".join(
+        f"• {row.id[:8]} · {STATUSES.get(row.status, 'Рассматривается')}" for row in rows
+    )
     await show(
         event,
-        "Мои заявки на разработку\n\nВыберите заявку для просмотра."
+        ("Мои заявки на разработку\n\n" + status_list + "\n\nВыберите заявку для просмотра.")
         if rows
         else "Заявок пока нет.\n\nОпишите идею — мы поможем определить требования, сроки и бюджет.",
         keyboard(*buttons, back="main_menu"),
