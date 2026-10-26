@@ -2,14 +2,18 @@ import json
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
 
 import httpx
 import pytest
 from fastapi import HTTPException
 from pydantic import SecretStr
-from sqlalchemy import func, select
+from sqlalchemy import create_engine, func, inspect, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from app.billing.models import CoverageLedgerEntry, LedgerEntry
 from app.infrastructure.config import get_settings
 from app.payments.lava_top import LavaTopClient, LavaTopError, LavaTopInvoice
@@ -42,6 +46,40 @@ class FakeLavaTopClient:
 
     async def get_invoice(self, invoice_id: str) -> LavaTopInvoice | None:
         return self.invoices.get(invoice_id)
+
+
+def test_partner_payment_email_migration_backfills_latest_invoice_and_rolls_back():
+    path = Path(__file__).parents[1] / "alembic/versions/20261026_0034_partner_payment_email.py"
+    spec = spec_from_file_location("partner_payment_email_migration", path)
+    migration = module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    engine = create_engine("sqlite://")
+    with engine.begin() as connection:
+        connection.execute(text("CREATE TABLE partners (id VARCHAR(36) PRIMARY KEY)"))
+        connection.execute(
+            text(
+                "CREATE TABLE payment_invoices ("
+                "id VARCHAR(36) PRIMARY KEY, partner_id VARCHAR(36), buyer_email VARCHAR(320), created_at DATETIME)"
+            )
+        )
+        connection.execute(text("INSERT INTO partners (id) VALUES ('p1'), ('p2')"))
+        connection.execute(
+            text(
+                "INSERT INTO payment_invoices (id, partner_id, buyer_email, created_at) VALUES "
+                "('i1', 'p1', 'OLD@EXAMPLE.ORG', '2026-10-25 10:00:00'), "
+                "('i2', 'p1', 'New@Example.org', '2026-10-26 10:00:00'), "
+                "('i3', 'p2', NULL, '2026-10-26 11:00:00')"
+            )
+        )
+        with Operations.context(MigrationContext.configure(connection)):
+            migration.upgrade()
+            assert connection.execute(text("SELECT payment_email FROM partners WHERE id = 'p1'")).scalar_one() == (
+                "new@example.org"
+            )
+            assert connection.execute(text("SELECT payment_email FROM partners WHERE id = 'p2'")).scalar_one() is None
+            migration.downgrade()
+        assert "payment_email" not in {column["name"] for column in inspect(connection).get_columns("partners")}
+    engine.dispose()
 
 
 async def test_lava_top_client_sends_exact_sbp_contract_and_parses_confirmation():
@@ -198,6 +236,49 @@ async def test_lava_top_sbp_webhook_rechecks_and_credits_exactly_once(
     assert await db_session.scalar(select(func.count()).select_from(LedgerEntry)) == 1
     assert await db_session.scalar(select(func.count()).select_from(CoverageLedgerEntry)) == 1
     assert await db_session.scalar(select(func.count()).select_from(LavaTopWebhookEvent)) == 1
+
+
+async def test_lava_top_reuses_and_updates_partner_payment_email(client, db_session, monkeypatch):
+    settings = get_settings()
+    monkeypatch.setattr(settings, "payment_provider", "lava_top")
+    fake = FakeLavaTopClient()
+    monkeypatch.setattr("app.payments.router.get_lava_top_client", lambda: fake)
+
+    partner, token = await _partner_with_api_key(db_session, telegram_id="lava-saved-email")
+    headers = {"Authorization": f"Bearer {token}"}
+    first = await client.post(
+        "/api/v1/payments/invoices",
+        headers=headers,
+        json={
+            "requested_rub": 1500,
+            "idempotency_key": "lava-save-email-first",
+            "buyer_email": "Buyer@Example.org",
+        },
+    )
+    assert first.status_code == 202
+    await db_session.refresh(partner)
+    assert partner.payment_email == "buyer@example.org"
+
+    reused = await client.post(
+        "/api/v1/payments/invoices",
+        headers=headers,
+        json={"requested_rub": 1600, "idempotency_key": "lava-save-email-reused"},
+    )
+    assert reused.status_code == 202
+    assert fake.created[-1] == (1600, "buyer@example.org")
+
+    updated = await client.post(
+        "/api/v1/payments/invoices",
+        headers=headers,
+        json={
+            "requested_rub": 1700,
+            "idempotency_key": "lava-save-email-updated",
+            "buyer_email": "new@example.org",
+        },
+    )
+    assert updated.status_code == 202
+    await db_session.refresh(partner)
+    assert partner.payment_email == "new@example.org"
 
 
 async def test_lava_top_unknown_create_is_not_replayed(db_session):

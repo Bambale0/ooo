@@ -43,7 +43,7 @@ async def create_invoice(
     settings = get_settings()
     lava_client = None
     if settings.payment_provider == "lava_top":
-        if not payload.buyer_email:
+        if not payload.buyer_email and not partner.payment_email:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="buyer_email_required")
         try:
             lava_client = get_lava_top_client()

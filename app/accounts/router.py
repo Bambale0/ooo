@@ -312,6 +312,7 @@ async def delete_partner(
     partner.telegram_id = "deleted:" + partner.id
     partner.company_name = "Удалённый аккаунт"
     partner.project_name = "Удалённый аккаунт"
+    partner.payment_email = None
     db.add(
         PartnerAccountStateHistory(
             partner_id=partner.id,

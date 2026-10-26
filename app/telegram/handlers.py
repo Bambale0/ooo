@@ -20,6 +20,7 @@ from app.generations.models import Generation
 from app.infrastructure.config import get_settings
 from app.payments.crypto_pay import get_crypto_pay_client
 from app.payments.models import PaymentInvoice
+from app.payments.schemas import normalize_buyer_email
 from app.payments.service import get_partner_payment, refresh_configured_invoice
 from app.support.models import SupportAttachment, SupportTicket
 from app.support.service import append_message, attachment_for, get_ticket, ticket_messages
@@ -256,6 +257,9 @@ async def handle_callback(event, db, dialog) -> None:
         reset(dialog)
         lava_top_enabled = get_settings().payment_provider == "lava_top"
         payment_method = "СБП через Lava.top" if lava_top_enabled else "Crypto Pay с оплатой в USDT или TON"
+        balance_buttons = [("Пополнить", "topup"), ("Мои счета", "payments:0")]
+        if lava_top_enabled:
+            balance_buttons.append(("Изменить email", "payment_email"))
         await show(
             event,
             f"Баланс: {partner.balance_rub:.2f} ₽\n"
@@ -265,21 +269,35 @@ async def handle_callback(event, db, dialog) -> None:
                 if partner.credit_limit_rub else ""
             )
             + f"Доступный баланс: {partner.available_balance_rub:.2f} ₽\n\n"
-            "Для пополнения нажмите «Пополнить» и укажите сумму от 1 000 ₽. "
+            + (
+                f"Email для чеков: {partner.payment_email}\n\n"
+                if lava_top_enabled and partner.payment_email
+                else ""
+            )
+            + "Для пополнения нажмите «Пополнить» и укажите сумму от 1 000 ₽. "
             f"После подтверждения создадим счёт: {payment_method}. "
             "Рубли зачислятся автоматически после подтверждения платежа.\n\n"
             "В разделе «Мои счета» доступны ссылки на оплату и текущие статусы. "
             "Если вы уже оплатили счёт, откройте его и нажмите «Обновить».",
-            keyboard(("Пополнить", "topup"), ("Мои счета", "payments:0")),
+            keyboard(*balance_buttons),
         )
     elif data == "topup":
         if get_settings().payment_provider == "lava_top":
-            dialog.state, dialog.data = "topup_email", {}
-            await show(
-                event,
-                "Укажите email для чека и оплаты через СБП.\n\n"
-                "На следующем шаге попросим сумму. Отменить ввод можно командой /cancel.",
-            )
+            if partner.payment_email:
+                dialog.state, dialog.data = "topup", {"buyer_email": partner.payment_email}
+                await show(
+                    event,
+                    f"На какую сумму пополнить баланс?\n\nEmail для чека: {partner.payment_email}.\n"
+                    "Введите целую сумму в рублях, от 1 000 ₽, без пробелов и знака валюты. Например: 3000.",
+                    keyboard(("Изменить email", "payment_email")),
+                )
+            else:
+                dialog.state, dialog.data = "topup_email", {}
+                await show(
+                    event,
+                    "Укажите email для чека и оплаты через СБП. Мы сохраним его для следующих пополнений.\n\n"
+                    "На следующем шаге попросим сумму. Отменить ввод можно командой /cancel.",
+                )
         else:
             dialog.state, dialog.data = "topup", {}
             await show(
@@ -288,6 +306,13 @@ async def handle_callback(event, db, dialog) -> None:
                 "На следующем шаге покажем сумму для подтверждения перед созданием счёта. "
                 "Отменить ввод можно командой /cancel.",
             )
+    elif data == "payment_email":
+        dialog.state, dialog.data = "payment_email", {}
+        await show(
+            event,
+            "Отправьте новый email для чеков и оплаты через СБП. Он будет сохранён для следующих пополнений.\n\n"
+            "Отменить изменение можно командой /cancel.",
+        )
     elif data.startswith("payments:"):
         page = page_number(data)
         rows = (
@@ -945,23 +970,23 @@ async def handle_message(event, db, dialog) -> None:
                 if payment
                 else "В вашем аккаунте такой операции нет.",
             )
-    elif state == "topup_email":
-        local, separator, domain = value.rpartition("@")
-        if (
-            not separator
-            or not local
-            or "." not in domain
-            or domain.startswith(".")
-            or domain.endswith(".")
-            or len(value) > 320
-        ):
-            raise ValueError("email")
-        dialog.state, dialog.data = "topup", {"buyer_email": value.strip().lower()}
-        await show(
-            event,
-            "На какую сумму пополнить баланс?\n\n"
-            "Введите целую сумму в рублях, от 1 000 ₽, без пробелов и знака валюты. Например: 3000.",
-        )
+    elif state in {"topup_email", "payment_email"}:
+        payment_email = normalize_buyer_email(value)
+        partner.payment_email = payment_email
+        if state == "topup_email":
+            dialog.state, dialog.data = "topup", {"buyer_email": payment_email}
+            await show(
+                event,
+                "Email сохранён. На какую сумму пополнить баланс?\n\n"
+                "Введите целую сумму в рублях, от 1 000 ₽, без пробелов и знака валюты. Например: 3000.",
+            )
+        else:
+            reset(dialog)
+            await show(
+                event,
+                f"Email для чеков изменён: {payment_email}",
+                keyboard(("Пополнить", "topup"), back="balance"),
+            )
     elif state == "topup":
         if not value.isascii() or not value.isdigit() or not 1000 <= int(value) <= 9999999999999999:
             raise ValueError("amount")
@@ -972,7 +997,8 @@ async def handle_message(event, db, dialog) -> None:
             db,
             "invoice_create",
             {"partner_id": partner.id, "amount": value, "buyer_email": buyer_email},
-            f"Создать счёт на {int(value):,} ₽?",
+            f"Создать счёт на {int(value):,} ₽?"
+            + (f"\nEmail для чека: {buyer_email}" if buyer_email else ""),
         )
     elif state == "key_name":
         if not 2 <= len(value) <= 120:

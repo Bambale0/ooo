@@ -13,6 +13,7 @@ from app.infrastructure.retry import utc_now
 from app.payments.crypto_pay import CryptoPayClient, CryptoPayError, CryptoPayInvoice
 from app.payments.lava_top import LavaTopClient, LavaTopError, LavaTopInvoice, get_lava_top_client
 from app.payments.models import PaymentInvoice, PaymentRefund
+from app.payments.schemas import normalize_buyer_email
 
 
 async def create_or_resume_invoice(
@@ -117,7 +118,8 @@ async def create_configured_invoice(
 
     settings = get_settings()
     if settings.payment_provider == "lava_top":
-        if not buyer_email:
+        effective_buyer_email = buyer_email or partner.payment_email
+        if not effective_buyer_email:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="buyer_email_required")
         try:
             client = lava_client or get_lava_top_client()
@@ -131,7 +133,7 @@ async def create_configured_invoice(
             partner=partner,
             requested_rub=requested_rub,
             idempotency_key=idempotency_key,
-            buyer_email=buyer_email,
+            buyer_email=effective_buyer_email,
             client=client,
         )
     return await create_or_resume_invoice(
@@ -164,7 +166,7 @@ async def create_or_resume_lava_invoice(
     if partner.status != "active":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="partner_not_active")
 
-    normalized_email = buyer_email.strip().lower()
+    normalized_email = normalize_buyer_email(buyer_email)
     payment = (
         await db.execute(
             select(PaymentInvoice).where(
@@ -180,6 +182,7 @@ async def create_or_resume_lava_invoice(
             return payment
         if payment.buyer_email and payment.buyer_email.lower() != normalized_email:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="idempotency_conflict")
+        partner.payment_email = normalized_email
         if payment.status == "creating" and payment.provider_reference is None:
             claimed_until = payment.creation_claimed_until
             if claimed_until is not None and claimed_until.tzinfo is None:
@@ -201,6 +204,7 @@ async def create_or_resume_lava_invoice(
         status="creating",
         creation_claimed_until=utc_now() + timedelta(seconds=60),
     )
+    partner.payment_email = normalized_email
     db.add(payment)
     await db.flush()
     await db.commit()
