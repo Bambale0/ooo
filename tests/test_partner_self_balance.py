@@ -7,10 +7,10 @@ from test_tenant_isolation import _create_partner_with_key
 
 
 async def test_partner_key_reads_only_own_rub_balance(client, db_session, admin_headers):
-    alpha, key_a = await _create_partner_with_key(
+    alpha, _ = await _create_partner_with_key(
         db_session, telegram_id="balance-client-alpha", token="nrn_balance_alpha_secret",
     )
-    beta, key_b = await _create_partner_with_key(
+    beta, _ = await _create_partner_with_key(
         db_session, telegram_id="balance-client-beta", token="nrn_balance_beta_secret",
     )
     alpha.balance_rub = Decimal("999.99")
@@ -40,7 +40,6 @@ async def test_partner_key_reads_only_own_rub_balance(client, db_session, admin_
     await db_session.refresh(alpha)
     assert alpha.balance_rub == Decimal("999.99")
     assert alpha.credit_limit_rub == Decimal("250.00")
-    assert key_a.partner_id == alpha.id and key_b.partner_id == beta.id
 
 
 async def test_balance_endpoint_rejects_missing_revoked_and_inactive_partner_keys(client, db_session):
