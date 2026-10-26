@@ -1,0 +1,76 @@
+name: Production Host Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      DEPLOY_ROOT: ${{ vars.DEPLOY_ROOT || '/opt/neironych' }}
+      DEPLOY_SSH_USER: ${{ vars.DEPLOY_SSH_USER || 'deploy' }}
+      DEPLOY_SSH_PORT: ${{ vars.DEPLOY_SSH_PORT || '22' }}
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+    steps:
+      - name: Install pinned SSH identity
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_SSH_KEY"
+          test -n "$DEPLOY_KNOWN_HOSTS"
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/deploy_key ~/.ssh/known_hosts
+
+      - name: Inspect production without reading secret values
+        run: |
+          set -euo pipefail
+          [[ "$DEPLOY_ROOT" =~ ^/[a-zA-Z0-9_./-]+$ && "$DEPLOY_ROOT" != / && "$DEPLOY_ROOT" != *..* ]]
+          [[ "$DEPLOY_SSH_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          [[ "$DEPLOY_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]]
+          [[ "$DEPLOY_SSH_PORT" =~ ^[0-9]{1,5}$ ]]
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
+            -p "$DEPLOY_SSH_PORT" -i ~/.ssh/deploy_key "$DEPLOY_SSH_USER@$DEPLOY_HOST" \
+            "DEPLOY_ROOT='$DEPLOY_ROOT' bash -s" <<'SSH'
+          set -euo pipefail
+          root="$DEPLOY_ROOT"
+          compose=(docker compose --project-directory "$root" --env-file "$root/.env"
+            -f "$root/docker-compose.prod.yml" -f "$root/compose.host.yml" --profile telegram)
+          printf 'audit_user=%s\n' "$(id -un)"
+          printf 'root_exists=%s\n' "$(test -d "$root" && echo yes || echo no)"
+          printf 'compose_host=%s\n' "$(test -f "$root/compose.host.yml" && echo yes || echo no)"
+          printf 'env_exists=%s\n' "$(test -f "$root/.env" && echo yes || echo no)"
+          printf 'env_mode=%s\n' "$(stat -c '%a' "$root/.env" 2>/dev/null || echo missing)"
+          printf 'revision=%s\n' "$(tr -d '\n' < "$root/REVISION" 2>/dev/null || echo missing)"
+          printf 'current=%s\n' "$(readlink "$root/current" 2>/dev/null || echo missing)"
+          printf 'backup_env=%s\n' "$(test -f "$root/.backup.env" -o -f "$root/shared/.backup.env" && echo yes || echo no)"
+          printf 'release_backups=%s\n' "$(test -d "$root/release-backups" && echo yes || echo no)"
+          printf 'compose_services_begin\n'
+          "${compose[@]}" config --services
+          printf 'compose_services_end\n'
+          printf 'runtime_services_begin\n'
+          "${compose[@]}" ps --format '{{.Service}}|{{.State}}|{{.Image}}'
+          printf 'runtime_services_end\n'
+          printf 'database_revision_begin\n'
+          "${compose[@]}" exec -T app alembic current
+          printf 'database_revision_end\n'
+          printf 'readiness_begin\n'
+          "${compose[@]}" exec -T app python -c \
+            'import json,urllib.request; r=json.load(urllib.request.urlopen("http://localhost:8000/api/v1/readiness",timeout=5)); print(json.dumps({"status":r.get("status"),"revision":r.get("revision")}))'
+          printf 'readiness_end\n'
+          printf 'lava_env_names_begin\n'
+          awk -F= '/^(PAYMENT_PROVIDER|LAVA_TOP_API_KEY|LAVA_TOP_WEBHOOK_SECRET|LAVA_TOP_OFFER_ID|LAVA_TOP_BASE_URL|LAVA_TOP_SUCCESSFUL_RETURN_URL|LAVA_TOP_FAILURE_RETURN_URL|LAVA_TOP_CANCEL_RETURN_URL)=/ {print $1"=present"}' "$root/.env" | sort
+          printf 'lava_env_names_end\n'
+          SSH
+
+      - name: Remove temporary SSH identity
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
