@@ -40,6 +40,19 @@ class BotNotification(Base):
     created_at: Mapped[object] = utc_created_at()
 
 
+class DevelopmentRequest(Base):
+    """Durable custom-bot inquiry, independent of API-partner registration."""
+
+    __tablename__ = "development_requests"
+
+    id: Mapped[str] = uuid_pk()
+    telegram_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    telegram_username: Mapped[str | None] = mapped_column(String(32))
+    answers: Mapped[dict] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="new", nullable=False, index=True)
+    created_at: Mapped[object] = utc_created_at()
+
+
 class TrialEntitlement(Base):
     __tablename__ = "trial_entitlements"
     # Intentionally independent of Partner: deletion/re-registration never resets it.

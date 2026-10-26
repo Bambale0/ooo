@@ -26,7 +26,7 @@ from app.support.models import SupportAttachment, SupportTicket
 from app.support.service import append_message, attachment_for, get_ticket, ticket_messages
 from app.telegram.actions import confirm_action
 from app.telegram.service import is_admin, new_action, notify, partner_for
-from app.telegram.ui import format_msk, keyboard, show, status_label, transaction_label
+from app.telegram.ui import format_msk, home_keyboard, keyboard, show, status_label, transaction_label
 
 
 def actor(event) -> str:
@@ -46,7 +46,7 @@ async def ask_confirmation(event, db, kind: str, payload: dict, label: str) -> N
 async def registration_documents(event, dialog) -> None:
     settings = get_settings()
     reset(dialog)
-    buttons = []
+    buttons = [("🤖 Заказать разработку бота", "dev:start")]
     if is_admin(actor(event)):
         buttons.append(("Администратор", "admin_menu"))
     if not settings.terms_url or not settings.privacy_policy_url:
@@ -104,25 +104,15 @@ async def home(event, db, dialog) -> None:
     reset(dialog)
     partner = await partner_for(db, actor(event))
     if partner:
-        buttons = [
-            ("Бесплатные видеотесты", "trials"),
-            ("Документы", "legal_documents"),
-            ("Баланс и пополнение", "balance"),
-            ("API-ключи", "api_keys:0"),
-            ("История и поиск", "history:0"),
-            ("Поддержка", "support"),
-            ("Документация и аккаунт", "settings"),
-        ]
-        if is_admin(actor(event)):
-            buttons.append(("Администратор", "admin_menu"))
         await show(
             event,
-            f"Рады видеть вас в кабинете Нейроныча! 👋\nБаланс: {partner.balance_rub:.2f} ₽\n\n"
-            "Для первого знакомства выберите «Бесплатные видеотесты». "
-            "Для подключения своего приложения создайте API-ключ и откройте документацию.\n\n"
-            "В разделе баланса можно пополнить счёт и проверить оплату, в истории — найти операцию. "
-            "Если понадобится помощь, напишите в поддержку. Команда /start всегда возвращает сюда.",
-            keyboard(*buttons, back=None),
+            f"Рады видеть вас в Нейроныче! 👋\n"
+            f"Баланс: {partner.balance_rub:.2f} ₽\n\n"
+            "Что хотите сделать?\n"
+            "🎬 Попробовать генерацию видео бесплатно.\n"
+            "🤖 Заказать бота для автоматизации или работы с AI.\n\n"
+            "Все остальные разделы — на кнопках ниже. /start — главное меню.",
+            home_keyboard(admin=is_admin(actor(event))),
         )
     else:
         pending = (
@@ -164,6 +154,11 @@ async def handle_callback(event, db, dialog) -> None:
     if data == "main_menu":
         await home(event, db, dialog)
         return
+    if data.startswith("dev:"):
+        from app.telegram.development import handle_callback as development_callback
+
+        await development_callback(event, db, dialog, data)
+        return
     if data.startswith("confirm:"):
         reset(dialog)
         await confirm_action(event, db, user, str(UUID(data.split(":", 1)[1])))
@@ -189,6 +184,18 @@ async def handle_callback(event, db, dialog) -> None:
     partner = await partner_for(db, user)
     if not partner:
         raise HTTPException(403, "account_unavailable")
+    if data == "more_menu":
+        await show(
+            event,
+            "⚙️ Дополнительные разделы\n\nДокументы, ваши заявки и настройки аккаунта.",
+            keyboard(
+                ("🤖 Мои заявки на разработку", "dev:my"),
+                ("📄 Юридические документы", "legal_documents"),
+                ("👤 Настройки аккаунта", "settings"),
+                ("📚 Документация API", "docs"),
+            ),
+        )
+        return
     if data in {"legal_documents", "legal_accept_current"}:
         from app.telegram.legal import accept_current
 
@@ -583,7 +590,11 @@ async def support_callback(event, db, dialog, data: str, partner=None) -> None:
 
 
 async def admin_callback(event, db, dialog, data: str) -> None:
-    if data == "admin_ops":
+    if data.startswith("admin_dev"):
+        from app.telegram.development import admin_callback as development_admin_callback
+
+        await development_admin_callback(event, db, data)
+    elif data == "admin_ops":
         from app.telegram.admin_forms import menu
 
         reset(dialog)
@@ -629,6 +640,7 @@ async def admin_callback(event, db, dialog, data: str) -> None:
             "Администрирование",
             keyboard(
                 ("Заявки", "admin_apps:0"),
+                ("🤖 Заявки на разработку", "admin_dev:0"),
                 ("Платежи", "admin_payments:0"),
                 ("Казначейство", "admin_stw"),
                 ("Цены, возвраты и сверки", "admin_ops"),
@@ -837,6 +849,11 @@ async def handle_message(event, db, dialog) -> None:
     if state.startswith("admin_") and not is_admin(user):
         reset(dialog)
         raise HTTPException(403, "admin_required")
+    if state == "development_intake":
+        from app.telegram.development import handle_message as development_message
+
+        await development_message(event, db, dialog, value)
+        return
     if state in {"register_company", "register_project"}:
         settings = get_settings()
         if (dialog.data.get("legal_version") != settings.legal_document_version

@@ -127,7 +127,12 @@ async def test_bound_menu_buttons_navigate(cabinet, db_session, monkeypatch, cal
     monkeypatch.setattr(get_settings(), "terms_url", "https://example.org/terms")
     monkeypatch.setattr(get_settings(), "privacy_policy_url", "https://example.org/privacy")
     home = (await feed(user=999, text="/start"))[-1]
-    methods = await feed(user=999, callback=callback, reply_markup=home.reply_markup)
+    menu_markup = home.reply_markup
+    if callback in {"legal_documents", "settings"}:
+        # Secondary destinations are now grouped in the compact "Ещё" menu.
+        more = (await feed(user=999, callback="more_menu", reply_markup=menu_markup))[-1]
+        menu_markup = more.reply_markup
+    methods = await feed(user=999, callback=callback, reply_markup=menu_markup)
     assert screen_text.lower() in methods[-1].text.lower()
     assert any(isinstance(method, EditMessageReplyMarkup) for method in methods)
 
