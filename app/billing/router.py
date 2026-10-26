@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
 
 from app.accounts.models import Partner
-from app.api.dependencies import DbSession, require_admin
+from app.api.dependencies import DbSession, get_current_partner, require_admin
 from app.billing.models import CoverageLedgerEntry, LedgerEntry
 from app.billing.schemas import (
     BalanceRead,
@@ -75,6 +75,13 @@ async def create_coverage_adjustment(
         idempotency_key=f"coverage-manual:{partner.id}:{hash_secret(payload.idempotency_key)}",
         description=payload.reason,
     )
+
+
+@router.get("/self/balance", response_model=BalanceRead)
+async def read_own_partner_balance(response: Response, partner: Partner = Depends(get_current_partner)) -> BalanceRead:
+    """Expose only the authenticated partner's current RUB balance for monitoring."""
+    response.headers["Cache-Control"] = "no-store"
+    return partner_balance_read(partner)
 
 
 @router.get("/partners/{partner_id}/balance", response_model=BalanceRead, dependencies=[Depends(require_admin)])
