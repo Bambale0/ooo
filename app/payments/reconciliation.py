@@ -13,8 +13,9 @@ from app.infrastructure.config import get_settings
 from app.infrastructure.database import SessionLocal
 from app.infrastructure.retry import utc_now
 from app.payments.crypto_pay import CryptoPayClient, CryptoPayInvoice, get_crypto_pay_client
+from app.payments.lava_top import LavaTopClient, get_lava_top_client
 from app.payments.models import PaymentInvoice
-from app.payments.service import apply_paid_provider_invoice
+from app.payments.service import apply_paid_provider_invoice, sync_lava_provider_invoice
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,8 @@ def _safe_error_details(exc: Exception) -> dict:
         "ReadError", "RemoteProtocolError", "HTTPStatusError", "invalid_invoice_list",
         "invalid_crypto_pay_invoice", "invalid_provider_response", "crypto_pay_request_failed",
         "payment_provider_id_conflict", "payment_amount_or_payload_mismatch",
+        "payment_amount_or_currency_mismatch", "payment_buyer_mismatch",
+        "invalid_lava_top_invoice", "lava_top_not_configured",
     }
     code = str(exc)
     cause = exc.__cause__
@@ -113,19 +116,64 @@ async def reconcile_payments_once(
     return candidates[-1][0] if len(candidates) == limit else None
 
 
+async def reconcile_lava_top_payments_once(
+    *,
+    session_factory: async_sessionmaker[AsyncSession] = SessionLocal,
+    client: LavaTopClient,
+    limit: int = 20,
+    after_id: str | None = None,
+) -> str | None:
+    query = select(PaymentInvoice.id, PaymentInvoice.provider_reference).where(
+        PaymentInvoice.provider == "lava_top",
+        PaymentInvoice.provider_reference.is_not(None),
+        PaymentInvoice.credited_at.is_(None),
+        PaymentInvoice.status.in_(("active", "paid_waiting_credit", "creation_unknown", "creating")),
+        or_(PaymentInvoice.creation_claimed_until.is_(None), PaymentInvoice.creation_claimed_until <= utc_now()),
+    )
+    if after_id is not None:
+        query = query.where(PaymentInvoice.id > after_id)
+    async with session_factory() as db:
+        candidates = (await db.execute(query.order_by(PaymentInvoice.id).limit(limit))).all()
+
+    for payment_id, provider_reference in candidates:
+        try:
+            invoice = await client.get_invoice(provider_reference)
+            if invoice is None or invoice.invoice_id != provider_reference:
+                continue
+            async with session_factory() as db:
+                await sync_lava_provider_invoice(db, provider_invoice=invoice, payment_id=payment_id)
+                await db.commit()
+        except Exception as exc:
+            logger.warning(
+                "lava_top_payment_reconciliation_failed",
+                extra={"payment_id": payment_id, **_safe_error_details(exc)},
+            )
+    return candidates[-1][0] if len(candidates) == limit else None
+
+
 async def payment_reconciliation_loop(stop_event: asyncio.Event) -> None:
     settings = get_settings()
-    if not settings.crypto_pay_api_token:
+    crypto_enabled = bool(settings.crypto_pay_api_token)
+    lava_top_enabled = bool(settings.lava_top_api_key and settings.lava_top_offer_id)
+    if not crypto_enabled and not lava_top_enabled:
         return
-    cursor = None
+    crypto_cursor = None
+    lava_top_cursor = None
     logger.info("payment_reconciliation_started")
     while not stop_event.is_set():
         try:
-            cursor = await reconcile_payments_once(
-                client=get_crypto_pay_client(),
-                limit=settings.payment_reconciliation_batch_size,
-                after_id=cursor,
-            )
+            if crypto_enabled:
+                crypto_cursor = await reconcile_payments_once(
+                    client=get_crypto_pay_client(),
+                    limit=settings.payment_reconciliation_batch_size,
+                    after_id=crypto_cursor,
+                )
+            if lava_top_enabled:
+                lava_top_cursor = await reconcile_lava_top_payments_once(
+                    client=get_lava_top_client(),
+                    limit=settings.payment_reconciliation_batch_size,
+                    after_id=lava_top_cursor,
+                )
         except Exception as exc:
             logger.warning("payment_reconciliation_cycle_failed", extra=_safe_error_details(exc))
         with suppress(asyncio.TimeoutError):

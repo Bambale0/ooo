@@ -11,7 +11,9 @@ from app.accounts.models import Partner
 from app.billing.service import apply_cost_coverage_change, apply_partner_balance_change
 from app.infrastructure.retry import utc_now
 from app.payments.crypto_pay import CryptoPayClient, CryptoPayError, CryptoPayInvoice
+from app.payments.lava_top import LavaTopClient, LavaTopError, LavaTopInvoice, get_lava_top_client
 from app.payments.models import PaymentInvoice, PaymentRefund
+from app.payments.schemas import normalize_buyer_email
 
 
 async def create_or_resume_invoice(
@@ -95,6 +97,274 @@ async def create_or_resume_invoice(
         return await apply_paid_provider_invoice(db, provider_invoice=provider_invoice)
     _apply_provider_invoice(payment, provider_invoice)
     payment.creation_claimed_until = None
+    await db.flush()
+    await db.refresh(payment)
+    return payment
+
+
+async def create_configured_invoice(
+    db: AsyncSession,
+    *,
+    partner: Partner,
+    requested_rub: int,
+    idempotency_key: str,
+    buyer_email: str | None = None,
+    crypto_client: CryptoPayClient | None = None,
+    lava_client: LavaTopClient | None = None,
+) -> PaymentInvoice:
+    """Create with the configured provider while preserving one local idempotency key."""
+    from app.infrastructure.config import get_settings
+    from app.payments.crypto_pay import get_crypto_pay_client
+
+    settings = get_settings()
+    if settings.payment_provider == "lava_top":
+        effective_buyer_email = buyer_email or partner.payment_email
+        if not effective_buyer_email:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="buyer_email_required")
+        try:
+            client = lava_client or get_lava_top_client()
+        except LavaTopError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="payment_provider_not_configured",
+            ) from exc
+        return await create_or_resume_lava_invoice(
+            db,
+            partner=partner,
+            requested_rub=requested_rub,
+            idempotency_key=idempotency_key,
+            buyer_email=effective_buyer_email,
+            client=client,
+        )
+    return await create_or_resume_invoice(
+        db,
+        partner=partner,
+        requested_rub=requested_rub,
+        idempotency_key=idempotency_key,
+        client=crypto_client or get_crypto_pay_client(),
+    )
+
+
+async def create_or_resume_lava_invoice(
+    db: AsyncSession,
+    *,
+    partner: Partner,
+    requested_rub: int,
+    idempotency_key: str,
+    buyer_email: str,
+    client: LavaTopClient,
+) -> PaymentInvoice:
+    """Create one custom-price Lava.top SBP invoice.
+
+    Lava.top does not expose a merchant idempotency key or invoice search by our
+    identifier. Therefore an ambiguous create is never blindly retried; it is
+    left for reconciliation by the returned contract UUID.
+    """
+    from app.billing.service import lock_partner_for_update
+
+    partner = await lock_partner_for_update(db, partner.id)
+    if partner.status != "active":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="partner_not_active")
+
+    normalized_email = normalize_buyer_email(buyer_email)
+    payment = (
+        await db.execute(
+            select(PaymentInvoice).where(
+                PaymentInvoice.partner_id == partner.id,
+                PaymentInvoice.idempotency_key == idempotency_key,
+            )
+        )
+    ).scalar_one_or_none()
+    if payment is not None:
+        if payment.requested_rub != Decimal(requested_rub):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="idempotency_conflict")
+        if payment.provider != "lava_top":
+            return payment
+        if payment.buyer_email and payment.buyer_email.lower() != normalized_email:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="idempotency_conflict")
+        partner.payment_email = normalized_email
+        if payment.status == "creating" and payment.provider_reference is None:
+            claimed_until = payment.creation_claimed_until
+            if claimed_until is not None and claimed_until.tzinfo is None:
+                claimed_until = claimed_until.replace(tzinfo=UTC)
+            if claimed_until is None or claimed_until <= utc_now():
+                payment.status = "creation_unknown"
+                payment.creation_claimed_until = None
+                await db.flush()
+        _mark_expired_if_needed(payment)
+        return payment
+
+    payment = PaymentInvoice(
+        partner_id=partner.id,
+        provider="lava_top",
+        idempotency_key=idempotency_key,
+        requested_rub=Decimal(requested_rub),
+        accepted_assets="RUB:SBP",
+        buyer_email=normalized_email,
+        status="creating",
+        creation_claimed_until=utc_now() + timedelta(seconds=60),
+    )
+    partner.payment_email = normalized_email
+    db.add(payment)
+    await db.flush()
+    await db.commit()
+    payment = await _ensure_persisted_fx_snapshot(db, payment=payment)
+
+    try:
+        provider_invoice = await client.create_sbp_invoice(
+            amount_rub=requested_rub,
+            buyer_email=normalized_email,
+        )
+    except LavaTopError as exc:
+        payment = await _lock_payment(db, payment.id)
+        payment.status = "creation_unknown"
+        payment.creation_claimed_until = None
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="payment_provider_temporarily_unavailable",
+        ) from exc
+
+    payment = await _lock_payment(db, payment.id)
+    if Decimal(provider_invoice.amount) != payment.requested_rub or provider_invoice.currency.upper() != "RUB":
+        payment.provider_reference = provider_invoice.invoice_id
+        payment.status = "creation_unknown"
+        payment.creation_claimed_until = None
+        payment.reconciliation_snapshot = {
+            "provider_invoice_id": provider_invoice.invoice_id,
+            "source": "create_response",
+            "result": "amount_or_currency_mismatch",
+        }
+        await db.flush()
+        return payment
+    return await sync_lava_provider_invoice(
+        db,
+        provider_invoice=provider_invoice,
+        payment_id=payment.id,
+    )
+
+
+async def refresh_configured_invoice(
+    db: AsyncSession,
+    *,
+    payment_id: str,
+    partner: Partner,
+    crypto_client: CryptoPayClient | None = None,
+    lava_client: LavaTopClient | None = None,
+) -> PaymentInvoice:
+    payment = await get_partner_payment(db, payment_id=payment_id, partner_id=partner.id)
+    if payment.provider == "lava_top":
+        if payment.provider_reference is None:
+            return payment
+        try:
+            provider_invoice = await (lava_client or get_lava_top_client()).get_invoice(payment.provider_reference)
+        except LavaTopError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="payment_provider_temporarily_unavailable",
+            ) from exc
+        if provider_invoice is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="payment_confirmation_pending",
+            )
+        return await sync_lava_provider_invoice(db, provider_invoice=provider_invoice, payment_id=payment.id)
+
+    from app.payments.crypto_pay import get_crypto_pay_client
+
+    client = crypto_client or get_crypto_pay_client()
+    if payment.status in {"creating", "creation_unknown"}:
+        payment = await create_or_resume_invoice(
+            db,
+            partner=partner,
+            requested_rub=int(payment.requested_rub),
+            idempotency_key=payment.idempotency_key,
+            client=client,
+        )
+    if payment.provider_invoice_id and payment.status in {"active", "expired", "creating"}:
+        try:
+            provider_invoice = await client.get_invoice(payment.provider_invoice_id)
+        except CryptoPayError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="payment_provider_temporarily_unavailable",
+            ) from exc
+        if provider_invoice and provider_invoice.status == "paid":
+            payment = await apply_paid_provider_invoice(db, provider_invoice=provider_invoice)
+        elif provider_invoice is not None:
+            _apply_provider_invoice(payment, provider_invoice)
+            await db.flush()
+    return payment
+
+
+async def cancel_configured_invoice(
+    db: AsyncSession,
+    *,
+    payment_id: str,
+    partner_id: str,
+    crypto_client: CryptoPayClient | None = None,
+) -> PaymentInvoice:
+    payment = await get_partner_payment(db, payment_id=payment_id, partner_id=partner_id)
+    if payment.provider == "lava_top":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="payment_not_cancellable")
+    from app.payments.crypto_pay import get_crypto_pay_client
+
+    return await cancel_active_invoice(
+        db,
+        payment_id=payment_id,
+        partner_id=partner_id,
+        client=crypto_client or get_crypto_pay_client(),
+    )
+
+
+async def sync_lava_provider_invoice(
+    db: AsyncSession,
+    *,
+    provider_invoice: LavaTopInvoice,
+    payment_id: str | None = None,
+) -> PaymentInvoice:
+    payment = (
+        await db.execute(
+            select(PaymentInvoice)
+            .where(PaymentInvoice.provider_reference == provider_invoice.invoice_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if payment is None and payment_id is not None:
+        payment = await _lock_payment(db, payment_id)
+    if payment is None or payment.provider != "lava_top":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="payment_not_found")
+    if payment.provider_reference not in {None, provider_invoice.invoice_id}:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="payment_provider_id_conflict")
+    if provider_invoice.currency.upper() != "RUB" or Decimal(provider_invoice.amount) != payment.requested_rub:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="payment_amount_or_currency_mismatch")
+    if payment.buyer_email:
+        if provider_invoice.status == "paid" and not provider_invoice.buyer_email:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="payment_buyer_mismatch")
+        if (
+            provider_invoice.buyer_email
+            and payment.buyer_email.casefold() != provider_invoice.buyer_email.casefold()
+        ):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="payment_buyer_mismatch")
+
+    payment.provider_reference = provider_invoice.invoice_id
+    if provider_invoice.payment_url:
+        payment.invoice_url = provider_invoice.payment_url
+    payment.creation_claimed_until = None
+    if payment.credited_at is not None:
+        return payment
+    if provider_invoice.status == "paid":
+        payment.status = "paid_waiting_credit"
+        payment.paid_at = _parse_datetime(provider_invoice.paid_at) or utc_now()
+        payment.paid_asset = "RUB"
+        payment.paid_amount = payment.requested_rub
+        payment.paid_fiat_rate = Decimal(1)
+        payment.paid_usd_rate = await _rub_to_usdt_rate(db, payment)
+        await db.flush()
+        return await credit_paid_invoice(db, payment_id=payment.id)
+    if provider_invoice.status in {"active", "failed", "cancelled"}:
+        payment.status = provider_invoice.status
     await db.flush()
     await db.refresh(payment)
     return payment
@@ -210,7 +480,7 @@ async def credit_paid_invoice(db: AsyncSession, *, payment_id: str) -> PaymentIn
         amount_rub=amount,
         operation_type="payment_credit",
         idempotency_key=f"payment-credit-retail:{payment.id}",
-        description="Confirmed Crypto Pay payment credited",
+        description=f"Confirmed {payment.provider} payment credited",
         allow_negative=True,
     )
     from app.catalog.models import Model, PartnerPrice
@@ -250,7 +520,7 @@ async def credit_paid_invoice(db: AsyncSession, *, payment_id: str) -> PaymentIn
         amount_rub=coverage,
         operation_type="payment_coverage_credit",
         idempotency_key=f"payment-credit-coverage:{payment.id}",
-        description="Crypto Pay payment funded real cost coverage",
+        description=f"{payment.provider} payment funded real cost coverage",
         allow_negative=True,
     )
     payment.status = "credited"
@@ -316,7 +586,7 @@ async def record_confirmed_refund(
         amount_rub=-amount,
         operation_type="payment_refund_adjustment",
         idempotency_key=f"payment-refund-retail:{refund.id}",
-        description="Confirmed Crypto Pay refund",
+        description=f"Confirmed {payment.provider} refund",
         allow_negative=True,
     )
     ratio = Decimal((payment.coverage_snapshot or {}).get("ratio", "1"))
@@ -331,7 +601,7 @@ async def record_confirmed_refund(
         amount_rub=-coverage_reversal,
         operation_type="payment_refund_coverage_adjustment",
         idempotency_key=f"payment-refund-coverage:{refund.id}",
-        description="Confirmed Crypto Pay refund coverage reversal",
+        description=f"Confirmed {payment.provider} refund coverage reversal",
         allow_negative=True,
     )
     payment.refunded_rub = Decimal(payment.refunded_rub) + amount
@@ -378,6 +648,34 @@ async def _ensure_invoice_fx_snapshot(
         payment.fx_snapshot = fx_snapshot(fx_data)
     await db.commit()
     return payment
+
+
+async def _ensure_persisted_fx_snapshot(
+    db: AsyncSession,
+    *,
+    payment: PaymentInvoice,
+) -> PaymentInvoice:
+    if payment.fx_snapshot is not None:
+        return payment
+    from app.billing.fx import current_fx
+    from app.billing.fx import snapshot as fx_snapshot
+
+    fx_data = await current_fx(db)
+    payment = await _lock_payment(db, payment.id)
+    if payment.fx_snapshot is None:
+        payment.fx_snapshot = fx_snapshot(fx_data)
+    await db.commit()
+    return payment
+
+
+async def _rub_to_usdt_rate(db: AsyncSession, payment: PaymentInvoice) -> Decimal:
+    from app.billing.fx import current_fx, restore_snapshot
+
+    fx_data = restore_snapshot(payment.fx_snapshot)
+    if fx_data is None:
+        fx_data = await current_fx(db)
+    rub_per_usdt = Decimal(fx_data["rate"])
+    return (Decimal(1) / rub_per_usdt).quantize(Decimal("0.000000000000000001"))
 
 
 async def _lock_payment(db: AsyncSession, payment_id: str) -> PaymentInvoice:

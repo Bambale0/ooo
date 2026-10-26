@@ -1,4 +1,7 @@
+import hashlib
 import json
+import secrets
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy import select, text
@@ -7,7 +10,8 @@ from app.accounts.models import Partner
 from app.api.dependencies import DbSession, get_current_partner, require_admin
 from app.infrastructure.config import get_settings
 from app.payments.crypto_pay import CryptoPayError, get_crypto_pay_client
-from app.payments.models import CryptoPayWebhookEvent, PaymentInvoice
+from app.payments.lava_top import LavaTopError, get_lava_top_client
+from app.payments.models import CryptoPayWebhookEvent, LavaTopWebhookEvent, PaymentInvoice
 from app.payments.schemas import (
     PaymentCreditRead,
     PaymentInvoiceCreate,
@@ -19,11 +23,12 @@ from app.payments.schemas import (
 from app.payments.security import verify_crypto_pay_signature
 from app.payments.service import (
     apply_paid_provider_invoice,
-    cancel_active_invoice,
-    create_or_resume_invoice,
+    cancel_configured_invoice,
+    create_configured_invoice,
     credit_paid_invoice,
     get_partner_payment,
     record_confirmed_refund,
+    sync_lava_provider_invoice,
 )
 
 router = APIRouter()
@@ -35,12 +40,26 @@ async def create_invoice(
     db: DbSession,
     partner: Partner = Depends(get_current_partner),
 ) -> PaymentInvoice:
-    return await create_or_resume_invoice(
+    settings = get_settings()
+    lava_client = None
+    if settings.payment_provider == "lava_top":
+        if not payload.buyer_email and not partner.payment_email:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="buyer_email_required")
+        try:
+            lava_client = get_lava_top_client()
+        except LavaTopError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="payment_provider_not_configured",
+            ) from exc
+    return await create_configured_invoice(
         db,
         partner=partner,
         requested_rub=payload.requested_rub,
         idempotency_key=payload.idempotency_key,
-        client=get_crypto_pay_client(),
+        buyer_email=payload.buyer_email,
+        crypto_client=get_crypto_pay_client() if settings.payment_provider == "crypto_pay" else None,
+        lava_client=lava_client,
     )
 
 
@@ -59,11 +78,12 @@ async def cancel_invoice(
     db: DbSession,
     partner: Partner = Depends(get_current_partner),
 ) -> PaymentInvoice:
-    return await cancel_active_invoice(
+    payment = await get_partner_payment(db, payment_id=payment_id, partner_id=partner.id)
+    return await cancel_configured_invoice(
         db,
         payment_id=payment_id,
         partner_id=partner.id,
-        client=get_crypto_pay_client(),
+        crypto_client=get_crypto_pay_client() if payment.provider == "crypto_pay" else None,
     )
 
 
@@ -173,16 +193,130 @@ async def crypto_pay_webhook(
     return {"ok": True}
 
 
+@router.post("/lava-top/webhook", include_in_schema=False)
+async def lava_top_webhook(
+    request: Request,
+    db: DbSession,
+    x_api_key: str | None = Header(default=None),
+) -> dict[str, bool]:
+    settings = get_settings()
+    if not settings.lava_top_webhook_secret:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="lava_top_webhook_not_configured")
+    expected = settings.lava_top_webhook_secret.get_secret_value()
+    if x_api_key is None or not secrets.compare_digest(x_api_key, expected):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_lava_top_webhook_secret")
+
+    raw_body = await request.body()
+    if len(raw_body) > 1024 * 1024:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="webhook_too_large")
+    try:
+        update = json.loads(raw_body)
+        if not isinstance(update, dict):
+            raise TypeError
+        event_type_value = update.get("eventType", update.get("event_type"))
+        if event_type_value is None:
+            raise KeyError("eventType")
+        event_type = str(event_type_value)
+        provider_reference_value = update.get("contractId")
+        if provider_reference_value is None and isinstance(update.get("data"), dict):
+            provider_reference_value = update["data"].get("contractId")
+        provider_reference = str(provider_reference_value) if provider_reference_value else None
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid_lava_top_webhook") from exc
+    if not event_type or len(event_type) > 80 or (provider_reference and len(provider_reference) > 80):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid_lava_top_webhook")
+    if event_type.startswith("payment.") and not provider_reference:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid_lava_top_webhook")
+
+    event_key = hashlib.sha256(raw_body).hexdigest()
+    if db.bind.dialect.name == "postgresql":
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": f"lava-top-event:{event_key}"},
+        )
+    existing = await db.scalar(select(LavaTopWebhookEvent).where(LavaTopWebhookEvent.event_key == event_key))
+    if existing is not None:
+        return {"ok": True}
+
+    local_payment = None
+    if provider_reference:
+        local_payment = await db.scalar(
+            select(PaymentInvoice).where(
+                PaymentInvoice.provider == "lava_top",
+                PaymentInvoice.provider_reference == provider_reference,
+            )
+        )
+    if local_payment is not None and event_type.startswith("payment."):
+        try:
+            provider_invoice = await get_lava_top_client().get_invoice(provider_reference)
+        except LavaTopError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="payment_provider_temporarily_unavailable",
+            ) from exc
+        if provider_invoice is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="payment_confirmation_pending",
+            )
+        await sync_lava_provider_invoice(
+            db,
+            provider_invoice=provider_invoice,
+            payment_id=local_payment.id,
+        )
+
+    db.add(
+        LavaTopWebhookEvent(
+            event_key=event_key,
+            event_type=event_type,
+            provider_reference=provider_reference,
+        )
+    )
+    await db.flush()
+    return {"ok": True}
+
+
 @router.post(
     "/invoices/{payment_id}/reconcile", response_model=PaymentInvoiceRead, dependencies=[Depends(require_admin)]
 )
 async def reconcile_invoice(payment_id: str, payload: PaymentReconcileCreate, db: DbSession):
-    from decimal import Decimal
-
     from app.payments.service import _apply_provider_invoice, _lock_payment
 
     payment = await _lock_payment(db, payment_id)
-    provider = await get_crypto_pay_client().get_invoice(payload.provider_invoice_id)
+    if payment.provider == "lava_top":
+        provider_reference = str(payload.provider_invoice_id)
+        try:
+            provider = await get_lava_top_client().get_invoice(provider_reference)
+        except LavaTopError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="payment_provider_temporarily_unavailable",
+            ) from exc
+        if provider is None or provider.currency.upper() != "RUB" or Decimal(provider.amount) != payment.requested_rub:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="invoice_reconciliation_mismatch")
+        if payment.provider_reference not in {None, provider.invoice_id}:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="payment_provider_id_conflict")
+        if (
+            payment.reconciliation_snapshot
+            and payment.reconciliation_snapshot.get("provider_invoice_id") != provider.invoice_id
+        ):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="already_reconciled")
+        if not payment.reconciliation_snapshot:
+            payment.reconciliation_snapshot = {
+                "provider_invoice_id": provider.invoice_id,
+                "reason": payload.reason,
+                "actor": "admin_api",
+            }
+        return await sync_lava_provider_invoice(db, provider_invoice=provider, payment_id=payment.id)
+
+    try:
+        crypto_provider_invoice_id = int(payload.provider_invoice_id)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="invalid_provider_invoice_id",
+        ) from exc
+    provider = await get_crypto_pay_client().get_invoice(crypto_provider_invoice_id)
     if provider is None or provider.payload != payment.id or Decimal(provider.amount) != payment.requested_rub:
         raise HTTPException(409, "invoice_reconciliation_mismatch")
     if payment.provider_invoice_id not in {None, provider.invoice_id}:

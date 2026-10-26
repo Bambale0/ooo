@@ -13,6 +13,7 @@ from app.infrastructure.logging import configure_logging
 from app.infrastructure.metrics import metrics_payload, monotonic_seconds, observe_http_request, refresh_db_pool_metrics
 from app.infrastructure.production_check import require_production_config
 from app.payments.crypto_pay import close_crypto_pay_client
+from app.payments.lava_top import close_lava_top_client
 from app.providers.http_client import close_provider_http_clients
 
 
@@ -25,6 +26,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         await close_crypto_pay_client()
+        await close_lava_top_client()
         await close_provider_http_clients()
 
 

@@ -12,16 +12,19 @@ class PaymentInvoice(Base):
     __table_args__ = (
         UniqueConstraint("partner_id", "idempotency_key", name="uq_payment_invoice_partner_idempotency"),
         UniqueConstraint("provider_invoice_id", name="uq_payment_invoice_provider_invoice"),
+        UniqueConstraint("provider_reference", name="uq_payment_invoices_provider_reference"),
     )
 
     id: Mapped[str] = uuid_pk()
     partner_id: Mapped[str] = mapped_column(ForeignKey("partners.id"), nullable=False, index=True)
     provider: Mapped[str] = mapped_column(String(40), nullable=False, default="crypto_pay")
     provider_invoice_id: Mapped[int | None] = mapped_column(BigInteger)
+    provider_reference: Mapped[str | None] = mapped_column(String(80), index=True)
     idempotency_key: Mapped[str] = mapped_column(String(160), nullable=False)
     status: Mapped[str] = mapped_column(String(40), nullable=False, default="creating", index=True)
     requested_rub: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     accepted_assets: Mapped[str] = mapped_column(String(120), nullable=False, default="USDT,TON")
+    buyer_email: Mapped[str | None] = mapped_column(String(320))
     invoice_url: Mapped[str | None] = mapped_column(Text)
     expires_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), index=True)
     creation_claimed_until: Mapped[object | None] = mapped_column(DateTime(timezone=True), index=True)
@@ -47,6 +50,17 @@ class CryptoPayWebhookEvent(Base):
     update_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
     update_type: Mapped[str] = mapped_column(String(80), nullable=False)
     provider_invoice_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
+    created_at: Mapped[object] = utc_created_at()
+
+
+class LavaTopWebhookEvent(Base):
+    __tablename__ = "lava_top_webhook_events"
+    __table_args__ = (UniqueConstraint("event_key", name="uq_lava_top_webhook_events_event_key"),)
+
+    id: Mapped[str] = uuid_pk()
+    event_key: Mapped[str] = mapped_column(String(180), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    provider_reference: Mapped[str | None] = mapped_column(String(80), index=True)
     created_at: Mapped[object] = utc_created_at()
 
 

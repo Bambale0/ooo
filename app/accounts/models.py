@@ -30,6 +30,7 @@ class Partner(Base):
     telegram_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     company_name: Mapped[str] = mapped_column(String(255), nullable=False)
     project_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    payment_email: Mapped[str | None] = mapped_column(String(320))
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
     balance_rub: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=Decimal("0.00"))
     credit_limit_rub: Mapped[Decimal] = mapped_column(

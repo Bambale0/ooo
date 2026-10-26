@@ -26,6 +26,7 @@ from app.infrastructure.metrics import update_generation_queue_metrics
 from app.infrastructure.production_check import require_production_config
 from app.infrastructure.retry import utc_now
 from app.payments.crypto_pay import close_crypto_pay_client
+from app.payments.lava_top import close_lava_top_client
 from app.payments.reconciliation import payment_reconciliation_loop
 from app.providers.http_client import close_provider_http_clients
 from app.providers.models import ProviderAttempt
@@ -181,6 +182,7 @@ async def run_generation_worker_forever() -> None:
         with suppress(asyncio.CancelledError):
             await payment_task
         await close_crypto_pay_client()
+        await close_lava_top_client()
         await close_provider_http_clients()
     logger.info("generation_worker_stopped")
 

@@ -32,7 +32,7 @@ from app.infrastructure.config import get_settings
 from app.media.video_inputs import eligible_video_input, prepare_video_inputs, snapshot_is_fresh
 from app.providers.base import ProviderGenerationRequest
 from app.providers.models import ProviderAttempt
-from app.providers.service import get_active_provider_credential
+from app.providers.service import get_active_provider_credential, has_provider_runtime_credential
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +115,7 @@ async def reserve(
             auth.partner.status == "active"
             and available is not None
             and (available.status != RESTRICTED_STATUS or await has_model_grant(db, available.id, auth.partner.id))
-            and await get_active_provider_credential(db, auth.partner.id, "argolink", for_update=False) is not None
+            and await has_provider_runtime_credential(db, auth.partner.id, "argolink", for_update=False)
         ):
             prepared = await prepare_video_inputs(db, auth.partner.id, body)
             if prepared is not None and not snapshot_is_fresh(prepared):
@@ -141,7 +141,7 @@ async def reserve(
     if model.status == RESTRICTED_STATUS and not await has_model_grant(db, model.id, partner.id):
         raise HTTPException(404, "model_not_available")
     credential = await get_active_provider_credential(db, partner.id, "argolink")
-    if credential is None:
+    if credential is None and not await has_provider_runtime_credential(db, partner.id, "argolink"):
         raise InferenceAdmissionError(503, "provider_temporarily_unavailable", failure_stage="provider_credential")
     prices = await effective_partner_prices(db, partner_id=partner.id, model_id=model.id)
     from app.billing.fx import current_fx
@@ -309,7 +309,10 @@ async def reserve(
     attempt = None
     if not video:
         attempt = ProviderAttempt(
-            generation_id=generation.id, provider="argolink", credential_id=credential.id, status="submitting"
+            generation_id=generation.id,
+            provider="argolink",
+            credential_id=credential.id if credential is not None else None,
+            status="submitting",
         )
         db.add(attempt)
     await db.commit()

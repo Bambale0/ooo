@@ -30,6 +30,7 @@ class PartnerRead(BaseModel):
     telegram_id: str
     company_name: str
     project_name: str
+    payment_email: str | None
     status: str
     balance_rub: Decimal
     credit_limit_rub: Decimal

@@ -199,9 +199,12 @@ async def test_registration_survives_restart_and_records_consents(cabinet, db_se
     await feed(callback="accept_legal")
     await feed(text="Компания")
     methods = await feed(text="Проект API")
-    assert "принята" in methods[-1].text
+    assert "активирован автоматически" in methods[-1].text
+    assert "nrn_" in methods[-1].text
     row = (await db_session.execute(select(PartnerApplication))).scalar_one()
-    assert row.telegram_id == "123"
+    assert row.telegram_id == "123" and row.status == "approved"
+    assert (await db_session.execute(select(func.count()).select_from(Partner))).scalar() == 1
+    assert (await db_session.execute(select(func.count()).select_from(ApiKey))).scalar() == 1
     assert (await db_session.execute(select(func.count()).select_from(ConsentAcceptance))).scalar() == 2
     assert (await db_session.execute(select(func.count()).select_from(BotNotification))).scalar() == 1
     assert (await db_session.get(BotDialog, "123")).state == "menu"
@@ -321,12 +324,54 @@ async def test_topup_requires_confirmation_and_duplicate_does_not_recreate(cabin
     assert (await db_session.execute(select(func.count()).select_from(PaymentInvoice))).scalar() == 1
 
 
+async def test_lava_top_payment_email_is_saved_reused_and_changeable(cabinet, db_session, monkeypatch):
+    from tests.test_lava_top_payments import FakeLavaTopClient
+
+    feed, _ = cabinet
+    owner = await partner(db_session)
+    monkeypatch.setattr(get_settings(), "payment_provider", "lava_top")
+    fake = FakeLavaTopClient()
+    monkeypatch.setattr("app.payments.service.get_lava_top_client", lambda: fake)
+
+    screen = (await feed(callback="topup"))[-1]
+    assert "Укажите email" in screen.text
+    await feed(text="Buyer@Example.org")
+    await db_session.refresh(owner)
+    assert owner.payment_email == "buyer@example.org"
+    await feed(text="1500")
+    action = (
+        await db_session.execute(
+            select(BotAction).where(BotAction.kind == "invoice_create", BotAction.status == "pending")
+        )
+    ).scalar_one()
+    await feed(callback=f"confirm:{action.id}")
+
+    screen = (await feed(callback="topup"))[-1]
+    assert "buyer@example.org" in screen.text
+    assert (await db_session.get(BotDialog, "123")).state == "topup"
+    await feed(text="1600")
+    action = (
+        await db_session.execute(
+            select(BotAction).where(BotAction.kind == "invoice_create", BotAction.status == "pending")
+        )
+    ).scalar_one()
+    await feed(callback=f"confirm:{action.id}")
+    assert fake.created == [(1500, "buyer@example.org"), (1600, "buyer@example.org")]
+
+    await feed(callback="payment_email")
+    await feed(text="new@example.org")
+    await db_session.refresh(owner)
+    assert owner.payment_email == "new@example.org"
+
+
 async def test_delete_allows_new_registration_and_transfer_preserves_account(cabinet, db_session):
     from app.accounts.router import transfer_telegram
     from app.accounts.schemas import TransferTelegramCreate
 
     feed, _ = cabinet
     owner = await partner(db_session)
+    owner.payment_email = "buyer@example.org"
+    await db_session.commit()
     old_id = owner.id
     await transfer_telegram(owner.id, TransferTelegramCreate(telegram_id="456", reason="Identity verified"), db_session)
     await db_session.commit()
@@ -337,6 +382,7 @@ async def test_delete_allows_new_registration_and_transfer_preserves_account(cab
     action = (await db_session.execute(select(BotAction))).scalar_one()
     await feed(user=456, callback=f"confirm:{action.id}")
     assert owner.status == "deleted" and owner.telegram_id.startswith("deleted:")
+    assert owner.payment_email is None
     replacement = await partner(db_session, "456")
     assert replacement.id != old_id
 

@@ -33,6 +33,9 @@ ERRORS = {
     "payment_not_ready_for_credit": "Провайдер ещё не подтвердил оплату этого счёта.",
     "telegram_id_already_assigned": "Этот Telegram ID уже привязан к другому аккаунту.",
     "payment_provider_temporarily_unavailable": "Платёжный сервис временно недоступен. Проверьте этот счёт позже.",
+    "payment_provider_not_configured": "Пополнение временно недоступно. Администратор уже может проверить настройки.",
+    "buyer_email_required": "Для оплаты через СБП сначала укажите email для чека.",
+    "payment_not_cancellable": "Этот счёт нельзя отменить через платёжный API. При необходимости создайте новый.",
     "invalid_webhook_url": "Нужен доступный публичный HTTPS-адрес webhook.",
     "consent_required": (
         "Это подтверждение уже неактуально. Откройте /start или раздел «Документы», "

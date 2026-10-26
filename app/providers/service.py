@@ -42,10 +42,15 @@ async def has_provider_runtime_credential(
     db: AsyncSession,
     partner_id: str,
     provider: str,
+    *,
+    for_update: bool = True,
 ) -> bool:
-    if provider == "asale" and get_settings().asale_api_key:
+    settings = get_settings()
+    if (provider == "asale" and settings.asale_api_key) or (
+        provider == "argolink" and settings.argolink_api_key
+    ):
         return True
-    return await get_active_provider_credential(db, partner_id, provider) is not None
+    return await get_active_provider_credential(db, partner_id, provider, for_update=for_update) is not None
 
 
 async def get_partner_provider_adapter(
@@ -55,10 +60,13 @@ async def get_partner_provider_adapter(
     *,
     credential_id: str | None = None,
 ) -> ProviderAdapter:
-    if credential_id is None and provider == "asale" and get_settings().asale_api_key:
-        return get_provider_adapter(provider, api_key=get_settings().asale_api_key)
+    settings = get_settings()
     if credential_id is None:
         credential = await get_active_provider_credential(db, partner_id, provider)
+        if credential is None and provider == "asale" and settings.asale_api_key:
+            return get_provider_adapter(provider, api_key=settings.asale_api_key)
+        if credential is None and provider == "argolink" and settings.argolink_api_key:
+            return get_provider_adapter(provider, api_key=settings.argolink_api_key)
     else:
         # Existing jobs belong to the original upstream account, even after key rotation.
         scope = (
