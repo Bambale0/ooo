@@ -303,7 +303,7 @@ async def admin_callback(event, db, data: str) -> None:
     if not is_admin(_telegram_id(event)):
         raise HTTPException(403, "admin_required")
     if data.startswith("admin_dev_status:"):
-        _, _, _, request_id, status = data.split(":")
+        _, request_id, status = data.split(":")
         if status not in {"in_progress", "completed"}:
             raise HTTPException(422, "invalid_development_status")
         row = await db.get(DevelopmentRequest, str(UUID(request_id)), with_for_update=True)
