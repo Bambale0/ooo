@@ -177,6 +177,7 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
     )
     anchors = [
         ("connect", "Подключение", "Connection"),
+        ("balance", "Баланс", "Balance"),
         ("models", "Модели", "Models"),
         ("text", "Текст", "Text"),
         ("images", "Изображения", "Images"),
@@ -228,6 +229,7 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
         (t("Метод", "Method"), t("Успешный ответ", "Success response")),
         [
             ("GET /v1/models", "200 application/json"),
+            ("GET /v1/balance", "200 application/json"),
             ("POST /v1/responses", "200 application/json | text/event-stream"),
             ("POST /v1/chat/completions", "200 application/json | text/event-stream"),
             ("POST /v1/messages", "200 application/json | text/event-stream"),
@@ -239,6 +241,34 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
             ("GET /api/v1/generations/{request_id}/trace", "200 application/json"),
             ("POST /v1/media/uploads", "201 application/json"),
         ],
+    )
+    body += heading("balance", "Баланс партнёра", "Partner balance")
+    body += p(
+        "GET /v1/balance возвращает только текущий рублёвый баланс владельца переданного партнёрского "
+        "API-ключа. Требуется Authorization: Bearer <PARTNER_API_KEY> либо x-api-key. "
+        "Нельзя получить баланс другого партнёра или использовать административный ключ. "
+        "Этот GET не создаёт генерацию, не списывает деньги и не требует Idempotency-Key. "
+        "Ответ не кешируется (Cache-Control: no-store).",
+        "GET /v1/balance returns only the current RUB balance belonging to the provided partner API key. "
+        "Use Authorization: Bearer <PARTNER_API_KEY> or x-api-key. Another partner's balance and admin API "
+        "tokens cannot be used here. This GET creates no generation, charges nothing and needs no "
+        "Idempotency-Key. Responses have Cache-Control: no-store.",
+    )
+    body += code('curl --fail-with-body "$API_BASE/v1/balance" -H "Authorization: Bearer $API_KEY"')
+    body += code({
+        "partner_id": "<your-partner-id>",
+        "balance_rub": "999.99",
+        "credit_limit_rub": "250.00",
+        "available_balance_rub": "1249.99",
+    })
+    body += p(
+        "balance_rub — фактический денежный остаток в ₽; credit_limit_rub — отдельно одобренный "
+        "кредитный лимит; available_balance_rub — их сумма. Для предупреждения о необходимости "
+        "пополнения денежных средств сравнивайте именно balance_rub, не кредитный лимит. "
+        "Денежные значения передаются строками с точностью до копейки.",
+        "balance_rub is the actual RUB cash balance, credit_limit_rub the separately approved limit, "
+        "and available_balance_rub their sum. For low cash alerts compare balance_rub, not credit "
+        "availability. Amounts are returned as decimal strings with kopeck precision.",
     )
     # The enabled-model table is inserted by guide.py, matching GET /v1/models.
     body += heading("models", "Доступность моделей", "Model availability")
