@@ -4,7 +4,8 @@ from sqlalchemy import func, select
 
 from app.accounts.models import Partner
 from app.telegram.models import BotDialog, BotNotification, DevelopmentRequest
-from tests.test_telegram_cabinet import cabinet, partner
+from tests.test_telegram_cabinet import cabinet as cabinet
+from tests.test_telegram_cabinet import partner
 
 
 async def complete_intake(feed):
