@@ -52,6 +52,10 @@ async def test_public_docs_are_self_contained_without_private_surface(client, la
     body = response.text
     assert get_settings().public_api_base_url.rstrip("/") in body
     assert "/v1/models" in body
+    assert "/v1/balance" in body
+    assert 'id="balance"' in body
+    assert "balance_rub" in body and "available_balance_rub" in body
+    assert "credit_limit_rub" in body and "no-store" in body
     assert "Authorization: Bearer" in body
 
     for term in (
