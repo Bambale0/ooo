@@ -16,6 +16,10 @@ class LavaTopError(RuntimeError):
     pass
 
 
+class LavaTopBuyerEmailRejected(LavaTopError):
+    """Lava.top definitively rejected the buyer email before creating an invoice."""
+
+
 @dataclass(frozen=True)
 class LavaTopInvoice:
     invoice_id: str
@@ -97,6 +101,13 @@ class LavaTopClient:
                 return None
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 400:
+                try:
+                    provider_error = exc.response.json().get("error")
+                except (AttributeError, ValueError):
+                    provider_error = None
+                if str(provider_error or "").strip().casefold() == "incorrect email to purchase":
+                    raise LavaTopBuyerEmailRejected("buyer_email_rejected") from exc
             raise LavaTopError(f"provider_http_{exc.response.status_code}") from exc
         except httpx.HTTPError as exc:
             raise LavaTopError(type(exc).__name__) from exc

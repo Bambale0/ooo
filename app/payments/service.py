@@ -11,7 +11,13 @@ from app.accounts.models import Partner
 from app.billing.service import apply_cost_coverage_change, apply_partner_balance_change
 from app.infrastructure.retry import utc_now
 from app.payments.crypto_pay import CryptoPayClient, CryptoPayError, CryptoPayInvoice
-from app.payments.lava_top import LavaTopClient, LavaTopError, LavaTopInvoice, get_lava_top_client
+from app.payments.lava_top import (
+    LavaTopBuyerEmailRejected,
+    LavaTopClient,
+    LavaTopError,
+    LavaTopInvoice,
+    get_lava_top_client,
+)
 from app.payments.models import PaymentInvoice, PaymentRefund
 from app.payments.schemas import normalize_buyer_email
 
@@ -215,6 +221,19 @@ async def create_or_resume_lava_invoice(
             amount_rub=requested_rub,
             buyer_email=normalized_email,
         )
+    except LavaTopBuyerEmailRejected as exc:
+        payment = await _lock_payment(db, payment.id)
+        payment.status = "failed"
+        payment.creation_claimed_until = None
+        payment.reconciliation_snapshot = {
+            "source": "create_response",
+            "result": "buyer_email_rejected",
+        }
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="buyer_email_rejected_by_provider",
+        ) from exc
     except LavaTopError as exc:
         payment = await _lock_payment(db, payment.id)
         payment.status = "creation_unknown"

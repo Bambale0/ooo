@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.billing.models import CoverageLedgerEntry, LedgerEntry
 from app.infrastructure.config import get_settings
-from app.payments.lava_top import LavaTopClient, LavaTopError, LavaTopInvoice
+from app.payments.lava_top import LavaTopBuyerEmailRejected, LavaTopClient, LavaTopError, LavaTopInvoice
 from app.payments.models import LavaTopWebhookEvent, PaymentInvoice
 from app.payments.service import create_or_resume_lava_invoice
 from tests.test_crypto_payments import _partner_with_api_key
@@ -159,6 +159,24 @@ async def test_lava_top_client_sends_exact_sbp_contract_and_parses_confirmation(
         "failure_return_url": "https://example.org/payment/failure",
         "cancel_return_url": "https://example.org/payment/cancel",
     }
+
+
+async def test_lava_top_client_classifies_rejected_buyer_email():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"error": "Incorrect email to purchase", "details": {}})
+
+    http = httpx.AsyncClient(base_url="https://gate.lava.top", transport=httpx.MockTransport(handler))
+    client = LavaTopClient(
+        api_key="lava-secret",
+        offer_id="22222222-2222-4222-8222-222222222222",
+        base_url="https://gate.lava.top",
+        timeout_seconds=10,
+        client=http,
+    )
+
+    with pytest.raises(LavaTopBuyerEmailRejected):
+        await client.create_sbp_invoice(amount_rub=1500, buyer_email="seller@example.org")
+    await http.aclose()
 
 
 async def test_lava_top_sbp_webhook_rechecks_and_credits_exactly_once(
@@ -331,6 +349,38 @@ async def test_lava_top_unknown_create_is_not_replayed(db_session):
     )
     assert repeated.status == "creation_unknown"
     assert fake.created == [(1500, "buyer@example.org")]
+
+
+async def test_lava_top_rejected_buyer_email_is_failed_not_ambiguous(db_session):
+    partner, _ = await _partner_with_api_key(db_session, telegram_id="lava-rejected-email")
+
+    class RejectedEmailClient(FakeLavaTopClient):
+        async def create_sbp_invoice(self, *, amount_rub: int, buyer_email: str) -> LavaTopInvoice:
+            self.created.append((amount_rub, buyer_email))
+            raise LavaTopBuyerEmailRejected("buyer_email_rejected")
+
+    fake = RejectedEmailClient()
+    with pytest.raises(HTTPException) as rejected:
+        await create_or_resume_lava_invoice(
+            db_session,
+            partner=partner,
+            requested_rub=1500,
+            idempotency_key="lava-rejected-email",
+            buyer_email="seller@example.org",
+            client=fake,
+        )
+
+    assert rejected.value.status_code == 422
+    assert rejected.value.detail == "buyer_email_rejected_by_provider"
+    payment = await db_session.scalar(
+        select(PaymentInvoice).where(PaymentInvoice.idempotency_key == "lava-rejected-email")
+    )
+    assert payment.status == "failed"
+    assert payment.creation_claimed_until is None
+    assert payment.reconciliation_snapshot == {
+        "source": "create_response",
+        "result": "buyer_email_rejected",
+    }
 
 
 async def test_lava_top_reconciliation_recovers_lost_webhook(db_session):
