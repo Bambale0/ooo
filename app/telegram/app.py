@@ -35,6 +35,10 @@ ERRORS = {
     "payment_provider_temporarily_unavailable": "Платёжный сервис временно недоступен. Проверьте этот счёт позже.",
     "payment_provider_not_configured": "Пополнение временно недоступно. Администратор уже может проверить настройки.",
     "buyer_email_required": "Для оплаты через СБП сначала укажите email для чека.",
+    "buyer_email_rejected_by_provider": (
+        "Lava.top не принимает этот email для покупки. Email владельца магазина нельзя использовать для оплаты "
+        "собственного продукта. Укажите другой email — мы сохраним его для следующих пополнений."
+    ),
     "payment_not_cancellable": "Этот счёт нельзя отменить через платёжный API. При необходимости создайте новый.",
     "invalid_webhook_url": "Нужен доступный публичный HTTPS-адрес webhook.",
     "consent_required": (
@@ -61,8 +65,16 @@ class CabinetSessionMiddleware(BaseMiddleware):
                 return result
             except HTTPException as exc:
                 await db.rollback()
+                detail = str(exc.detail)
+                markup = (
+                    keyboard(("Изменить email", "payment_email"), back="balance")
+                    if detail == "buyer_email_rejected_by_provider"
+                    else None
+                )
                 await show(
-                    event, ERRORS.get(str(exc.detail), "Действие недоступно. Проверьте данные или вернитесь в меню.")
+                    event,
+                    ERRORS.get(detail, "Действие недоступно. Проверьте данные или вернитесь в меню."),
+                    markup,
                 )
             except (ValueError, ValidationError, InvalidOperation):
                 await db.rollback()
