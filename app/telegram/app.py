@@ -14,7 +14,7 @@ from app.payments.crypto_pay import CryptoPayError
 from app.telegram.handlers import handle_callback, handle_message
 from app.telegram.security import CabinetAccessMiddleware
 from app.telegram.service import lock_dialog
-from app.telegram.ui import highlight_pressed, show
+from app.telegram.ui import highlight_pressed, keyboard, show
 
 logger = logging.getLogger(__name__)
 ERRORS = {
