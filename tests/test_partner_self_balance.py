@@ -33,7 +33,8 @@ async def test_partner_key_reads_only_own_rub_balance(client, db_session, admin_
     assert response_b.json()["partner_id"] == beta.id
     assert response_b.json()["balance_rub"] == "5999.25"
     assert response_b.json()["credit_limit_rub"] == "0.00"
-    assert await client.get(endpoint, headers=admin_headers).status_code == 401
+    admin_only = await client.get(endpoint, headers=admin_headers)
+    assert admin_only.status_code == 401
 
     # No new data was created: all values came from current partner account.
     await db_session.refresh(alpha)
