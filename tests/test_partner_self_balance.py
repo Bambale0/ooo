@@ -2,7 +2,6 @@
 
 from decimal import Decimal
 
-from app.accounts.models import Partner
 from test_tenant_isolation import _create_partner_with_key
 
 
