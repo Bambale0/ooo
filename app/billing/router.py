@@ -20,6 +20,7 @@ from app.billing.service import apply_cost_coverage_change, apply_partner_balanc
 from app.infrastructure.security import hash_secret
 
 router = APIRouter()
+partner_balance_router = APIRouter()
 
 
 @router.post("/margin-thresholds", dependencies=[Depends(require_admin)])
@@ -77,7 +78,7 @@ async def create_coverage_adjustment(
     )
 
 
-@router.get("/self/balance", response_model=BalanceRead)
+@partner_balance_router.get("/balance", response_model=BalanceRead)
 async def read_own_partner_balance(response: Response, partner: Partner = Depends(get_current_partner)) -> BalanceRead:
     """Expose only the authenticated partner's current RUB balance for monitoring."""
     response.headers["Cache-Control"] = "no-store"
