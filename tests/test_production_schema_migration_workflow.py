@@ -35,8 +35,11 @@ def test_schema_migration_requires_verified_encrypted_backup_before_upgrade():
     assert "openssl enc -aes-256-cbc -pbkdf2 -salt" in text
     assert "sha256sum --check --status" in text
     assert "openssl enc -d -aes-256-cbc -pbkdf2" in text
+    assert "-out /dev/null" in text
     assert 'exec -T postgres pg_restore --list >/dev/null' in text
     assert "pg_restore --list -" not in text
+    assert "restore_status=$?" in text
+    assert '[ "$restore_status" -eq 0 ]' in text
     assert text.index("pg_restore --list") < text.index("alembic upgrade head")
     assert 'test -w "$root/release-backups"' in text
     assert 'chmod 700 "$root/release-backups"' not in text

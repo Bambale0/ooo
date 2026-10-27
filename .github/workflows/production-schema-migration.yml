@@ -162,8 +162,20 @@ jobs:
           fi
           (cd "$backup_dir" && sha256sum --check --status postgres.dump.enc.sha256)
           openssl enc -d -aes-256-cbc -pbkdf2 \
-            -pass "file:$MIGRATION_SECRET_DIR/backup-key" -in "$backup_file" |
+            -pass "file:$MIGRATION_SECRET_DIR/backup-key" -in "$backup_file" \
+            -out /dev/null
+          # pg_restore --list reads the archive TOC and may close stdin before
+          # OpenSSL emits the entire already-verified stream. Check the consumer
+          # explicitly instead of treating the expected upstream EPIPE as damage.
+          set +e
+          set +o pipefail
+          openssl enc -d -aes-256-cbc -pbkdf2 \
+            -pass "file:$MIGRATION_SECRET_DIR/backup-key" -in "$backup_file" 2>/dev/null |
             "${compose[@]}" exec -T postgres pg_restore --list >/dev/null
+          restore_status=$?
+          set -o pipefail
+          set -e
+          [ "$restore_status" -eq 0 ]
 
           env_count="$(grep -Ec '^[[:space:]]*(export[[:space:]]+)?TELEGRAM_BOT_USERNAME[[:space:]]*=' "$root/.env" || true)"
           [ "$env_count" -le 1 ]
