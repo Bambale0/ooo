@@ -10,7 +10,7 @@ async def show_program(event, db, partner) -> None:
     link = f"https://t.me/{username}?start=ref_{profile.code}" if username else None
     text = (
         "🤝 Партнёрская программа Нейроныча\n\n"
-        "• 20% от оплаченного заказа на разработку.\n"
+        "• 20% от полностью оплаченного заказа на разработку.\n"
         "• 7% от каждого пополнения API приглашённого пользователя — пожизненно.\n\n"
         f"Приглашено: {stats['invited']}\n"
         f"Начислено: {stats['balance_rub']:.2f} ₽\n\n"

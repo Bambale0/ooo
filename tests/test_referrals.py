@@ -108,7 +108,7 @@ async def test_telegram_link_dashboard_and_lifetime_binding(cabinet, db_session,
     assert attribution.referrer_partner_id == referrer.id
 
 
-async def test_paid_development_installments_accrue_twenty_percent_once(db_session):
+async def test_development_commission_waits_for_full_payment_and_accrues_once(db_session):
     from app.telegram.development_billing import sync_development_invoice
 
     referrer = await _partner(db_session, "700")
@@ -146,10 +146,36 @@ async def test_paid_development_installments_accrue_twenty_percent_once(db_sessi
 
     await sync_development_invoice(db_session, provider_invoice=provider, invoice_id=invoice.id)
     await sync_development_invoice(db_session, provider_invoice=provider, invoice_id=invoice.id)
+    assert await db_session.scalar(select(func.count()).select_from(ReferralCommission)) == 0
+
+    final_invoice = DevelopmentInvoice(
+        development_request_id=request.id,
+        installment="final",
+        provider="lava_top",
+        provider_reference="development-final-contract",
+        idempotency_key="development-final",
+        status="active",
+        total_price_snapshot_rub=Decimal("100000.00"),
+        requested_rub=Decimal("70000.00"),
+        buyer_email="buyer@example.test",
+    )
+    db_session.add(final_invoice)
+    await db_session.flush()
+    final_provider = SimpleNamespace(
+        invoice_id="development-final-contract",
+        currency="RUB",
+        amount=Decimal("70000.00"),
+        status="paid",
+        buyer_email="buyer@example.test",
+        payment_url="https://example.test/final-pay",
+        paid_at="2026-10-27T13:00:00Z",
+    )
+    await sync_development_invoice(db_session, provider_invoice=final_provider, invoice_id=final_invoice.id)
+    await sync_development_invoice(db_session, provider_invoice=final_provider, invoice_id=final_invoice.id)
     commission = await db_session.scalar(
         select(ReferralCommission).where(ReferralCommission.kind == "development_order")
     )
-    assert commission.amount_rub == Decimal("6000.00")
+    assert commission.amount_rub == Decimal("20000.00")
     assert commission.referrer_partner_id == referrer.id
 
     assert await db_session.scalar(select(func.count()).select_from(ReferralCommission)) == 1
@@ -229,6 +255,7 @@ async def test_admin_sets_individual_price_and_issues_30_70_invoices(cabinet, db
         buyer_email="buyer@example.org",
     )
     await sync_development_invoice(db_session, provider_invoice=paid_advance, invoice_id=advance.id)
+    assert await db_session.scalar(select(func.count()).select_from(ReferralCommission)) == 0
     screen = (await feed(user=999, callback=f"admin_dev_view:{request.id}"))[-1]
     assert any(
         button.callback_data == f"admin_dev_invoice:{request.id}:final"
@@ -259,3 +286,4 @@ async def test_admin_sets_individual_price_and_issues_30_70_invoices(cabinet, db
     )
     await sync_development_invoice(db_session, provider_invoice=paid_final, invoice_id=final.id)
     assert await db_session.scalar(select(func.sum(ReferralCommission.amount_rub))) == Decimal("20000.00")
+    assert await db_session.scalar(select(func.count()).select_from(ReferralCommission)) == 1

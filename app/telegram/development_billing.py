@@ -227,25 +227,7 @@ async def sync_development_invoice(
         invoice.status = "paid"
         invoice.paid_at = _provider_paid_at(provider_invoice.paid_at)
         invoice.settled_at = utc_now()
-        commission = await accrue_commission(
-            db,
-            referred_telegram_id=row.telegram_id,
-            kind="development_order",
-            source_id=invoice.id,
-            event_key=f"development-payment:{invoice.id}",
-            base_amount_rub=invoice.requested_rub,
-            rate=DEVELOPMENT_ORDER_RATE,
-        )
-        if commission is not None:
-            referrer = await db.get(Partner, commission.referrer_partner_id)
-            if referrer is not None:
-                await notify(
-                    db,
-                    referrer.telegram_id,
-                    f"Партнёрское начисление: {commission.amount_rub:.2f} ₽ "
-                    f"(20% от оплаченной части заказа на разработку).",
-                    f"referral-commission:{commission.event_key}",
-                )
+        await _accrue_completed_order_commission(db, row)
         label = "аванс 30%" if invoice.installment == "advance" else "остаток 70%"
         await notify(
             db,
@@ -275,6 +257,53 @@ async def sync_development_invoice(
     await db.flush()
     await db.refresh(invoice)
     return invoice
+
+
+async def _accrue_completed_order_commission(
+    db: AsyncSession,
+    request: DevelopmentRequest,
+) -> None:
+    """Accrue one 20% commission only after both project invoices are settled."""
+    invoices = (
+        await db.execute(
+            select(DevelopmentInvoice)
+            .where(DevelopmentInvoice.development_request_id == request.id)
+            .with_for_update()
+        )
+    ).scalars().all()
+    by_installment = {item.installment: item for item in invoices}
+    advance = by_installment.get("advance")
+    final = by_installment.get("final")
+    if advance is None or final is None or advance.settled_at is None or final.settled_at is None:
+        return
+    if (
+        advance.total_price_snapshot_rub != final.total_price_snapshot_rub
+        or advance.requested_rub + final.requested_rub != advance.total_price_snapshot_rub
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="development_invoice_conflict",
+        )
+    commission = await accrue_commission(
+        db,
+        referred_telegram_id=request.telegram_id,
+        kind="development_order",
+        source_id=request.id,
+        event_key=f"development-order:{request.id}",
+        base_amount_rub=advance.total_price_snapshot_rub,
+        rate=DEVELOPMENT_ORDER_RATE,
+    )
+    if commission is None:
+        return
+    referrer = await db.get(Partner, commission.referrer_partner_id)
+    if referrer is not None:
+        await notify(
+            db,
+            referrer.telegram_id,
+            f"Партнёрское начисление: {commission.amount_rub:.2f} ₽ "
+            "(20% от полностью оплаченного заказа на разработку).",
+            f"referral-commission:{commission.event_key}",
+        )
 
 
 async def _lock_invoice(db: AsyncSession, invoice_id: str) -> DevelopmentInvoice:
