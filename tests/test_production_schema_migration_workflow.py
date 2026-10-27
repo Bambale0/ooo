@@ -24,6 +24,7 @@ def test_schema_migration_is_manual_exact_head_and_production_serialized():
     assert job["concurrency"] == {"group": "production-deploy", "cancel-in-progress": False}
     assert "StrictHostKeyChecking=yes" in text
     assert "StrictHostKeyChecking=no" not in text
+    assert "actions/checkout@11d5960a326750d5838078e36cf38b85af677262" in text
 
 
 def test_schema_migration_requires_verified_encrypted_backup_before_upgrade():
