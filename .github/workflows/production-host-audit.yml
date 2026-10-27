@@ -60,11 +60,11 @@ jobs:
           "${compose[@]}" ps --format '{{.Service}}|{{.State}}|{{.Image}}'
           printf 'runtime_services_end\n'
           printf 'database_revision_begin\n'
-          "${compose[@]}" exec -T app alembic current
+          "${compose[@]}" exec -T app alembic current </dev/null
           printf 'database_revision_end\n'
           printf 'readiness_begin\n'
           "${compose[@]}" exec -T app python -c \
-            'import json,urllib.request; r=json.load(urllib.request.urlopen("http://localhost:8000/api/v1/readiness",timeout=5)); print(json.dumps({"status":r.get("status"),"revision":r.get("revision")}))'
+            'import json,urllib.request; r=json.load(urllib.request.urlopen("http://localhost:8000/api/v1/readiness",timeout=5)); print(json.dumps({"status":r.get("status"),"revision":r.get("revision")}))' </dev/null
           printf 'readiness_end\n'
           printf 'lava_env_names_begin\n'
           awk -F= '/^(PAYMENT_PROVIDER|LAVA_TOP_API_KEY|LAVA_TOP_WEBHOOK_SECRET|LAVA_TOP_OFFER_ID|LAVA_TOP_DEVELOPMENT_OFFER_ID|LAVA_TOP_BASE_URL|LAVA_TOP_SUCCESSFUL_RETURN_URL|LAVA_TOP_FAILURE_RETURN_URL|LAVA_TOP_CANCEL_RETURN_URL|TELEGRAM_BOT_USERNAME)=/ {print $1"=present"}' "$root/.env" | sort
