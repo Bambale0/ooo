@@ -21,11 +21,14 @@ class ReferralAttribution(Base):
     """Immutable first-touch attribution keyed by a Telegram identity."""
 
     __tablename__ = "referral_attributions"
-    __table_args__ = (UniqueConstraint("referred_telegram_id", name="uq_referral_attributions_referred_telegram_id"),)
+    __table_args__ = (
+        UniqueConstraint("referred_partner_id", name="uq_referral_attributions_referred_partner_id"),
+        UniqueConstraint("referred_telegram_id", name="uq_referral_attributions_referred_telegram_id"),
+    )
 
     id: Mapped[str] = uuid_pk()
     referrer_partner_id: Mapped[str | None] = mapped_column(ForeignKey("partners.id"), index=True)
-    referred_partner_id: Mapped[str | None] = mapped_column(ForeignKey("partners.id"), unique=True, index=True)
+    referred_partner_id: Mapped[str | None] = mapped_column(ForeignKey("partners.id"), index=True)
     referred_telegram_id: Mapped[str] = mapped_column(String(64), nullable=False)
     referral_code: Mapped[str | None] = mapped_column(String(24))
     created_at: Mapped[object] = utc_created_at()
