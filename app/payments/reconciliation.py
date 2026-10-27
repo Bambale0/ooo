@@ -16,6 +16,7 @@ from app.payments.crypto_pay import CryptoPayClient, CryptoPayInvoice, get_crypt
 from app.payments.lava_top import LavaTopClient, get_lava_top_client
 from app.payments.models import PaymentInvoice
 from app.payments.service import apply_paid_provider_invoice, sync_lava_provider_invoice
+from app.telegram.models import DevelopmentInvoice
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +152,46 @@ async def reconcile_lava_top_payments_once(
     return candidates[-1][0] if len(candidates) == limit else None
 
 
+async def reconcile_development_payments_once(
+    *,
+    session_factory: async_sessionmaker[AsyncSession] = SessionLocal,
+    client: LavaTopClient,
+    limit: int = 20,
+    after_id: str | None = None,
+) -> str | None:
+    query = select(DevelopmentInvoice.id, DevelopmentInvoice.provider_reference).where(
+        DevelopmentInvoice.provider == "lava_top",
+        DevelopmentInvoice.provider_reference.is_not(None),
+        DevelopmentInvoice.settled_at.is_(None),
+        DevelopmentInvoice.status.in_(("active", "creation_unknown", "creating")),
+        or_(
+            DevelopmentInvoice.creation_claimed_until.is_(None),
+            DevelopmentInvoice.creation_claimed_until <= utc_now(),
+        ),
+    )
+    if after_id is not None:
+        query = query.where(DevelopmentInvoice.id > after_id)
+    async with session_factory() as db:
+        candidates = (await db.execute(query.order_by(DevelopmentInvoice.id).limit(limit))).all()
+
+    from app.telegram.development_billing import sync_development_invoice
+
+    for invoice_id, provider_reference in candidates:
+        try:
+            invoice = await client.get_invoice(provider_reference)
+            if invoice is None or invoice.invoice_id != provider_reference:
+                continue
+            async with session_factory() as db:
+                await sync_development_invoice(db, provider_invoice=invoice, invoice_id=invoice_id)
+                await db.commit()
+        except Exception as exc:
+            logger.warning(
+                "development_payment_reconciliation_failed",
+                extra={"development_invoice_id": invoice_id, **_safe_error_details(exc)},
+            )
+    return candidates[-1][0] if len(candidates) == limit else None
+
+
 async def payment_reconciliation_loop(stop_event: asyncio.Event) -> None:
     settings = get_settings()
     crypto_enabled = bool(settings.crypto_pay_api_token)
@@ -159,6 +200,7 @@ async def payment_reconciliation_loop(stop_event: asyncio.Event) -> None:
         return
     crypto_cursor = None
     lava_top_cursor = None
+    development_cursor = None
     logger.info("payment_reconciliation_started")
     while not stop_event.is_set():
         try:
@@ -173,6 +215,11 @@ async def payment_reconciliation_loop(stop_event: asyncio.Event) -> None:
                     client=get_lava_top_client(),
                     limit=settings.payment_reconciliation_batch_size,
                     after_id=lava_top_cursor,
+                )
+                development_cursor = await reconcile_development_payments_once(
+                    client=get_lava_top_client(),
+                    limit=settings.payment_reconciliation_batch_size,
+                    after_id=development_cursor,
                 )
         except Exception as exc:
             logger.warning("payment_reconciliation_cycle_failed", extra=_safe_error_details(exc))

@@ -361,10 +361,7 @@ async def sync_lava_provider_invoice(
     if payment.buyer_email:
         if provider_invoice.status == "paid" and not provider_invoice.buyer_email:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="payment_buyer_mismatch")
-        if (
-            provider_invoice.buyer_email
-            and payment.buyer_email.casefold() != provider_invoice.buyer_email.casefold()
-        ):
+        if provider_invoice.buyer_email and payment.buyer_email.casefold() != provider_invoice.buyer_email.casefold():
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="payment_buyer_mismatch")
 
     payment.provider_reference = provider_invoice.invoice_id
@@ -545,7 +542,28 @@ async def credit_paid_invoice(db: AsyncSession, *, payment_id: str) -> PaymentIn
     payment.status = "credited"
     payment.credited_at = utc_now()
     from app.infrastructure.config import get_settings
+    from app.referrals.service import API_TOPUP_RATE, accrue_commission
     from app.telegram.service import notify
+
+    commission = await accrue_commission(
+        db,
+        referred_telegram_id=partner.telegram_id,
+        referred_partner_id=partner.id,
+        kind="api_topup",
+        source_id=payment.id,
+        event_key=f"api-topup:{payment.id}",
+        base_amount_rub=amount,
+        rate=API_TOPUP_RATE,
+    )
+    if commission is not None:
+        referrer = await db.get(Partner, commission.referrer_partner_id)
+        if referrer is not None:
+            await notify(
+                db,
+                referrer.telegram_id,
+                f"Партнёрское начисление: {commission.amount_rub:.2f} ₽ (7% от пополнения приглашённого пользователя).",
+                f"referral-commission:{commission.event_key}",
+            )
 
     await notify(
         db,
@@ -627,6 +645,39 @@ async def record_confirmed_refund(
     payment.status = (
         "refunded" if Decimal(payment.refunded_rub) == Decimal(payment.requested_rub) else "partially_refunded"
     )
+    from app.referrals.service import API_TOPUP_RATE, accrue_commission, commission_amount
+
+    old_commission = (
+        commission_amount(Decimal(payment.refunded_rub) - amount, API_TOPUP_RATE)
+        if payment.refunded_rub != amount
+        else Decimal("0")
+    )
+    new_commission = commission_amount(Decimal(payment.refunded_rub), API_TOPUP_RATE)
+    referral_reversal = new_commission - old_commission
+    reversal = await accrue_commission(
+        db,
+        referred_telegram_id=partner.telegram_id,
+        referred_partner_id=partner.id,
+        kind="api_topup_refund",
+        source_id=refund.id,
+        event_key=f"api-topup-refund:{refund.id}",
+        base_amount_rub=amount,
+        rate=API_TOPUP_RATE,
+        reverse=True,
+        amount_rub=referral_reversal,
+    )
+    if reversal is not None:
+        from app.telegram.service import notify
+
+        referrer = await db.get(Partner, reversal.referrer_partner_id)
+        if referrer is not None:
+            await notify(
+                db,
+                referrer.telegram_id,
+                f"Партнёрская корректировка: {reversal.amount_rub:.2f} ₽ из-за возврата "
+                "пополнения приглашённого пользователя.",
+                f"referral-commission:{reversal.event_key}",
+            )
     await db.flush()
     await db.refresh(refund)
     await db.refresh(payment)

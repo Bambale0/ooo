@@ -11,9 +11,10 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.infrastructure.config import get_settings
-from app.telegram.models import DevelopmentRequest
-from app.telegram.service import is_admin, notify
-from app.telegram.ui import format_msk, keyboard, show
+from app.payments.schemas import normalize_buyer_email
+from app.telegram.models import DevelopmentInvoice, DevelopmentRequest
+from app.telegram.service import is_admin, new_action, notify
+from app.telegram.ui import format_msk, keyboard, show, status_label
 
 FIELDS = ("kind", "platform", "goal", "integrations", "deadline", "budget", "contact")
 QUESTIONS = (
@@ -293,18 +294,80 @@ async def view_request(event, db, request_id: str) -> None:
     row = await db.get(DevelopmentRequest, str(UUID(request_id)))
     if row is None or row.telegram_id != _telegram_id(event):
         raise HTTPException(404, "development_request_not_found")
+    invoices = (
+        await db.execute(
+            select(DevelopmentInvoice)
+            .where(DevelopmentInvoice.development_request_id == row.id)
+            .order_by(DevelopmentInvoice.created_at)
+        )
+    ).scalars().all()
+    payment_lines = []
+    buttons = [("Мои заявки", "dev:my")]
+    for invoice in invoices:
+        label = "Аванс 30%" if invoice.installment == "advance" else "Остаток 70%"
+        payment_lines.append(f"{label}: {invoice.requested_rub:.2f} ₽ · {status_label(invoice.status)}")
+        if invoice.invoice_url and invoice.status != "paid":
+            buttons.append((f"Оплатить · {label}", invoice.invoice_url))
+    quote = f"\nСтоимость проекта: {row.quoted_price_rub:.2f} ₽\n" if row.quoted_price_rub else ""
+    payments = "\n".join(payment_lines) or "Счета ещё не выставлены."
     await show(
         event,
         f"Заявка {row.id[:8]} · {STATUSES.get(row.status, 'Рассматривается')}\n"
-        f"Создана: {format_msk(row.created_at)}\n\n{_summary(row.answers)}\n\n"
+        f"Создана: {format_msk(row.created_at)}\n{quote}\n{payments}\n\n{_summary(row.answers)}\n\n"
         "По этой заявке с вами свяжутся в Telegram или по указанному контакту.",
-        keyboard(("Мои заявки", "dev:my"), back="main_menu"),
+        keyboard(*buttons, back="main_menu"),
     )
 
 
-async def admin_callback(event, db, data: str) -> None:
+async def admin_callback(event, db, dialog, data: str) -> None:
     if not is_admin(_telegram_id(event)):
         raise HTTPException(403, "admin_required")
+    if data.startswith("admin_dev_quote:"):
+        request_id = data.rsplit(":", 1)[1]
+        row = await db.get(DevelopmentRequest, str(UUID(request_id)))
+        if row is None:
+            raise HTTPException(404, "development_request_not_found")
+        has_invoice = await db.scalar(
+            select(DevelopmentInvoice.id).where(DevelopmentInvoice.development_request_id == row.id).limit(1)
+        )
+        if has_invoice:
+            raise HTTPException(409, "development_quote_locked")
+        dialog.state = "admin_development_quote_price"
+        dialog.data = {"request_id": row.id}
+        await show(
+            event,
+            "Введите полную цену проекта целым числом в рублях.\n\n"
+            "Клиент её не выбирает: цена задаётся администратором отдельно для этой заявки.",
+            keyboard(back=f"admin_dev_view:{row.id}"),
+        )
+        return
+    if data.startswith("admin_dev_invoice:"):
+        _, request_id, installment = data.split(":")
+        row = await db.get(DevelopmentRequest, str(UUID(request_id)))
+        if row is None:
+            raise HTTPException(404, "development_request_not_found")
+        if row.quoted_price_rub is None or not row.buyer_email:
+            raise HTTPException(409, "development_quote_required")
+        from app.telegram.development_billing import installment_amount
+
+        amount = installment_amount(row.quoted_price_rub, installment)
+        label = "аванс 30%" if installment == "advance" else "остаток 70%"
+        action = await new_action(
+            db,
+            _telegram_id(event),
+            "admin_dev_invoice",
+            {"request_id": row.id, "installment": installment},
+        )
+        await db.commit()
+        await show(
+            event,
+            f"Выставить {label} на {amount:.2f} ₽?\n"
+            f"Полная цена: {row.quoted_price_rub:.2f} ₽.\n"
+            f"Email для чека: {row.buyer_email}\n\n"
+            "После подтверждения клиент получит ссылку на оплату, а чек после оплаты — на email.",
+            keyboard(("Подтвердить", f"confirm:{action.id}"), back=f"admin_dev_view:{row.id}"),
+        )
+        return
     if data.startswith("admin_dev_status:"):
         _, request_id, status = data.split(":")
         if status not in {"in_progress", "completed"}:
@@ -366,16 +429,85 @@ async def admin_request(event, db, request_id: str) -> None:
     if row is None:
         raise HTTPException(404, "development_request_not_found")
     username = f"@{row.telegram_username}" if row.telegram_username else "не указан"
+    invoices = (
+        await db.execute(
+            select(DevelopmentInvoice)
+            .where(DevelopmentInvoice.development_request_id == row.id)
+            .order_by(DevelopmentInvoice.created_at)
+        )
+    ).scalars().all()
+    by_kind = {invoice.installment: invoice for invoice in invoices}
     buttons = []
     if row.status == "new":
         buttons.append(("▶️ Взять в работу", f"admin_dev_status:{row.id}:in_progress"))
     if row.status != "completed":
         buttons.append(("✅ Завершить", f"admin_dev_status:{row.id}:completed"))
+    if not invoices:
+        buttons.append(("💰 Указать цену и email", f"admin_dev_quote:{row.id}"))
+    if row.quoted_price_rub is not None and "advance" not in by_kind:
+        buttons.append(("🧾 Выставить аванс 30%", f"admin_dev_invoice:{row.id}:advance"))
+    advance = by_kind.get("advance")
+    if advance is not None and advance.settled_at is not None and "final" not in by_kind:
+        buttons.append(("🧾 Выставить остаток 70%", f"admin_dev_invoice:{row.id}:final"))
+    for invoice in invoices:
+        label = "Аванс 30%" if invoice.installment == "advance" else "Остаток 70%"
+        if invoice.invoice_url and invoice.status != "paid":
+            buttons.append((f"Ссылка · {label}", invoice.invoice_url))
+    quote = (
+        f"\nЦена проекта: {row.quoted_price_rub:.2f} ₽\nEmail для чека: {row.buyer_email}"
+        if row.quoted_price_rub is not None
+        else "\nЦена проекта: не назначена"
+    )
+    payments = "\n".join(
+        f"{'Аванс 30%' if invoice.installment == 'advance' else 'Остаток 70%'}: "
+        f"{invoice.requested_rub:.2f} ₽ · {status_label(invoice.status)}"
+        for invoice in invoices
+    ) or "Счета: не выставлены"
     await show(
         event,
         f"Заявка {row.id}\n"
         f"Статус: {STATUSES.get(row.status, 'Рассматривается')}\n"
         f"Создана: {format_msk(row.created_at)}\n"
-        f"Telegram: {username} · ID {row.telegram_id}\n\n{_summary(row.answers)}",
+        f"Telegram: {username} · ID {row.telegram_id}{quote}\n{payments}\n\n{_summary(row.answers)}",
         keyboard(*buttons, back="admin_dev:0"),
+    )
+
+
+async def admin_quote_message(event, db, dialog, value: str) -> None:
+    if not is_admin(_telegram_id(event)):
+        raise HTTPException(403, "admin_required")
+    if dialog.state == "admin_development_quote_price":
+        if not value.isascii() or not value.isdigit() or not 1 <= int(value) <= 9999999999999999:
+            raise HTTPException(422, "invalid_development_price")
+        dialog.state = "admin_development_quote_email"
+        dialog.data = {**dialog.data, "price": value}
+        await show(
+            event,
+            "Введите email заказчика для отдельного чека по разработке.",
+            keyboard(back=f"admin_dev_view:{dialog.data['request_id']}"),
+        )
+        return
+    if dialog.state != "admin_development_quote_email":
+        raise HTTPException(409, "development_quote_not_started")
+    email = normalize_buyer_email(value)
+    request_id = str(UUID(dialog.data["request_id"]))
+    from app.telegram.development_billing import installment_amount
+
+    price = int(dialog.data["price"])
+    advance = installment_amount(price, "advance")
+    final = installment_amount(price, "final")
+    action = await new_action(
+        db,
+        _telegram_id(event),
+        "admin_dev_quote",
+        {"request_id": request_id, "price": str(price), "buyer_email": email},
+    )
+    dialog.state, dialog.data = "menu", {}
+    await db.commit()
+    await show(
+        event,
+        f"Сохранить цену проекта {price:.2f} ₽?\n"
+        f"Аванс 30%: {advance:.2f} ₽. Остаток 70%: {final:.2f} ₽.\n"
+        f"Email для чека: {email}",
+        keyboard(("Подтвердить", f"confirm:{action.id}"), back=f"admin_dev_view:{request_id}"),
     )

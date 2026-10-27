@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     admin_api_token: str = Field(default="change-me", min_length=1)
     admin_telegram_id: str | None = None
     telegram_bot_token: str | None = None
+    telegram_bot_username: str | None = None
     terms_url: str | None = None
     privacy_policy_url: str | None = None
     legal_document_version: str = "2026-09-19"
@@ -72,6 +73,7 @@ class Settings(BaseSettings):
     lava_top_api_key: SecretStr | None = None
     lava_top_webhook_secret: SecretStr | None = Field(default=None, max_length=80)
     lava_top_offer_id: str | None = None
+    lava_top_development_offer_id: str | None = None
     lava_top_base_url: str = "https://gate.lava.top"
     lava_top_timeout_seconds: float = Field(default=10.0, gt=0)
     lava_top_successful_return_url: str | None = None

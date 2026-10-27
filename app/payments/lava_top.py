@@ -54,10 +54,16 @@ class LavaTopClient:
         self._borrowed_client = client
         self._owned_client: httpx.AsyncClient | None = None
 
-    async def create_sbp_invoice(self, *, amount_rub: int, buyer_email: str) -> LavaTopInvoice:
+    async def create_sbp_invoice(
+        self,
+        *,
+        amount_rub: int,
+        buyer_email: str,
+        offer_id: str | None = None,
+    ) -> LavaTopInvoice:
         payload: dict[str, object] = {
             "email": buyer_email,
-            "offerId": self.offer_id,
+            "offerId": offer_id or self.offer_id,
             "currency": "RUB",
             "amount": amount_rub,
             "paymentProvider": "PAY2ME",
