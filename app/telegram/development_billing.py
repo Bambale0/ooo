@@ -69,15 +69,9 @@ async def create_development_invoice(
     idempotency_key: str,
     client: LavaTopClient,
 ) -> DevelopmentInvoice:
-    """Create one 30/70 Lava.top invoice using the dedicated development offer."""
+    """Create one 30/70 invoice through the existing Lava.top checkout."""
     if installment not in {"advance", "final"}:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_installment")
-    settings = get_settings()
-    if not settings.lava_top_development_offer_id:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="development_payments_not_configured",
-        )
     row = await db.scalar(
         select(DevelopmentRequest).where(DevelopmentRequest.id == request_id).with_for_update()
     )
@@ -147,7 +141,6 @@ async def create_development_invoice(
         provider_invoice = await client.create_sbp_invoice(
             amount_rub=int(amount),
             buyer_email=row.buyer_email,
-            offer_id=settings.lava_top_development_offer_id,
         )
     except LavaTopBuyerEmailRejected as exc:
         invoice = await _lock_invoice(db, invoice.id)

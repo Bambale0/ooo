@@ -4,7 +4,6 @@ from types import SimpleNamespace
 from sqlalchemy import func, select
 
 from app.accounts.models import Partner
-from app.infrastructure.config import get_settings
 from app.payments.lava_top import LavaTopInvoice
 from app.payments.models import PaymentInvoice
 from app.payments.service import credit_paid_invoice, record_confirmed_refund
@@ -208,11 +207,6 @@ async def test_admin_sets_individual_price_and_issues_30_70_invoices(cabinet, db
     referrer = await _partner(db_session, "700")
     profile = await get_or_create_profile(db_session, referrer.id)
     assert await bind_referral(db_session, referred_telegram_id="123", code=profile.code)
-    monkeypatch.setattr(
-        get_settings(),
-        "lava_top_development_offer_id",
-        "99999999-9999-4999-8999-999999999999",
-    )
     monkeypatch.setattr("app.payments.lava_top.get_lava_top_client", lambda: fake)
 
     await complete_intake(feed)
@@ -241,9 +235,7 @@ async def test_admin_sets_individual_price_and_issues_30_70_invoices(cabinet, db
         select(DevelopmentInvoice).where(DevelopmentInvoice.installment == "advance")
     )
     assert advance.requested_rub == Decimal("30000.00")
-    assert fake.created == [
-        (30000, "buyer@example.org", "99999999-9999-4999-8999-999999999999")
-    ]
+    assert fake.created == [(30000, "buyer@example.org", None)]
 
     paid_advance = LavaTopInvoice(
         invoice_id=advance.provider_reference,

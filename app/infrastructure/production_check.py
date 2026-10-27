@@ -31,13 +31,6 @@ def validate_production_config() -> list[str]:
                 UUID(settings.lava_top_offer_id)
             except ValueError:
                 errors.append("LAVA_TOP_OFFER_ID must be a UUID")
-        if not settings.lava_top_development_offer_id:
-            errors.append("LAVA_TOP_DEVELOPMENT_OFFER_ID is required when PAYMENT_PROVIDER=lava_top")
-        else:
-            try:
-                UUID(settings.lava_top_development_offer_id)
-            except ValueError:
-                errors.append("LAVA_TOP_DEVELOPMENT_OFFER_ID must be a UUID")
         webhook_secret = (
             settings.lava_top_webhook_secret.get_secret_value() if settings.lava_top_webhook_secret else ""
         )

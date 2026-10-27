@@ -26,7 +26,6 @@
 ## Настройка
 
 - `TELEGRAM_BOT_USERNAME` — username для готовой реферальной ссылки.
-- `LAVA_TOP_DEVELOPMENT_OFFER_ID` — отдельный опубликованный Lava.top offer для
-  разработки с корректным наименованием услуги в чеке.
-- стандартные `LAVA_TOP_API_KEY` и `LAVA_TOP_WEBHOOK_SECRET` используются для
-  серверного создания и подтверждения счетов.
+- существующие `LAVA_TOP_API_KEY`, `LAVA_TOP_OFFER_ID` и
+  `LAVA_TOP_WEBHOOK_SECRET` используются для создания и подтверждения как
+  API-пополнений, так и отдельных счетов по разработке.
