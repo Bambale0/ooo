@@ -2494,6 +2494,19 @@ paid-but-not-credited obligations и required float. Quota/remaining без до
   Архивные операции и цены не пересчитываются; связь требует явных идентификаторов.
 - Сбор метрик не вызывает внешние финансовые API и не пишет снимки кошелька.
 
+### Opt-in rejection receipt exception — approved rollout 2026-10-27
+
+The reusable-key/no-generation rule above remains the legacy behavior without
+`X-Submission-Receipt: v1`. An opted-in, definitive pre-acceptance 503 may instead
+commit one terminal, unbilled generation tombstone before returning
+`X-Submission-State: not-accepted-v1`, the exact client request ID and the
+SHA256 idempotency-key digest. This key is permanently consumed: every replay
+remains rejected even after capacity recovers; a new user action needs a new key.
+No provider POST, reserve, ledger entry or partner debit occurs. Bare 503,
+post-acceptance errors and fence persistence failures never authorize fallback.
+Quota exhaustion fails closed without another tombstone or receipt. The bounded
+per-partner lookup uses a concurrent partial index, excluding ordinary history.
+
 ## 132. Партнёрская программа и отдельные чеки за разработку (2026-10-27)
 
 Новое прямое решение владельца:

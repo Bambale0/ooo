@@ -1,15 +1,15 @@
 """Lifetime referrals, commissions and separate development invoices.
 
-Revision ID: 20261027_0037
-Revises: 20261026_0036
+Revision ID: 20261027_0038
+Revises: 20261027_0037
 """
 
 import sqlalchemy as sa
 
 from alembic import op
 
-revision = "20261027_0037"
-down_revision = "20261026_0036"
+revision = "20261027_0038"
+down_revision = "20261027_0037"
 branch_labels = None
 depends_on = None
 

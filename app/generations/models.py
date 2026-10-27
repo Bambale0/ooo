@@ -1,6 +1,17 @@
 from decimal import Decimal
 
-from sqlalchemy import JSON, CheckConstraint, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.database import Base
@@ -74,3 +85,13 @@ class NativeResponse(Base):
     body_size: Mapped[int] = mapped_column(Integer, nullable=False)
     expires_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     created_at: Mapped[object] = utc_created_at()
+
+
+# The rejection quota must not scan ordinary generation history under the partner lock.
+_rejection_predicate = Generation.request_payload["native_admission_rejection"]["version"].as_integer() == 1
+Index(
+    "ix_generations_rejection_partner",
+    Generation.partner_id,
+    postgresql_where=_rejection_predicate,
+    sqlite_where=_rejection_predicate,
+)
