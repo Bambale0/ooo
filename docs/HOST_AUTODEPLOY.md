@@ -51,10 +51,21 @@ container; it does not guess the host's published port.
 
 This path deliberately supports **code-only releases**. `alembic current
 --check-heads` must pass before any service replacement. A pending migration
-stops deployment; apply it separately using the host's verified encrypted backup
-and migration procedure, then rerun main CI. Repo Compose/infrastructure changes
-also require a separately reviewed host-configuration update. Never use the
-standalone backup/PITR layout as a substitute for the host's real backup system.
+stops deployment. For an additive application migration, keep autodeploy disarmed
+and manually run **Production Schema Migration** for the exact current `main` SHA.
+The workflow builds that immutable image, creates and validates an AES-256-CBC
+encrypted PostgreSQL custom-format dump, retains the encrypted copy as a 14-day
+Actions artifact, applies Alembic through the candidate image, and verifies both
+`current --check-heads` and `alembic check`. It does not switch or restart any
+service. `PRODUCTION_BACKUP_KEY` must be a protected `production` environment
+secret and must be retained for recovery; its value is never an artifact or log.
+
+After the schema workflow succeeds, re-enable `PRODUCTION_DEPLOY_ENABLED=true`
+and rerun successful main CI for the same SHA. Normal deployment then performs
+the application switch and readiness/revision checks. Repo Compose/infrastructure
+changes still require a separately reviewed host-configuration update. Never use
+the standalone backup/PITR layout as a substitute for the host's real backup
+system.
 
 If there is no host override, the original standalone versioned Compose/PITR/
 containerized-Nginx deployment path remains available.

@@ -69,6 +69,6 @@
 - Тесты: \`tests/test_telegram_development_requests.py\`,
   \`tests/test_telegram_onboarding_ui.py\`, \`tests/test_referrals.py\`.
 - Миграции: \`20261026_0036_development_requests\`,
-  \`20261027_0037_lifetime_referrals\`.
+  \`20261027_0038_lifetime_referrals\`.
 
 Новая функция не является ценовым предложением или гарантией сроков.
