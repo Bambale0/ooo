@@ -145,8 +145,10 @@ jobs:
           backup_dir="$root/release-backups/schema-$RELEASE_SHA"
           backup_file="$backup_dir/postgres.dump.enc"
           checksum_file="$backup_dir/postgres.dump.enc.sha256"
-          mkdir -p "$root/release-backups"
-          chmod 700 "$root/release-backups"
+          if [ ! -d "$root/release-backups" ]; then
+            mkdir -m 700 "$root/release-backups"
+          fi
+          test -w "$root/release-backups"
           if [ ! -e "$backup_dir" ]; then
             mkdir -m 700 "$backup_dir"
             "${compose[@]}" exec -T postgres sh -c \
