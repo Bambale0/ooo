@@ -25,9 +25,9 @@ BODY = {"model": "seedance-2.5", "prompt": "test", "duration": 4, "resolution": 
 RID = "d3252064-e54b-4590-a56f-ae162ef7b9ec"
 
 
-def request(headers):
+def request(headers, body=BODY):
     async def receive():
-        return {"type": "http.request", "body": json.dumps(BODY).encode(), "more_body": False}
+        return {"type": "http.request", "body": json.dumps(body).encode(), "more_body": False}
 
     return Request(
         {
@@ -193,5 +193,74 @@ async def test_rotating_concurrent_keys_cannot_exceed_partner_storage_quota(rece
             assert sum(g.partner_id == partner_id for g in rows) == 2
             for model in (ProviderAttempt, LedgerEntry, CoverageLedgerEntry):
                 assert (await db.execute(select(model))).scalars().all() == []
+    finally:
+        await upstream.aclose()
+
+
+@pytest.mark.integration
+async def test_sync_accepted_overlap_after_rollback_returns_409_without_expired_auth(
+    receipt_postgres_sessions, monkeypatch
+):
+    from app.inference.service import InferenceAdmissionError
+
+    sessions = receipt_postgres_sessions
+    body = {"model": "gpt-5.4", "messages": [{"role": "user", "content": "test"}]}
+    async with sessions() as db:
+        partner, headers, upstream = await setup(
+            db, monkeypatch, lambda _: pytest.fail("No paid provider POST")
+        )
+        partner_id = partner.id
+    real_reserve = routes.reserve
+    real_fence = routes.fence_rejected_admission
+
+    async def rejected(*args, **kwargs):
+        raise InferenceAdmissionError(503, "provider_temporarily_unavailable", failure_stage="provider_capital")
+
+    async def concurrent_acceptance(db, **kwargs):
+        async with sessions() as winner:
+            auth = PartnerAuth(
+                partner=await winner.get(Partner, partner_id),
+                api_key=await winner.scalar(select(ApiKey).where(ApiKey.partner_id == partner_id)),
+            )
+            await real_reserve(winner, auth, "chat/completions", body, headers["Idempotency-Key"],
+                               client_request_id=RID)
+        return await real_fence(db, **kwargs)
+
+    monkeypatch.setattr(routes, "reserve", rejected)
+    monkeypatch.setattr(routes, "fence_rejected_admission", concurrent_acceptance)
+    try:
+        async with sessions() as db:
+            auth = PartnerAuth(
+                partner=await db.get(Partner, partner_id),
+                api_key=await db.scalar(select(ApiKey).where(ApiKey.partner_id == partner_id)),
+            )
+            result = await routes.inference("chat/completions", request(headers, body), db, auth)
+            assert result.status_code == 409
+            assert "X-Submission-State" not in result.headers
+            assert json.loads(result.body)["error"]["type"] == "request_already_submitted"
+    finally:
+        await upstream.aclose()
+
+
+@pytest.mark.integration
+async def test_receipt_quota_uses_partial_index_without_scanning_ordinary_history(
+    receipt_postgres_sessions, monkeypatch
+):
+    from sqlalchemy.dialects import postgresql
+
+    from app.inference.admission_receipts import REJECTION_KEY
+
+    sessions = receipt_postgres_sessions
+    partner_id, headers, upstream = await seeded(sessions, monkeypatch)
+    try:
+        async with sessions() as db:
+            await db.execute(text("SET LOCAL enable_seqscan = off"))
+            query = select(Generation.id).where(
+                Generation.partner_id == partner_id,
+                Generation.request_payload[REJECTION_KEY]["version"].as_integer() == 1,
+            ).limit(10000)
+            sql = str(query.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+            plan = await db.scalar(text("EXPLAIN (FORMAT JSON) " + sql))
+            assert "ix_generations_rejection_partner" in json.dumps(plan)
     finally:
         await upstream.aclose()

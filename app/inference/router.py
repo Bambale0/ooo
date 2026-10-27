@@ -391,8 +391,8 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
             return recovered
         log_rejection(
             trace_id=generation.id,
-            partner_id=auth.partner.id,
-            api_key_id=auth.api_key.id,
+            partner_id=partner_id,
+            api_key_id=api_key_id,
             protocol=protocol,
             model=generation.model_slug,
             failure_stage="idempotency",
@@ -403,14 +403,14 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
         return public_error("request_already_submitted", 409, generation_id=generation.id)
     try:
         adapter = await get_partner_provider_adapter(
-            db, auth.partner.id, "argolink", credential_id=attempt.credential_id
+            db, partner_id, "argolink", credential_id=attempt.credential_id
         )
     except HTTPException:
         await fail(db, generation, attempt, "provider_temporarily_unavailable", definitive=True)
         log_rejection(
             trace_id=generation.id,
-            partner_id=auth.partner.id,
-            api_key_id=auth.api_key.id,
+            partner_id=partner_id,
+            api_key_id=api_key_id,
             protocol=protocol,
             model=generation.model_slug,
             failure_stage="provider_credential",
@@ -428,7 +428,7 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
                 .join(Generation, Generation.id == ProviderAttempt.generation_id)
                 .where(
                     Generation.id == previous,
-                    Generation.partner_id == auth.partner.id,
+                    Generation.partner_id == partner_id,
                     Generation.status == "completed",
                     ProviderAttempt.provider == "argolink",
                     ProviderAttempt.credential_id == attempt.credential_id,
@@ -439,8 +439,8 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
             await fail(db, generation, attempt, "invalid_previous_response", definitive=True, public_status=422)
             log_rejection(
                 trace_id=generation.id,
-                partner_id=auth.partner.id,
-                api_key_id=auth.api_key.id,
+                partner_id=partner_id,
+                api_key_id=api_key_id,
                 protocol=protocol,
                 model=generation.model_slug,
                 failure_stage="request_context",
