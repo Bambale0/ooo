@@ -13,6 +13,7 @@ from app.infrastructure.logging import configure_logging
 from app.infrastructure.metrics import metrics_payload, monotonic_seconds, observe_http_request, refresh_db_pool_metrics
 from app.infrastructure.production_check import require_production_config
 from app.payments.crypto_pay import close_crypto_pay_client
+from app.payments.lava_top import close_lava_top_client
 from app.providers.http_client import close_provider_http_clients
 
 
@@ -25,6 +26,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         await close_crypto_pay_client()
+        await close_lava_top_client()
         await close_provider_http_clients()
 
 
@@ -48,6 +50,9 @@ def create_app() -> FastAPI:
     from app.inference.router import router as inference_router
 
     app.include_router(inference_router, prefix="/v1", tags=["Native inference"])
+    from app.billing.router import partner_balance_router
+
+    app.include_router(partner_balance_router, prefix="/v1", tags=["Partner balance"])
     from app.inference.admin import router as reconciliation_router
 
     app.include_router(reconciliation_router, prefix=settings.api_prefix + "/providers", tags=["Reconciliation"])

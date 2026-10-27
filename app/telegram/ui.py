@@ -44,6 +44,28 @@ def keyboard(*buttons: tuple[str, str], back: str | None = "main_menu") -> Inlin
     return builder.adjust(1).as_markup()
 
 
+def home_keyboard(*, admin: bool = False) -> InlineKeyboardMarkup:
+    """Mobile-first hub: two primary paths, compact grouped secondary actions."""
+    builder = InlineKeyboardBuilder()
+    actions = [
+        ("🎬 Бесплатные видеотесты", "trials"),
+        ("🤖 Заказать разработку бота", "dev:start"),
+        ("💳 Баланс", "balance"),
+        ("🔑 API-ключи", "api_keys:0"),
+        ("🧾 История", "history:0"),
+        ("📚 Документация", "docs"),
+        ("💬 Поддержка", "support"),
+        ("⚙️ Ещё", "more_menu"),
+    ]
+    if admin:
+        actions.append(("🛡 Администратор", "admin_menu"))
+    for label, callback in actions:
+        builder.button(text=label, callback_data=callback, style="primary")
+    builder.adjust(1, 1, 2, 2, 2, *([1] if admin else []))
+    return builder.as_markup()
+
+
+
 async def highlight_pressed(event: CallbackQuery) -> None:
     """Best-effort feedback; a Telegram edit failure must not cancel the action."""
     if not isinstance(event.message, Message) or not event.message.reply_markup or not event.data:

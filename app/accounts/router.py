@@ -95,22 +95,48 @@ async def list_applications(db: DbSession) -> list[PartnerApplication]:
     dependencies=[Depends(require_admin)],
 )
 async def approve_application(application_id: str, db: DbSession) -> Partner:
+    return await _activate_application(
+        application_id,
+        db,
+        require_provider_credential=True,
+        reason="application_approved",
+    )
+
+
+async def auto_activate_application(application_id: str, db: DbSession) -> Partner:
+    """Activate a self-service application without an administrator gate."""
+    return await _activate_application(
+        application_id,
+        db,
+        require_provider_credential=False,
+        reason="application_auto_approved",
+    )
+
+
+async def _activate_application(
+    application_id: str,
+    db: DbSession,
+    *,
+    require_provider_credential: bool,
+    reason: str,
+) -> Partner:
     application = await db.get(PartnerApplication, application_id, with_for_update=True)
     if application is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="application_not_found")
     if application.status != "pending":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="application_already_decided")
 
-    provider_key_result = await db.execute(
-        select(ProviderCredential).where(
-            ProviderCredential.provider == "argolink",
-            ProviderCredential.partner_application_id == application.id,
-            ProviderCredential.is_active.is_(True),
-            ProviderCredential.encrypted_api_key.is_not(None),
+    if require_provider_credential:
+        provider_key_result = await db.execute(
+            select(ProviderCredential).where(
+                ProviderCredential.provider == "argolink",
+                ProviderCredential.partner_application_id == application.id,
+                ProviderCredential.is_active.is_(True),
+                ProviderCredential.encrypted_api_key.is_not(None),
+            )
         )
-    )
-    if provider_key_result.scalar_one_or_none() is None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="required_provider_key_missing")
+        if provider_key_result.scalar_one_or_none() is None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="required_provider_key_missing")
 
     existing = await db.execute(
         select(Partner).where(Partner.telegram_id == application.telegram_id, Partner.status != "deleted")
@@ -130,7 +156,7 @@ async def approve_application(application_id: str, db: DbSession) -> Partner:
                 partner_id=partner.id,
                 from_status=None,
                 to_status="active",
-                reason="application_approved",
+                reason=reason,
             )
         )
     from app.catalog.pricing import snapshot_partner_prices
@@ -286,6 +312,7 @@ async def delete_partner(
     partner.telegram_id = "deleted:" + partner.id
     partner.company_name = "Удалённый аккаунт"
     partner.project_name = "Удалённый аккаунт"
+    partner.payment_email = None
     db.add(
         PartnerAccountStateHistory(
             partner_id=partner.id,

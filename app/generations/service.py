@@ -1,5 +1,6 @@
 from decimal import ROUND_HALF_UP, Decimal
 
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,6 +39,21 @@ from app.webhooks.service import ensure_terminal_webhook_event
 
 PRIMARY_PROVIDER = "argolink"
 FALLBACK_PROVIDERS = ("infai", "asale")
+
+
+def _finalize_terminal_billing(generation: Generation) -> None:
+    """A final failure/cancellation cannot acquire a future customer charge.
+
+    Procurement status stays on the attempt. Processing timeouts are provisional
+    and deliberately excluded, preserving the accepted late-success contract.
+    The caller commits refunds, this disposition and the outbox atomically.
+    """
+    if generation.status not in {"failed", "cancelled"}:
+        return
+    if generation.billing_status == "charged" or generation.actual_charge_rub not in {None, Decimal("0")}:
+        raise HTTPException(409, "generation_already_charged")
+    generation.billing_status = "not_chargeable"
+    generation.client_finalized_at = generation.client_finalized_at or utc_now()
 
 
 def _provider_request_for_generation(generation: Generation) -> ProviderGenerationRequest:
@@ -206,7 +222,7 @@ async def has_active_provider_credential(
     partner_id: str,
     provider: str = PRIMARY_PROVIDER,
 ) -> bool:
-    return await get_active_provider_credential(db, partner_id, provider) is not None
+    return await has_provider_runtime_credential(db, partner_id, provider)
 
 
 async def _guard_expired_video_inputs(db, generation, provider, attempt) -> bool:
@@ -388,6 +404,7 @@ async def dispatch_generation_to_provider(
                 generation,
                 reason="Released partner reserve after provider submit failure",
             )
+            _finalize_terminal_billing(generation)
             await ensure_terminal_webhook_event(db, generation, provider=provider)
     await db.flush()
     await db.refresh(attempt)
@@ -453,6 +470,7 @@ async def poll_generation_provider(
                 generation,
                 reason="Released partner reserve after provider processing timeout",
             )
+        _finalize_terminal_billing(generation)
         await ensure_terminal_webhook_event(db, generation, provider=provider)
         await db.flush()
         await db.refresh(generation)
@@ -526,6 +544,7 @@ async def poll_generation_provider(
                         generation,
                         reason="Released partner reserve after terminal provider polling failure",
                     )
+                    _finalize_terminal_billing(generation)
                     await ensure_terminal_webhook_event(db, generation, provider=provider)
         await db.flush()
         await db.refresh(generation)
@@ -636,6 +655,7 @@ async def poll_generation_provider(
                 provider=provider,
                 provider_content_url=result.result_url,
             )
+        _finalize_terminal_billing(generation)
         await ensure_terminal_webhook_event(db, generation, provider=provider)
     elif result.status == "failed":
         attempt.public_error_code = "provider_generation_failed"
@@ -671,6 +691,7 @@ async def poll_generation_provider(
                         generation,
                         reason="Released fallback procurement reserve after definitive late failure",
                     )
+            _finalize_terminal_billing(generation)
             await ensure_terminal_webhook_event(db, generation, provider=provider)
         elif provider == PRIMARY_PROVIDER and await _queue_fallback_after_safe_failure(
             db,
@@ -723,6 +744,7 @@ async def poll_generation_provider(
                     generation,
                     reason="Released partner reserve after provider generation failure",
                 )
+            _finalize_terminal_billing(generation)
             await ensure_terminal_webhook_event(db, generation, provider=provider)
     elif result.status == "processing":
         if reconciling_late_success:
@@ -980,8 +1002,11 @@ async def _settle_provider_cost_reserve(
     )
     cost = Decimal(actual_cost)
     if not cost.is_finite() or cost < 0 or cost > reserve:
-        generation.status = "reconciliation_required"
-        generation.public_error_code = "usage_reconciliation_required"
+        # Keep a definitive client failure final. The attempt's reported cost
+        # remains available for procurement-only reconciliation.
+        if generation.status not in {"failed", "cancelled"}:
+            generation.status = "reconciliation_required"
+            generation.public_error_code = "usage_reconciliation_required"
         return
     actual_rub = (cost * Decimal(generation.rub_per_usdt_snapshot)).quantize(
         Decimal("0.01"),
@@ -989,8 +1014,11 @@ async def _settle_provider_cost_reserve(
     )
     refund = Decimal(generation.provider_cost_reserve_rub) - actual_rub
     if refund < 0:
-        generation.status = "reconciliation_required"
-        generation.public_error_code = "usage_reconciliation_required"
+        # Keep a definitive client failure final. The attempt's reported cost
+        # remains available for procurement-only reconciliation.
+        if generation.status not in {"failed", "cancelled"}:
+            generation.status = "reconciliation_required"
+            generation.public_error_code = "usage_reconciliation_required"
         return
     if refund > 0:
         partner = await lock_partner_for_update(db, generation.partner_id)
@@ -1002,7 +1030,9 @@ async def _settle_provider_cost_reserve(
             idempotency_key=f"provider-cost-settlement:{generation.id}",
             generation_id=generation.id,
             description=f"Settled provider cost reserve for {provider}",
-            allow_negative=False,
+            # Returning an existing reservation is not admission of new spend.
+            # An already-negative coverage balance must not block a refund.
+            allow_negative=True,
         )
     generation.actual_provider_cost_usdt = cost
 
@@ -1042,6 +1072,7 @@ async def _expire_generation_retry(db: AsyncSession, generation: Generation, att
     attempt.last_error = "provider_processing_timeout"
     attempt.next_attempt_at = attempt.next_poll_at = None
     await release_generation_reserves(db, generation, reason="Released partner reserve after retry deadline")
+    _finalize_terminal_billing(generation)
     await ensure_terminal_webhook_event(db, generation, provider=attempt.provider)
     await db.flush()
     return True
@@ -1111,6 +1142,7 @@ async def cancel_before_submit(
     )
     attempt.next_attempt_at = attempt.next_poll_at = None
     await release_generation_reserves(db, generation, reason="Cancelled before provider submission")
+    _finalize_terminal_billing(generation)
     await ensure_terminal_webhook_event(db, generation, provider=provider)
     await db.flush()
     return attempt

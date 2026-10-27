@@ -79,8 +79,9 @@ jobs:
 
       - name: Secret scan
         run: |
-          # Exact public catalog revision, not a credential; other revisions still require review.
-          detect-secrets scan app ops .github Dockerfile docker-compose.yml .env.example --exclude-secrets '^5ce662ba88c3d07f$' --exclude-files 'ops/load/README\\.md' > /tmp/secrets.json
+          # Exact public catalog revisions, not credentials; other values still require review.
+          # Seedream source revision verified from argolink.io/api/catalog/v1/models on 2026-10-19.
+          detect-secrets scan app ops .github Dockerfile docker-compose.yml .env.example --exclude-secrets '^(5ce662ba88c3d07f|8aad252c5bb4e203)$' --exclude-files 'ops/load/README\\.md' > /tmp/secrets.json
           python - <<'PY'
           import json
           import sys

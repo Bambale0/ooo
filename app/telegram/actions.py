@@ -17,8 +17,9 @@ from app.accounts.schemas import (
     RejectApplicationCreate,
     TransferTelegramCreate,
 )
+from app.infrastructure.config import get_settings
 from app.payments.crypto_pay import get_crypto_pay_client
-from app.payments.service import cancel_active_invoice, create_or_resume_invoice, credit_paid_invoice
+from app.payments.service import cancel_configured_invoice, create_configured_invoice, credit_paid_invoice
 from app.support.service import get_ticket
 from app.telegram.service import notify, partner_for, pending_action
 from app.telegram.ui import keyboard, show, status_label
@@ -77,12 +78,14 @@ async def confirm_action(event, db, telegram_id: str, action_id: str) -> None:
         await delete_partner(partner.id, DeletePartnerCreate(), db)
         result = "Аккаунт удалён. Доступ и ключи отключены. Для новой заявки нажмите /start."
     elif kind == "invoice_create":
-        payment = await create_or_resume_invoice(
+        settings = get_settings()
+        payment = await create_configured_invoice(
             db,
             partner=partner,
             requested_rub=int(payload["amount"]),
             idempotency_key=f"telegram:{action.id}",
-            client=get_crypto_pay_client(),
+            buyer_email=payload.get("buyer_email"),
+            crypto_client=get_crypto_pay_client() if settings.payment_provider == "crypto_pay" else None,
         )
         result = f"Счёт {payment.id}\n{payment.requested_rub:.2f} ₽\n{status_label(payment.status)}"
         buttons = [("Проверить оплату", f"payment:{payment.id}")]
@@ -90,8 +93,11 @@ async def confirm_action(event, db, telegram_id: str, action_id: str) -> None:
             buttons.insert(0, ("Оплатить", payment.invoice_url))
         markup = keyboard(*buttons)
     elif kind == "invoice_cancel":
-        await cancel_active_invoice(
-            db, payment_id=payload["payment_id"], partner_id=partner.id, client=get_crypto_pay_client()
+        await cancel_configured_invoice(
+            db,
+            payment_id=payload["payment_id"],
+            partner_id=partner.id,
+            crypto_client=get_crypto_pay_client() if get_settings().crypto_pay_api_token else None,
         )
         result = "Счёт отменён."
     elif kind == "admin_approve":

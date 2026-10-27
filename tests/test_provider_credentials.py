@@ -126,3 +126,17 @@ async def test_existing_job_uses_original_credential_after_rotation(db_session, 
     monkeypatch.setattr("app.providers.service.get_provider_adapter", lambda provider, api_key: api_key)
     assert await get_partner_provider_adapter(db_session, partner.id, "argolink", credential_id=old.id) == "old-key"
     assert await get_partner_provider_adapter(db_session, partner.id, "argolink") == "new-key"
+
+
+async def test_partner_without_individual_key_uses_system_argolink_key(db_session, monkeypatch):
+    from app.accounts.models import Partner
+    from app.providers.service import get_partner_provider_adapter, has_provider_runtime_credential
+
+    partner = Partner(telegram_id="auto-partner", company_name="Auto", project_name="Auto")
+    db_session.add(partner)
+    await db_session.flush()
+    monkeypatch.setattr(get_settings(), "argolink_api_key", "system-argolink-key")
+    monkeypatch.setattr("app.providers.service.get_provider_adapter", lambda provider, api_key: api_key)
+
+    assert await has_provider_runtime_credential(db_session, partner.id, "argolink")
+    assert await get_partner_provider_adapter(db_session, partner.id, "argolink") == "system-argolink-key"

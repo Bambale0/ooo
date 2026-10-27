@@ -8,7 +8,7 @@ from aiogram.methods import EditMessageReplyMarkup
 from aiogram.types import CallbackQuery, Chat, Message, User
 from sqlalchemy import func, select
 
-from app.accounts.models import ConsentAcceptance, PartnerApplication
+from app.accounts.models import ApiKey, ConsentAcceptance, Partner, PartnerApplication
 from app.infrastructure.config import get_settings
 from app.telegram.models import BotDialog
 from app.telegram.ui import keyboard
@@ -37,10 +37,14 @@ async def test_start_shows_documents_before_collecting_application(cabinet, db_s
     await feed(text="Проект")
     assert (await db_session.execute(select(func.count()).select_from(PartnerApplication))).scalar() == 1
     assert (await db_session.execute(select(func.count()).select_from(ConsentAcceptance))).scalar() == 2
-    pending = (await feed(text="/start"))[-1]
-    assert "повторно" in pending.text
+    application = (await db_session.execute(select(PartnerApplication))).scalar_one()
+    assert application.status == "approved"
+    assert (await db_session.execute(select(func.count()).select_from(Partner))).scalar() == 1
+    assert (await db_session.execute(select(func.count()).select_from(ApiKey))).scalar() == 1
+    cabinet_screen = (await feed(text="/start"))[-1]
+    assert "Рады видеть" in cabinet_screen.text
     assert all(button.callback_data not in {"register", "accept_legal"}
-               for row in pending.reply_markup.inline_keyboard for button in row)
+               for row in cabinet_screen.reply_markup.inline_keyboard for button in row)
 
 
 async def test_documents_changed_during_application_require_new_acceptance(cabinet, db_session, monkeypatch):
@@ -54,6 +58,25 @@ async def test_documents_changed_during_application_require_new_acceptance(cabin
     await feed(text="Проект")
     assert (await db_session.execute(select(func.count()).select_from(PartnerApplication))).scalar() == 0
     assert (await db_session.get(BotDialog, "123")).state == "consent"
+
+
+async def test_existing_pending_application_is_auto_activated_on_start(cabinet, db_session):
+    feed, _ = cabinet
+    application = PartnerApplication(
+        telegram_id="123",
+        company_name="Legacy company",
+        project_name="Legacy project",
+    )
+    db_session.add(application)
+    await db_session.commit()
+
+    screen = (await feed(text="/start"))[-1]
+    await db_session.refresh(application)
+    assert application.status == "approved"
+    assert "активирована автоматически" in screen.text
+    assert "nrn_" in screen.text
+    assert (await db_session.execute(select(func.count()).select_from(Partner))).scalar() == 1
+    assert (await db_session.execute(select(func.count()).select_from(ApiKey))).scalar() == 1
 
 
 def test_all_buttons_are_blue_including_links_and_back():
@@ -104,7 +127,12 @@ async def test_bound_menu_buttons_navigate(cabinet, db_session, monkeypatch, cal
     monkeypatch.setattr(get_settings(), "terms_url", "https://example.org/terms")
     monkeypatch.setattr(get_settings(), "privacy_policy_url", "https://example.org/privacy")
     home = (await feed(user=999, text="/start"))[-1]
-    methods = await feed(user=999, callback=callback, reply_markup=home.reply_markup)
+    menu_markup = home.reply_markup
+    if callback in {"legal_documents", "settings"}:
+        # Secondary destinations are now grouped in the compact "Ещё" menu.
+        more = (await feed(user=999, callback="more_menu", reply_markup=menu_markup))[-1]
+        menu_markup = more.reply_markup
+    methods = await feed(user=999, callback=callback, reply_markup=menu_markup)
     assert screen_text.lower() in methods[-1].text.lower()
     assert any(isinstance(method, EditMessageReplyMarkup) for method in methods)
 

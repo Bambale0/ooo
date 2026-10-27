@@ -34,6 +34,15 @@ class CoverageAdjustmentCreate(BaseModel):
 class BalanceRead(BaseModel):
     partner_id: str
     balance_rub: Decimal
+    credit_limit_rub: Decimal
+    available_balance_rub: Decimal
+
+
+class CreditLimitUpdate(BaseModel):
+    credit_limit_rub: Decimal = Field(ge=0, max_digits=18, decimal_places=2, allow_inf_nan=False)
+    reason: str = Field(min_length=5, max_length=2000)
+
+    model_config = {"extra": "forbid"}
 
 
 class CoverageRead(BaseModel):

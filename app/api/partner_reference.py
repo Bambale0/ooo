@@ -50,6 +50,27 @@ EXAMPLES = {
             "response_format": "b64_json",
         },
     ),
+    "image-seedream-pro": (
+        "images/generations",
+        {
+            "model": "seedream-5.0-pro",
+            "prompt": "A ceramic cup on a plain background",
+            "resolution": "2k",
+            "aspect_ratio": "16:9",
+            "n": 1,
+            "response_format": "b64_json",
+        },
+    ),
+    "image-seedream-pro-edit": (
+        "images/edits",
+        {
+            "model": "seedream-5.0-pro",
+            "prompt": "Change the cup color to green",
+            "images": [{"image_url": "https://media.example.com/cup.png"}],
+            "resolution": "2k",
+            "n": 1,
+        },
+    ),
     "image-sunburst": (
         "images/generations",
         {
@@ -156,6 +177,7 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
     )
     anchors = [
         ("connect", "Подключение", "Connection"),
+        ("balance", "Баланс", "Balance"),
         ("models", "Модели", "Models"),
         ("text", "Текст", "Text"),
         ("images", "Изображения", "Images"),
@@ -207,6 +229,7 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
         (t("Метод", "Method"), t("Успешный ответ", "Success response")),
         [
             ("GET /v1/models", "200 application/json"),
+            ("GET /v1/balance", "200 application/json"),
             ("POST /v1/responses", "200 application/json | text/event-stream"),
             ("POST /v1/chat/completions", "200 application/json | text/event-stream"),
             ("POST /v1/messages", "200 application/json | text/event-stream"),
@@ -218,6 +241,34 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
             ("GET /api/v1/generations/{request_id}/trace", "200 application/json"),
             ("POST /v1/media/uploads", "201 application/json"),
         ],
+    )
+    body += heading("balance", "Баланс партнёра", "Partner balance")
+    body += p(
+        "GET /v1/balance возвращает только текущий рублёвый баланс владельца переданного партнёрского "
+        "API-ключа. Требуется Authorization: Bearer <PARTNER_API_KEY> либо x-api-key. "
+        "Нельзя получить баланс другого партнёра или использовать административный ключ. "
+        "Этот GET не создаёт генерацию, не списывает деньги и не требует Idempotency-Key. "
+        "Ответ не кешируется (Cache-Control: no-store).",
+        "GET /v1/balance returns only the current RUB balance belonging to the provided partner API key. "
+        "Use Authorization: Bearer <PARTNER_API_KEY> or x-api-key. Another partner's balance and admin API "
+        "tokens cannot be used here. This GET creates no generation, charges nothing and needs no "
+        "Idempotency-Key. Responses have Cache-Control: no-store.",
+    )
+    body += code('curl --fail-with-body "$API_BASE/v1/balance" -H "Authorization: Bearer $API_KEY"')
+    body += code({
+        "partner_id": "<your-partner-id>",
+        "balance_rub": "999.99",
+        "credit_limit_rub": "250.00",
+        "available_balance_rub": "1249.99",
+    })
+    body += p(
+        "balance_rub — фактический денежный остаток в ₽; credit_limit_rub — отдельно одобренный "
+        "кредитный лимит; available_balance_rub — их сумма. Для предупреждения о необходимости "
+        "пополнения денежных средств сравнивайте именно balance_rub, не кредитный лимит. "
+        "Денежные значения передаются строками с точностью до копейки.",
+        "balance_rub is the actual RUB cash balance, credit_limit_rub the separately approved limit, "
+        "and available_balance_rub their sum. For low cash alerts compare balance_rub, not credit "
+        "availability. Amounts are returned as decimal strings with kopeck precision.",
     )
     # The enabled-model table is inserted by guide.py, matching GET /v1/models.
     body += heading("models", "Доступность моделей", "Model availability")
@@ -254,15 +305,15 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
                 "string · required",
                 t("Непустое описание результата/изменений.", "Non-empty output/edit description."),
             ),
-            ("n", "integer · optional, 1", "GPT Image: 1–7; Nano Banana: 1–4; Grok Image: 1–10."),
+            ("n", "integer · optional, 1", "GPT Image: 1–7; Nano Banana: 1–4; Grok Image: 1–10; Seedream 5.0 Pro: 1."),
             (
                 "images",
                 "array<object> · edits",
                 t(
                     'JSON: [{"image_url":"https://…"}] или image_url с data:image/…;base64,…; '
-                    "GPT до 16, Nano Banana Pro до 14, остальные до 3.",
+                    "GPT до 16, Nano Banana Pro до 14, Seedream 5.0 Pro до 8, остальные до 3.",
                     'JSON: [{"image_url":"https://…"}] or a data:image/…;base64,… image_url; '
-                    "GPT up to 16, Nano Banana Pro up to 14, others up to 3.",
+                    "GPT up to 16, Nano Banana Pro up to 14, Seedream 5.0 Pro up to 8, others up to 3.",
                 ),
             ),
             (
@@ -328,15 +379,28 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
     body += example("image") + example("image-edit")
     body += "<h3>Nano Banana 2 · 4K</h3>" + example("image-nano-2")
     body += "<h3>Nano Banana Pro · 4K</h3>" + example("image-nano-pro")
+    body += "<h3>Seedream 5.0 Pro</h3>" + example("image-seedream-pro") + example("image-seedream-pro-edit")
+    body += p(
+        "Seedream 5.0 Pro: 1k или 2k (по умолчанию), только n=1; PNG. "
+        "Соотношения: 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 21:9, 5:4, 4:5. "
+        "Редактирование: до 8 референсов через JSON images или multipart image[]; суммарно до 14 MiB. "
+        "Размер HTTPS-референсов проверяет поставщик. Формат ответа: b64_json или url. "
+        "Параметры size, quality и stream не поддерживаются. Доступность модели проверяйте в /v1/models.",
+        "Seedream 5.0 Pro: 1k or 2k (default), n=1 only; PNG. "
+        "Aspect ratios: 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 21:9, 5:4, 4:5. "
+        "Edits accept up to 8 JSON images or multipart image[] references, 14 MiB combined. "
+        "The provider validates the size of HTTPS references. Response format: b64_json or url. "
+        "size, quality and stream are unsupported. Check /v1/models for availability.",
+    )
     body += "<h3>GPT Image 2.5 Sunburst · 4K</h3>" + example("image-sunburst")
     body += p(
         "В multipart передавайте model, prompt, n как поля формы; файлы — повторяющимся image[] "
         "(также принимаются image, images, images[]). Лимиты файлов: GPT 16, Nano Banana Pro 14, "
-        "другие Nano 3, Grok 1; "
+        "другие Nano 3, Grok 1, Seedream 5.0 Pro 8; "
         "плюс одна mask у GPT. Не задавайте Content-Type вручную: клиент добавит boundary.",
         "For multipart, send model, prompt and n as form fields; repeat image[] for files "
         "(image, images and images[] are also accepted). File limits: GPT 16, Nano Banana Pro 14, "
-        "other Nano 3, Grok 1; "
+        "other Nano 3, Grok 1, Seedream 5.0 Pro 8; "
         "plus one GPT mask. Do not set Content-Type manually: the client supplies the boundary.",
     )
     body += code(

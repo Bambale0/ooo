@@ -7,20 +7,26 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.accounts.models import ApiKey, PartnerApplication
-from app.accounts.router import submit_application, update_partner_api_key_webhook
-from app.accounts.schemas import ApiKeyWebhookUpdate, PartnerApplicationCreate
+from app.accounts.router import (
+    auto_activate_application,
+    create_partner_api_key,
+    submit_application,
+    update_partner_api_key_webhook,
+)
+from app.accounts.schemas import ApiKeyCreate, ApiKeyWebhookUpdate, PartnerApplicationCreate
 from app.billing.history import final_generation_charge, partner_transactions
 from app.billing.safe_to_withdraw import calculate_safe_to_withdraw
 from app.generations.models import Generation
 from app.infrastructure.config import get_settings
 from app.payments.crypto_pay import get_crypto_pay_client
 from app.payments.models import PaymentInvoice
-from app.payments.service import apply_paid_provider_invoice, create_or_resume_invoice, get_partner_payment
+from app.payments.schemas import normalize_buyer_email
+from app.payments.service import get_partner_payment, refresh_configured_invoice
 from app.support.models import SupportAttachment, SupportTicket
 from app.support.service import append_message, attachment_for, get_ticket, ticket_messages
 from app.telegram.actions import confirm_action
 from app.telegram.service import is_admin, new_action, notify, partner_for
-from app.telegram.ui import format_msk, keyboard, show, status_label, transaction_label
+from app.telegram.ui import format_msk, home_keyboard, keyboard, show, status_label, transaction_label
 
 
 def actor(event) -> str:
@@ -40,7 +46,7 @@ async def ask_confirmation(event, db, kind: str, payload: dict, label: str) -> N
 async def registration_documents(event, dialog) -> None:
     settings = get_settings()
     reset(dialog)
-    buttons = []
+    buttons = [("🤖 Заказать разработку бота", "dev:start")]
     if is_admin(actor(event)):
         buttons.append(("Администратор", "admin_menu"))
     if not settings.terms_url or not settings.privacy_policy_url:
@@ -64,7 +70,7 @@ async def registration_documents(event, dialog) -> None:
         f"Версия документов: {settings.legal_document_version}.\n\n"
         "Нажимая «Принимаю оба документа», вы подтверждаете согласие с этой версией. "
         "Затем попросим название компании и краткое описание проекта — это два шага анкеты. "
-        "После второго шага заявка отправится на рассмотрение. Решение сообщим в этом чате.",
+        "После второго шага кабинет активируется автоматически.",
         keyboard(
             ("Условия использования", settings.terms_url),
             ("Политика конфиденциальности", settings.privacy_policy_url),
@@ -72,6 +78,22 @@ async def registration_documents(event, dialog) -> None:
             *buttons, back=None,
         ),
     )
+
+
+async def activate_application_and_issue_key(db, application: PartnerApplication):
+    partner = await auto_activate_application(application.id, db)
+    api_key = await create_partner_api_key(
+        partner.id,
+        ApiKeyCreate(name="Автоматический ключ"),
+        db,
+    )
+    await notify(
+        db,
+        get_settings().admin_telegram_id,
+        f"Новый партнёр подключён автоматически: {partner.id}, заявка {application.id}.",
+        f"application-auto-approved:{application.id}",
+    )
+    return partner, api_key
 
 
 async def home(event, db, dialog) -> None:
@@ -82,25 +104,15 @@ async def home(event, db, dialog) -> None:
     reset(dialog)
     partner = await partner_for(db, actor(event))
     if partner:
-        buttons = [
-            ("Бесплатные видеотесты", "trials"),
-            ("Документы", "legal_documents"),
-            ("Баланс и пополнение", "balance"),
-            ("API-ключи", "api_keys:0"),
-            ("История и поиск", "history:0"),
-            ("Поддержка", "support"),
-            ("Документация и аккаунт", "settings"),
-        ]
-        if is_admin(actor(event)):
-            buttons.append(("Администратор", "admin_menu"))
         await show(
             event,
-            f"Рады видеть вас в кабинете Нейроныча! 👋\nБаланс: {partner.balance_rub:.2f} ₽\n\n"
-            "Для первого знакомства выберите «Бесплатные видеотесты». "
-            "Для подключения своего приложения создайте API-ключ и откройте документацию.\n\n"
-            "В разделе баланса можно пополнить счёт и проверить оплату, в истории — найти операцию. "
-            "Если понадобится помощь, напишите в поддержку. Команда /start всегда возвращает сюда.",
-            keyboard(*buttons, back=None),
+            f"Рады видеть вас в Нейроныче! 👋\n"
+            f"Баланс: {partner.balance_rub:.2f} ₽\n\n"
+            "Что хотите сделать?\n"
+            "🎬 Попробовать генерацию видео бесплатно.\n"
+            "🤖 Заказать бота для автоматизации или работы с AI.\n\n"
+            "Все остальные разделы — на кнопках ниже. /start — главное меню.",
+            home_keyboard(admin=is_admin(actor(event))),
         )
     else:
         pending = (
@@ -117,16 +129,15 @@ async def home(event, db, dialog) -> None:
         if not pending:
             await registration_documents(event, dialog)
             return
-        buttons = [("Проверить статус заявки", "main_menu")]
-        if is_admin(actor(event)):
-            buttons.append(("Администратор", "admin_menu"))
+        _, api_key = await activate_application_and_issue_key(db, pending)
+        await db.commit()
         await show(
             event,
-            "Спасибо, ваша заявка уже на рассмотрении!\n\n"
-            f"Номер заявки: {pending.id}\n\n"
-            "Отправлять её повторно не нужно. Решение придёт в этот чат. "
-            "Вернуться к проверке статуса можно в любой момент по кнопке ниже или командой /start.",
-            keyboard(*buttons, back=None),
+            "Готово — ранее поданная заявка активирована автоматически.\n\n"
+            "Сохраните API-ключ сейчас: повторно он не показывается.\n\n"
+            f"{api_key.api_key}\n\n"
+            "Не передавайте ключ третьим лицам.",
+            keyboard(("Открыть кабинет", "main_menu"), back=None),
         )
 
 
@@ -142,6 +153,11 @@ async def handle_callback(event, db, dialog) -> None:
         reset(dialog)
     if data == "main_menu":
         await home(event, db, dialog)
+        return
+    if data.startswith("dev:"):
+        from app.telegram.development import handle_callback as development_callback
+
+        await development_callback(event, db, dialog, data)
         return
     if data.startswith("confirm:"):
         reset(dialog)
@@ -168,6 +184,18 @@ async def handle_callback(event, db, dialog) -> None:
     partner = await partner_for(db, user)
     if not partner:
         raise HTTPException(403, "account_unavailable")
+    if data == "more_menu":
+        await show(
+            event,
+            "⚙️ Дополнительные разделы\n\nДокументы, ваши заявки и настройки аккаунта.",
+            keyboard(
+                ("🤖 Мои заявки на разработку", "dev:my"),
+                ("📄 Юридические документы", "legal_documents"),
+                ("👤 Настройки аккаунта", "settings"),
+                ("📚 Документация API", "docs"),
+            ),
+        )
+        return
     if data in {"legal_documents", "legal_accept_current"}:
         from app.telegram.legal import accept_current
 
@@ -234,23 +262,63 @@ async def handle_callback(event, db, dialog) -> None:
         )
     elif data == "balance":
         reset(dialog)
+        lava_top_enabled = get_settings().payment_provider == "lava_top"
+        payment_method = "СБП через Lava.top" if lava_top_enabled else "Crypto Pay с оплатой в USDT или TON"
+        balance_buttons = [("Пополнить", "topup"), ("Мои счета", "payments:0")]
+        if lava_top_enabled:
+            balance_buttons.append(("Изменить email", "payment_email"))
         await show(
             event,
-            f"Доступный баланс: {partner.balance_rub:.2f} ₽\n\n"
-            "Для пополнения нажмите «Пополнить» и укажите сумму от 1 000 ₽. "
-            "После подтверждения создадим счёт Crypto Pay с оплатой в USDT или TON. "
+            f"Баланс: {partner.balance_rub:.2f} ₽\n"
+            + (
+                f"Кредитный лимит: {partner.credit_limit_rub:.2f} ₽\n"
+                f"Порог для новых запросов: −{partner.credit_limit_rub:.2f} ₽\n"
+                if partner.credit_limit_rub else ""
+            )
+            + f"Доступный баланс: {partner.available_balance_rub:.2f} ₽\n\n"
+            + (
+                f"Email для чеков: {partner.payment_email}\n\n"
+                if lava_top_enabled and partner.payment_email
+                else ""
+            )
+            + "Для пополнения нажмите «Пополнить» и укажите сумму от 1 000 ₽. "
+            f"После подтверждения создадим счёт: {payment_method}. "
             "Рубли зачислятся автоматически после подтверждения платежа.\n\n"
             "В разделе «Мои счета» доступны ссылки на оплату и текущие статусы. "
             "Если вы уже оплатили счёт, откройте его и нажмите «Обновить».",
-            keyboard(("Пополнить", "topup"), ("Мои счета", "payments:0")),
+            keyboard(*balance_buttons),
         )
     elif data == "topup":
-        dialog.state, dialog.data = "topup", {}
+        if get_settings().payment_provider == "lava_top":
+            if partner.payment_email:
+                dialog.state, dialog.data = "topup", {"buyer_email": partner.payment_email}
+                await show(
+                    event,
+                    f"На какую сумму пополнить баланс?\n\nEmail для чека: {partner.payment_email}.\n"
+                    "Введите целую сумму в рублях, от 1 000 ₽, без пробелов и знака валюты. Например: 3000.",
+                    keyboard(("Изменить email", "payment_email")),
+                )
+            else:
+                dialog.state, dialog.data = "topup_email", {}
+                await show(
+                    event,
+                    "Укажите email для чека и оплаты через СБП. Мы сохраним его для следующих пополнений.\n\n"
+                    "На следующем шаге попросим сумму. Отменить ввод можно командой /cancel.",
+                )
+        else:
+            dialog.state, dialog.data = "topup", {}
+            await show(
+                event, "На какую сумму пополнить баланс?\n\n"
+                "Введите целую сумму в рублях, от 1 000 ₽, без пробелов и знака валюты. Например: 3000. "
+                "На следующем шаге покажем сумму для подтверждения перед созданием счёта. "
+                "Отменить ввод можно командой /cancel.",
+            )
+    elif data == "payment_email":
+        dialog.state, dialog.data = "payment_email", {}
         await show(
-            event, "На какую сумму пополнить баланс?\n\n"
-            "Введите целую сумму в рублях, от 1 000 ₽, без пробелов и знака валюты. Например: 3000. "
-            "На следующем шаге покажем сумму для подтверждения перед созданием счёта. "
-            "Отменить ввод можно командой /cancel.",
+            event,
+            "Отправьте новый email для чеков и оплаты через СБП. Он будет сохранён для следующих пополнений.\n\n"
+            "Отменить изменение можно командой /cancel.",
         )
     elif data.startswith("payments:"):
         page = page_number(data)
@@ -279,29 +347,25 @@ async def handle_callback(event, db, dialog) -> None:
         )
     elif data.startswith("payment:"):
         payment = await get_partner_payment(db, payment_id=str(UUID(data.split(":")[1])), partner_id=partner.id)
-        if payment.status in {"creating", "creation_unknown"}:
-            payment = await create_or_resume_invoice(
-                db,
-                partner=partner,
-                requested_rub=int(payment.requested_rub),
-                idempotency_key=payment.idempotency_key,
-                client=get_crypto_pay_client(),
-            )
-        if payment.provider_invoice_id and payment.status in {"active", "expired", "creating"}:
-            provider = await get_crypto_pay_client().get_invoice(payment.provider_invoice_id)
-            if provider and provider.status == "paid":
-                payment = await apply_paid_provider_invoice(db, provider_invoice=provider)
+        payment = await refresh_configured_invoice(
+            db,
+            payment_id=payment.id,
+            partner=partner,
+            crypto_client=get_crypto_pay_client() if payment.provider == "crypto_pay" else None,
+        )
         buttons = [("Обновить", f"payment:{payment.id}")]
         if payment.status == "active":
             if payment.invoice_url:
                 buttons.append(("Оплатить", payment.invoice_url))
-            buttons.append(("Отменить счёт", f"payment_cancel:{payment.id}"))
+            if payment.provider == "crypto_pay":
+                buttons.append(("Отменить счёт", f"payment_cancel:{payment.id}"))
+        destination = "СБП через Lava.top" if payment.provider == "lava_top" else "Crypto Pay"
         await show(
             event,
             f"Счёт {payment.id}\nСумма пополнения: {payment.requested_rub:.2f} ₽\n"
             f"Статус: {status_label(payment.status)}\n\n"
             "Кнопка «Обновить» проверяет текущее состояние счёта. "
-            "Если оплата ещё доступна, ниже появится кнопка перехода в Crypto Pay. "
+            f"Если оплата ещё доступна, ниже появится кнопка перехода в {destination}. "
             "При обращении в поддержку можно указать номер этого счёта.",
             keyboard(*buttons),
         )
@@ -526,7 +590,11 @@ async def support_callback(event, db, dialog, data: str, partner=None) -> None:
 
 
 async def admin_callback(event, db, dialog, data: str) -> None:
-    if data == "admin_ops":
+    if data.startswith("admin_dev"):
+        from app.telegram.development import admin_callback as development_admin_callback
+
+        await development_admin_callback(event, db, data)
+    elif data == "admin_ops":
         from app.telegram.admin_forms import menu
 
         reset(dialog)
@@ -572,6 +640,7 @@ async def admin_callback(event, db, dialog, data: str) -> None:
             "Администрирование",
             keyboard(
                 ("Заявки", "admin_apps:0"),
+                ("🤖 Заявки на разработку", "admin_dev:0"),
                 ("Платежи", "admin_payments:0"),
                 ("Казначейство", "admin_stw"),
                 ("Цены, возвраты и сверки", "admin_ops"),
@@ -780,6 +849,11 @@ async def handle_message(event, db, dialog) -> None:
     if state.startswith("admin_") and not is_admin(user):
         reset(dialog)
         raise HTTPException(403, "admin_required")
+    if state == "development_intake":
+        from app.telegram.development import handle_message as development_message
+
+        await development_message(event, db, dialog, value)
+        return
     if state in {"register_company", "register_project"}:
         settings = get_settings()
         if (dialog.data.get("legal_version") != settings.legal_document_version
@@ -797,7 +871,7 @@ async def handle_message(event, db, dialog) -> None:
             "Шаг 2 из 2 — ваш проект.\n"
             "Одним сообщением укажите название и кратко расскажите, для чего хотите использовать API "
             "(от 2 до 255 символов). Например: «Север Видео — создание роликов для интернет-магазинов».\n\n"
-            "После этого сообщения отправим заявку на рассмотрение. "
+            "После этого сообщения сразу активируем кабинет. "
             "Если хотите исправить первый шаг, отправьте /cancel и заполните анкету заново.",
         )
         return
@@ -816,21 +890,16 @@ async def handle_message(event, db, dialog) -> None:
             ),
             db,
         )
-        await notify(
-            db,
-            get_settings().admin_telegram_id,
-            f"Новая заявка {app.id}. Откройте раздел «Заявки».",
-            f"application:{app.id}",
-        )
+        _, api_key = await activate_application_and_issue_key(db, app)
         reset(dialog)
         await db.commit()
         await show(
             event,
-            f"Спасибо! Заявка {app.id} принята.\n\n"
-            "Мы получили данные компании, описание проекта и согласие с документами. "
-            "Решение придёт в этот чат — повторно заполнять анкету не нужно. "
-            "Проверить статус можно командой /start или кнопкой ниже.",
-            keyboard(("Проверить статус заявки", "main_menu"), back=None),
+            "Готово — кабинет активирован автоматически.\n\n"
+            "Сохраните API-ключ сейчас: повторно он не показывается.\n\n"
+            f"{api_key.api_key}\n\n"
+            "Не передавайте ключ третьим лицам. Все функции уже доступны в кабинете.",
+            keyboard(("Открыть кабинет", "main_menu"), back=None),
         )
         return
     partner = await partner_for(db, user)
@@ -918,16 +987,35 @@ async def handle_message(event, db, dialog) -> None:
                 if payment
                 else "В вашем аккаунте такой операции нет.",
             )
+    elif state in {"topup_email", "payment_email"}:
+        payment_email = normalize_buyer_email(value)
+        partner.payment_email = payment_email
+        if state == "topup_email":
+            dialog.state, dialog.data = "topup", {"buyer_email": payment_email}
+            await show(
+                event,
+                "Email сохранён. На какую сумму пополнить баланс?\n\n"
+                "Введите целую сумму в рублях, от 1 000 ₽, без пробелов и знака валюты. Например: 3000.",
+            )
+        else:
+            reset(dialog)
+            await show(
+                event,
+                f"Email для чеков изменён: {payment_email}",
+                keyboard(("Пополнить", "topup"), back="balance"),
+            )
     elif state == "topup":
         if not value.isascii() or not value.isdigit() or not 1000 <= int(value) <= 9999999999999999:
             raise ValueError("amount")
+        buyer_email = dialog.data.get("buyer_email")
         reset(dialog)
         await ask_confirmation(
             event,
             db,
             "invoice_create",
-            {"partner_id": partner.id, "amount": value},
-            f"Создать счёт на {int(value):,} ₽? Срок оплаты — 1 час.",
+            {"partner_id": partner.id, "amount": value, "buyer_email": buyer_email},
+            f"Создать счёт на {int(value):,} ₽?"
+            + (f"\nEmail для чека: {buyer_email}" if buyer_email else ""),
         )
     elif state == "key_name":
         if not 2 <= len(value) <= 120:

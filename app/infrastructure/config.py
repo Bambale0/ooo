@@ -1,5 +1,6 @@
 from decimal import Decimal
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -68,6 +69,15 @@ class Settings(BaseSettings):
     crypto_pay_api_token: str | None = None
     crypto_pay_base_url: str = "https://pay.crypt.bot"
     crypto_pay_timeout_seconds: float = Field(default=10.0, gt=0)
+    payment_provider: Literal["crypto_pay", "lava_top"] = "crypto_pay"
+    lava_top_api_key: SecretStr | None = None
+    lava_top_webhook_secret: SecretStr | None = Field(default=None, max_length=80)
+    lava_top_offer_id: str | None = None
+    lava_top_base_url: str = "https://gate.lava.top"
+    lava_top_timeout_seconds: float = Field(default=10.0, gt=0)
+    lava_top_successful_return_url: str | None = None
+    lava_top_failure_return_url: str | None = None
+    lava_top_cancel_return_url: str | None = None
     payment_reconciliation_interval_seconds: float = Field(default=60.0, ge=5)
     payment_reconciliation_batch_size: int = Field(default=20, ge=1, le=100)
     public_api_base_url: str = "http://localhost:8000"
