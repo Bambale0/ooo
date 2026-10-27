@@ -69,10 +69,6 @@ jobs:
           printf 'lava_env_names_begin\n'
           awk -F= '/^(PAYMENT_PROVIDER|LAVA_TOP_API_KEY|LAVA_TOP_WEBHOOK_SECRET|LAVA_TOP_OFFER_ID|LAVA_TOP_DEVELOPMENT_OFFER_ID|LAVA_TOP_BASE_URL|LAVA_TOP_SUCCESSFUL_RETURN_URL|LAVA_TOP_FAILURE_RETURN_URL|LAVA_TOP_CANCEL_RETURN_URL|TELEGRAM_BOT_USERNAME)=/ {print $1"=present"}' "$root/.env" | sort
           printf 'lava_env_names_end\n'
-          printf 'development_offer_candidates_begin\n'
-          "${compose[@]}" exec -T app python -c \
-            'import json,os,urllib.request; base=os.environ.get("LAVA_TOP_BASE_URL","https://gate.lava.top").rstrip("/"); req=urllib.request.Request(base+"/api/v2/products?feedVisibility=ALL&contentCategories=PRODUCT",headers={"Accept":"application/json","X-Api-Key":os.environ["LAVA_TOP_API_KEY"]}); data=json.load(urllib.request.urlopen(req,timeout=15)); matches=[]; [(matches.extend({"offer_id":offer.get("id"),"price_count":len(offer.get("prices") or [])} for offer in (item.get("data",{}).get("offers") or []))) for item in data.get("items",[]) if any(token in (item.get("data",{}).get("title") or "").casefold() for token in ("разработ","development"))]; print(json.dumps(matches,sort_keys=True))' </dev/null
-          printf 'development_offer_candidates_end\n'
           SSH
 
       - name: Remove temporary SSH identity
