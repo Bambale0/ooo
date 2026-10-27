@@ -196,6 +196,11 @@ async def handle_callback(event, db, dialog) -> None:
             ),
         )
         return
+    if data == "referrals":
+        from app.referrals.telegram import show_program
+
+        await show_program(event, db, partner)
+        return
     if data in {"legal_documents", "legal_accept_current"}:
         from app.telegram.legal import accept_current
 
@@ -593,7 +598,7 @@ async def admin_callback(event, db, dialog, data: str) -> None:
     if data.startswith("admin_dev"):
         from app.telegram.development import admin_callback as development_admin_callback
 
-        await development_admin_callback(event, db, data)
+        await development_admin_callback(event, db, dialog, data)
     elif data == "admin_ops":
         from app.telegram.admin_forms import menu
 
@@ -841,7 +846,16 @@ async def admin_callback(event, db, dialog, data: str) -> None:
 
 async def handle_message(event, db, dialog) -> None:
     value = (event.text or "").strip()
-    if value.split(" ", 1)[0].split("@", 1)[0] in {"/start", "/cancel"}:
+    command = value.split(" ", 1)[0].split("@", 1)[0]
+    if command == "/start":
+        parts = value.split(maxsplit=1)
+        code = parts[1][4:] if len(parts) == 2 and parts[1].startswith("ref_") else None
+        from app.referrals.service import bind_referral
+
+        await bind_referral(db, referred_telegram_id=actor(event), code=code)
+        await home(event, db, dialog)
+        return
+    if command == "/cancel":
         await home(event, db, dialog)
         return
     user = actor(event)
@@ -910,6 +924,10 @@ async def handle_message(event, db, dialog) -> None:
         from app.telegram.admin_applications import receive_key
 
         await receive_key(event, db, dialog, value)
+    elif state in {"admin_development_quote_price", "admin_development_quote_email"}:
+        from app.telegram.development import admin_quote_message
+
+        await admin_quote_message(event, db, dialog, value)
     elif state == "admin_partner_pick":
         from app.telegram.admin_partners import search_partners
 

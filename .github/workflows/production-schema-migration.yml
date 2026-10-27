@@ -1,0 +1,227 @@
+name: Production Schema Migration
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact current main commit to build and migrate
+        required: true
+        type: string
+      telegram_bot_username:
+        description: Public Telegram bot username without @
+        required: true
+        default: apineurobrobot
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+    env:
+      RELEASE_SHA: ${{ inputs.release_sha }}
+      TELEGRAM_BOT_USERNAME: ${{ inputs.telegram_bot_username }}
+      DEPLOY_ROOT: ${{ vars.DEPLOY_ROOT || '/opt/neironych' }}
+      DEPLOY_SSH_USER: ${{ vars.DEPLOY_SSH_USER || 'deploy' }}
+      DEPLOY_SSH_PORT: ${{ vars.DEPLOY_SSH_PORT || '22' }}
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+
+    steps:
+      - name: Validate exact main release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$TELEGRAM_BOT_USERNAME" =~ ^[A-Za-z0-9_]{5,32}$ ]]
+          [[ "$DEPLOY_ROOT" =~ ^/[a-zA-Z0-9_./-]+$ && "$DEPLOY_ROOT" != / && "$DEPLOY_ROOT" != *..* ]]
+          [[ "$DEPLOY_SSH_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          [[ "$DEPLOY_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]]
+          [[ "$DEPLOY_SSH_PORT" =~ ^[0-9]{1,5}$ ]]
+          (( 10#$DEPLOY_SSH_PORT > 0 && 10#$DEPLOY_SSH_PORT < 65536 ))
+          current="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq .object.sha)"
+          [[ "$current" == "$RELEASE_SHA" ]] || {
+            echo 'release_sha must be the exact current main revision' >&2
+            exit 1
+          }
+
+      - name: Checkout exact release
+        uses: actions/checkout@11d5960a326750d583807e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          persist-credentials: false
+
+      - name: Install pinned SSH identity
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_SSH_KEY"
+          test -n "$DEPLOY_KNOWN_HOSTS"
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/deploy_key ~/.ssh/known_hosts
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Normalize registry path
+        id: registry
+        run: echo "repository=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Build immutable migration image
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.registry.outputs.repository }}:${{ env.RELEASE_SHA }}
+          labels: org.opencontainers.image.revision=${{ env.RELEASE_SHA }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Stage temporary migration credentials
+        env:
+          PRODUCTION_BACKUP_KEY: ${{ secrets.PRODUCTION_BACKUP_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$PRODUCTION_BACKUP_KEY"
+          runner_config="${DOCKER_CONFIG:-${HOME}/.docker}/config.json"
+          test -s "$runner_config"
+          remote_dir="$(ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
+            -p "$DEPLOY_SSH_PORT" -i ~/.ssh/deploy_key "$DEPLOY_SSH_USER@$DEPLOY_HOST" \
+            "umask 077; mktemp -d /dev/shm/neironych-migrate-${RELEASE_SHA}.XXXXXX")"
+          [[ "$remote_dir" =~ ^/dev/shm/neironych-migrate-[0-9a-f]{40}\.[a-zA-Z0-9]{6,}$ ]]
+          printf 'MIGRATION_SECRET_DIR=%s\n' "$remote_dir" >> "$GITHUB_ENV"
+          printf '%s' "$PRODUCTION_BACKUP_KEY" > "$RUNNER_TEMP/backup-key"
+          chmod 600 "$RUNNER_TEMP/backup-key"
+          scp -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
+            -P "$DEPLOY_SSH_PORT" -i ~/.ssh/deploy_key \
+            "$runner_config" "$DEPLOY_SSH_USER@$DEPLOY_HOST:${remote_dir}/config.json"
+          scp -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
+            -P "$DEPLOY_SSH_PORT" -i ~/.ssh/deploy_key \
+            "$RUNNER_TEMP/backup-key" "$DEPLOY_SSH_USER@$DEPLOY_HOST:${remote_dir}/backup-key"
+          rm -f "$RUNNER_TEMP/backup-key"
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
+            -p "$DEPLOY_SSH_PORT" -i ~/.ssh/deploy_key "$DEPLOY_SSH_USER@$DEPLOY_HOST" \
+            "chmod 600 '${remote_dir}/config.json' '${remote_dir}/backup-key'"
+
+      - name: Back up and migrate production schema
+        run: |
+          set -euo pipefail
+          [[ "$MIGRATION_SECRET_DIR" =~ ^/dev/shm/neironych-migrate-[0-9a-f]{40}\.[a-zA-Z0-9]{6,}$ ]]
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
+            -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+            -p "$DEPLOY_SSH_PORT" -i ~/.ssh/deploy_key "$DEPLOY_SSH_USER@$DEPLOY_HOST" \
+            "RELEASE_SHA='${RELEASE_SHA}' DEPLOY_ROOT='${DEPLOY_ROOT}' TELEGRAM_BOT_USERNAME='${TELEGRAM_BOT_USERNAME}' MIGRATION_SECRET_DIR='${MIGRATION_SECRET_DIR}' REPOSITORY='${GITHUB_REPOSITORY}' bash -s" <<'SSH'
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$TELEGRAM_BOT_USERNAME" =~ ^[A-Za-z0-9_]{5,32}$ ]]
+          [[ "$MIGRATION_SECRET_DIR" =~ ^/dev/shm/neironych-migrate-[0-9a-f]{40}\.[a-zA-Z0-9]{6,}$ ]]
+          root="$DEPLOY_ROOT"
+          test -f "$root/.env"
+          test -f "$root/compose.host.yml"
+          test -s "$MIGRATION_SECRET_DIR/config.json"
+          test -s "$MIGRATION_SECRET_DIR/backup-key"
+          command -v openssl >/dev/null
+          compose=(docker compose --project-directory "$root" --env-file "$root/.env"
+            -f "$root/docker-compose.prod.yml" -f "$root/compose.host.yml" --profile telegram)
+          image="ghcr.io/${REPOSITORY,,}:${RELEASE_SHA}"
+          backup_dir="$root/release-backups/schema-$RELEASE_SHA"
+          backup_file="$backup_dir/postgres.dump.enc"
+          checksum_file="$backup_dir/postgres.dump.enc.sha256"
+          mkdir -p "$root/release-backups"
+          chmod 700 "$root/release-backups"
+          if [ ! -e "$backup_dir" ]; then
+            mkdir -m 700 "$backup_dir"
+            "${compose[@]}" exec -T postgres sh -c \
+              'pg_dump --format=custom --username="$POSTGRES_USER" --dbname="$POSTGRES_DB"' </dev/null |
+              openssl enc -aes-256-cbc -pbkdf2 -salt \
+                -pass "file:$MIGRATION_SECRET_DIR/backup-key" -out "$backup_file"
+            test -s "$backup_file"
+            chmod 600 "$backup_file"
+            (cd "$backup_dir" && sha256sum postgres.dump.enc > postgres.dump.enc.sha256)
+            chmod 600 "$checksum_file"
+          fi
+          (cd "$backup_dir" && sha256sum --check --status postgres.dump.enc.sha256)
+          openssl enc -d -aes-256-cbc -pbkdf2 \
+            -pass "file:$MIGRATION_SECRET_DIR/backup-key" -in "$backup_file" |
+            "${compose[@]}" exec -T postgres pg_restore --list - >/dev/null
+
+          env_count="$(grep -Ec '^[[:space:]]*(export[[:space:]]+)?TELEGRAM_BOT_USERNAME[[:space:]]*=' "$root/.env" || true)"
+          [ "$env_count" -le 1 ]
+          env_tmp="$(mktemp "$root/.env.migration.XXXXXX")"
+          awk -v value="$TELEGRAM_BOT_USERNAME" '
+            BEGIN { replaced=0 }
+            /^[[:space:]]*(export[[:space:]]+)?TELEGRAM_BOT_USERNAME[[:space:]]*=/ {
+              print "TELEGRAM_BOT_USERNAME=" value; replaced=1; next
+            }
+            { print }
+            END { if (!replaced) print "TELEGRAM_BOT_USERNAME=" value }
+          ' "$root/.env" > "$env_tmp"
+          chmod --reference="$root/.env" "$env_tmp"
+          chown --reference="$root/.env" "$env_tmp"
+          mv -f "$env_tmp" "$root/.env"
+
+          export DOCKER_CONFIG="$MIGRATION_SECRET_DIR"
+          export NEIRONYCH_IMAGE="$image"
+          export APP_REVISION="$RELEASE_SHA"
+          docker pull "$image"
+          "${compose[@]}" run --rm --no-deps app alembic upgrade head </dev/null
+          "${compose[@]}" run --rm --no-deps app alembic current --check-heads </dev/null
+          "${compose[@]}" run --rm --no-deps app alembic check </dev/null
+          printf 'MIGRATION_VERIFIED %s\n' "$RELEASE_SHA"
+          SSH
+
+      - name: Download encrypted migration backup
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/migration-backup"
+          scp -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=30 \
+            -P "$DEPLOY_SSH_PORT" -i ~/.ssh/deploy_key \
+            "$DEPLOY_SSH_USER@$DEPLOY_HOST:${DEPLOY_ROOT}/release-backups/schema-${RELEASE_SHA}/postgres.dump.enc" \
+            "$RUNNER_TEMP/migration-backup/postgres.dump.enc"
+          scp -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=30 \
+            -P "$DEPLOY_SSH_PORT" -i ~/.ssh/deploy_key \
+            "$DEPLOY_SSH_USER@$DEPLOY_HOST:${DEPLOY_ROOT}/release-backups/schema-${RELEASE_SHA}/postgres.dump.enc.sha256" \
+            "$RUNNER_TEMP/migration-backup/postgres.dump.enc.sha256"
+          (cd "$RUNNER_TEMP/migration-backup" && sha256sum --check --status postgres.dump.enc.sha256)
+
+      - name: Retain encrypted migration backup
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: production-schema-backup-${{ env.RELEASE_SHA }}
+          path: ${{ runner.temp }}/migration-backup/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove temporary migration credentials
+        if: always()
+        run: |
+          set -euo pipefail
+          rm -f "$RUNNER_TEMP/backup-key"
+          if [[ -n "${MIGRATION_SECRET_DIR:-}" ]]; then
+            [[ "$MIGRATION_SECRET_DIR" =~ ^/dev/shm/neironych-migrate-[0-9a-f]{40}\.[a-zA-Z0-9]{6,}$ ]]
+            ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
+              -p "$DEPLOY_SSH_PORT" -i ~/.ssh/deploy_key "$DEPLOY_SSH_USER@$DEPLOY_HOST" \
+              "if [ -d '${MIGRATION_SECRET_DIR}' ]; then rm -f -- '${MIGRATION_SECRET_DIR}/config.json' '${MIGRATION_SECRET_DIR}/backup-key'; rmdir -- '${MIGRATION_SECRET_DIR}'; fi" || {
+                echo 'Temporary migration credential cleanup could not be verified.' >&2
+                exit 1
+              }
+          fi
+          rm -f ~/.ssh/deploy_key

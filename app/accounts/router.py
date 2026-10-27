@@ -159,6 +159,9 @@ async def _activate_application(
                 reason=reason,
             )
         )
+    from app.referrals.service import claim_partner_attribution
+
+    await claim_partner_attribution(db, partner)
     from app.catalog.pricing import snapshot_partner_prices
 
     await snapshot_partner_prices(db, partner.id)

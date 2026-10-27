@@ -30,6 +30,7 @@ from app.payments.service import (
     record_confirmed_refund,
     sync_lava_provider_invoice,
 )
+from app.telegram.models import DevelopmentInvoice
 
 router = APIRouter()
 
@@ -239,6 +240,7 @@ async def lava_top_webhook(
         return {"ok": True}
 
     local_payment = None
+    development_payment = None
     if provider_reference:
         local_payment = await db.scalar(
             select(PaymentInvoice).where(
@@ -246,7 +248,14 @@ async def lava_top_webhook(
                 PaymentInvoice.provider_reference == provider_reference,
             )
         )
-    if local_payment is not None and event_type.startswith("payment."):
+        if local_payment is None:
+            development_payment = await db.scalar(
+                select(DevelopmentInvoice).where(
+                    DevelopmentInvoice.provider == "lava_top",
+                    DevelopmentInvoice.provider_reference == provider_reference,
+                )
+            )
+    if (local_payment is not None or development_payment is not None) and event_type.startswith("payment."):
         try:
             provider_invoice = await get_lava_top_client().get_invoice(provider_reference)
         except LavaTopError as exc:
@@ -259,11 +268,20 @@ async def lava_top_webhook(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="payment_confirmation_pending",
             )
-        await sync_lava_provider_invoice(
-            db,
-            provider_invoice=provider_invoice,
-            payment_id=local_payment.id,
-        )
+        if local_payment is not None:
+            await sync_lava_provider_invoice(
+                db,
+                provider_invoice=provider_invoice,
+                payment_id=local_payment.id,
+            )
+        else:
+            from app.telegram.development_billing import sync_development_invoice
+
+            await sync_development_invoice(
+                db,
+                provider_invoice=provider_invoice,
+                invoice_id=development_payment.id,
+            )
 
     db.add(
         LavaTopWebhookEvent(

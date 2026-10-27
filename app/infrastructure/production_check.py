@@ -53,6 +53,9 @@ def validate_production_config() -> list[str]:
             errors.append("ADMIN_TELEGRAM_ID must be the verified administrator's numeric ID")
         if not settings.argolink_api_key:
             errors.append("ARGOLINK_API_KEY is required for automatic partner activation")
+        username = (settings.telegram_bot_username or "").lstrip("@")
+        if not username or not username.replace("_", "").isalnum():
+            errors.append("TELEGRAM_BOT_USERNAME is required for referral links")
         for name in ("terms_url", "privacy_policy_url"):
             url = urlsplit(getattr(settings, name) or "")
             if url.scheme != "https" or not url.hostname or url.username or url.password:

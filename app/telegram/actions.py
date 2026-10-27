@@ -100,6 +100,44 @@ async def confirm_action(event, db, telegram_id: str, action_id: str) -> None:
             crypto_client=get_crypto_pay_client() if get_settings().crypto_pay_api_token else None,
         )
         result = "Счёт отменён."
+    elif kind == "admin_dev_quote":
+        from decimal import Decimal
+
+        from app.telegram.development_billing import set_quote
+
+        row = await set_quote(
+            db,
+            request_id=payload["request_id"],
+            total_price_rub=Decimal(payload["price"]),
+            buyer_email=payload["buyer_email"],
+            actor=telegram_id,
+        )
+        result = (
+            f"Цена проекта сохранена: {row.quoted_price_rub:.2f} ₽.\n"
+            f"Email для чека: {row.buyer_email}."
+        )
+        markup = keyboard(("Открыть заявку", f"admin_dev_view:{row.id}"), back="admin_dev:0")
+    elif kind == "admin_dev_invoice":
+        from app.payments.lava_top import LavaTopError, get_lava_top_client
+        from app.telegram.development_billing import create_development_invoice
+
+        try:
+            client = get_lava_top_client()
+        except LavaTopError as exc:
+            raise HTTPException(503, "payment_provider_not_configured") from exc
+        invoice = await create_development_invoice(
+            db,
+            request_id=payload["request_id"],
+            installment=payload["installment"],
+            idempotency_key=f"telegram-action:{action.id}",
+            client=client,
+        )
+        label = "Аванс 30%" if invoice.installment == "advance" else "Остаток 70%"
+        result = f"{label} выставлен: {invoice.requested_rub:.2f} ₽. Статус: {status_label(invoice.status)}."
+        buttons = [("Открыть заявку", f"admin_dev_view:{invoice.development_request_id}")]
+        if invoice.invoice_url:
+            buttons.insert(0, ("Открыть счёт", invoice.invoice_url))
+        markup = keyboard(*buttons, back="admin_dev:0")
     elif kind == "admin_approve":
         from app.telegram.admin_applications import approve_with_key
 
