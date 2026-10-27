@@ -163,7 +163,7 @@ jobs:
           (cd "$backup_dir" && sha256sum --check --status postgres.dump.enc.sha256)
           openssl enc -d -aes-256-cbc -pbkdf2 \
             -pass "file:$MIGRATION_SECRET_DIR/backup-key" -in "$backup_file" |
-            "${compose[@]}" exec -T postgres pg_restore --list - >/dev/null
+            "${compose[@]}" exec -T postgres pg_restore --list >/dev/null
 
           env_count="$(grep -Ec '^[[:space:]]*(export[[:space:]]+)?TELEGRAM_BOT_USERNAME[[:space:]]*=' "$root/.env" || true)"
           [ "$env_count" -le 1 ]
