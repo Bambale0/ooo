@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.accounts.models import Partner, PartnerApplication
 from app.infrastructure.config import get_settings
 from app.infrastructure.security import decrypt_secret, encrypt_secret, hash_secret
+from app.providers.base import ProviderAdapterError
 from app.providers.models import ProviderCredential, ProviderKeyPoolItem
 from app.providers.registry import get_provider_adapter
 
@@ -47,12 +48,19 @@ def parse_admin_key_lines(value: str) -> list[str]:
 
 
 async def _validate_keys(keys: list[str]) -> None:
-    adapter = get_provider_adapter("argolink", api_key=None)
     # Validate every item before the first database write: a mixed valid/invalid
     # message is rejected atomically and never leaves a partial pool.
     for key in keys:
+        adapter = get_provider_adapter("argolink", api_key=key)
         if not await adapter.validate_key(key):
             raise HTTPException(409, "provider_key_invalid")
+        try:
+            await adapter.prepaid_balance_usdt()
+        except ProviderAdapterError as exc:
+            # Runtime capital admission currently supports only unrestricted
+            # prepaid USD/USDT wallets. Quota/standard keys must not activate a
+            # partner whose every generation would then fail closed.
+            raise HTTPException(409, "provider_key_mode_unsupported") from exc
 
 
 async def _existing_hashes(db: AsyncSession, hashes: list[str]) -> set[str]:

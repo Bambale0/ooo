@@ -9,12 +9,14 @@ from pydantic import SecretStr
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.accounts.models import ApiKey, Partner, PartnerApplication
+from app.accounts.models import ApiKey, Partner, PartnerApplication, RegistrationInvite
+from app.accounts.registration_invites import bind_registration_invite, create_registration_invite
 from app.accounts.router import auto_activate_application, delete_partner, transfer_telegram
 from app.accounts.schemas import DeletePartnerCreate, TransferTelegramCreate
 from app.infrastructure.config import get_settings
 from app.infrastructure.database import Base
 from app.infrastructure.security import decrypt_secret, hash_secret
+from app.providers.base import ProviderAdapterError
 from app.providers.key_pool import add_pool_keys, parse_key_list, pool_counts, provision_application_key
 from app.providers.models import ProviderCredential, ProviderKeyPoolItem
 from app.providers.router import create_provider_credential
@@ -119,6 +121,24 @@ async def test_duplicate_batch_is_rejected_without_partial_rows(db_session, monk
             actor="test",
         )
     assert error.value.detail == "provider_key_pool_duplicate"
+    assert await db_session.scalar(select(func.count()).select_from(ProviderKeyPoolItem)) == 0
+
+
+async def test_pool_rejects_key_without_supported_prepaid_capital_contract(db_session, monkeypatch):
+    monkeypatch.setattr("app.providers.argolink.ArgoLinkAdapter.validate_key", _valid)
+
+    async def unsupported_mode(self):
+        raise ProviderAdapterError("provider_temporarily_unavailable")
+
+    monkeypatch.setattr("app.providers.argolink.ArgoLinkAdapter.prepaid_balance_usdt", unsupported_mode)
+    with pytest.raises(HTTPException) as error:
+        await add_pool_keys(
+            db_session,
+            ["sk-pool-quota-mode-unsupported-00000001"],
+            source="test",
+            actor="test",
+        )
+    assert error.value.detail == "provider_key_mode_unsupported"
     assert await db_session.scalar(select(func.count()).select_from(ProviderKeyPoolItem)) == 0
 
 
@@ -279,6 +299,53 @@ async def test_empty_pool_keeps_application_pending_and_retry_uses_same_applicat
     assert "nrn_" in screen.text
     assert await db_session.scalar(select(func.count()).select_from(PartnerApplication)) == 1
     assert await db_session.scalar(select(func.count()).select_from(ProviderCredential)) == 1
+    assert await db_session.scalar(
+        select(func.count())
+        .select_from(BotNotification)
+        .where(BotNotification.dedupe_key == f"argolink-key-pool-depleted:{application.id}")
+    ) == 0
+
+
+async def test_single_use_invite_gates_distinct_telegram_ids_before_pool_claim(db_session, monkeypatch):
+    monkeypatch.setattr(get_settings(), "registration_invite_required", True)
+    monkeypatch.setattr("app.providers.argolink.ArgoLinkAdapter.validate_key", _valid)
+    invite, token = await create_registration_invite(db_session, actor="telegram:999")
+    await bind_registration_invite(db_session, telegram_id="invite-owner", token=token)
+    with pytest.raises(HTTPException) as rebound:
+        await bind_registration_invite(db_session, telegram_id="attacker", token=token)
+    assert rebound.value.detail == "registration_invite_invalid"
+    await add_pool_keys(
+        db_session,
+        ["sk-pool-invite-a-000000000000000001", "sk-pool-invite-b-000000000000000002"],
+        source="test",
+        actor="test",
+    )
+    allowed = PartnerApplication(telegram_id="invite-owner", company_name="C", project_name="P")
+    blocked = PartnerApplication(telegram_id="attacker", company_name="C", project_name="P")
+    db_session.add_all([allowed, blocked])
+    await db_session.flush()
+
+    await auto_activate_application(allowed.id, db_session)
+    with pytest.raises(HTTPException) as denied:
+        await auto_activate_application(blocked.id, db_session)
+    assert denied.value.detail == "registration_invite_required"
+    await db_session.refresh(invite)
+    assert invite.status == "used" and invite.used_application_id == allowed.id
+    assert await pool_counts(db_session) == (1, 1)
+
+
+async def test_admin_can_create_and_revoke_registration_invite(cabinet, db_session, monkeypatch):
+    feed, _ = cabinet
+    monkeypatch.setattr(get_settings(), "telegram_bot_username", "neironych_test_bot")
+    screen = (await feed(user=999, callback="admin_argolink_invite_create"))[-1]
+    invite = await db_session.scalar(select(RegistrationInvite))
+    assert invite is not None and invite.status == "active"
+    assert "https://t.me/neironych_test_bot?start=invite_" in screen.text
+    assert invite.token_hash not in screen.text
+
+    await feed(user=999, callback=f"admin_argolink_invite_revoke:{invite.id}")
+    await db_session.refresh(invite)
+    assert invite.status == "revoked" and invite.revoked_by == "999"
 
 
 async def test_admin_pool_add_is_authorized_encrypted_and_all_or_nothing(cabinet, db_session, monkeypatch):

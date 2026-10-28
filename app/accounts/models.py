@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, ForeignKey, Numeric, String, Text
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.infrastructure.database import Base
@@ -18,6 +18,25 @@ class PartnerApplication(Base):
     rejection_reason: Mapped[str | None] = mapped_column(Text)
     terms_version: Mapped[str] = mapped_column(String(40), nullable=False, default="2026-09-19")
     privacy_policy_version: Mapped[str] = mapped_column(String(40), nullable=False, default="2026-09-19")
+    created_at: Mapped[object] = utc_created_at()
+
+
+class RegistrationInvite(Base):
+    __tablename__ = "registration_invites"
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'used', 'revoked')", name="registration_invite_status"),
+        UniqueConstraint("used_application_id", name="uq_registration_invite_used_application"),
+    )
+
+    id: Mapped[str] = uuid_pk()
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active", index=True)
+    bound_telegram_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    used_application_id: Mapped[str | None] = mapped_column(ForeignKey("partner_applications.id"), index=True)
+    created_by: Mapped[str] = mapped_column(String(80), nullable=False)
+    revoked_by: Mapped[str | None] = mapped_column(String(80))
+    used_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[object] = utc_created_at()
 
 

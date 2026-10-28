@@ -52,7 +52,7 @@ async def has_provider_runtime_credential(
         return True
     if provider == "asale" and settings.asale_api_key:
         return True
-    if provider == "argolink" and settings.argolink_api_key:
+    if provider == "argolink" and settings.argolink_shared_fallback_enabled and settings.argolink_api_key:
         partner = await db.get(Partner, partner_id)
         return bool(partner and not partner.requires_dedicated_argolink_credential)
     return False
@@ -70,7 +70,12 @@ async def get_partner_provider_adapter(
         credential = await get_active_provider_credential(db, partner_id, provider)
         if credential is None and provider == "asale" and settings.asale_api_key:
             return get_provider_adapter(provider, api_key=settings.asale_api_key)
-        if credential is None and provider == "argolink" and settings.argolink_api_key:
+        if (
+            credential is None
+            and provider == "argolink"
+            and settings.argolink_shared_fallback_enabled
+            and settings.argolink_api_key
+        ):
             partner = await db.get(Partner, partner_id)
             if partner is not None and not partner.requires_dedicated_argolink_credential:
                 return get_provider_adapter(provider, api_key=settings.argolink_api_key)

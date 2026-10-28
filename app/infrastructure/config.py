@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     admin_telegram_id: str | None = None
     telegram_bot_token: str | None = None
     telegram_bot_username: str | None = None
+    registration_invite_required: bool = True
     terms_url: str | None = None
     privacy_policy_url: str | None = None
     legal_document_version: str = "2026-09-19"
@@ -32,6 +33,7 @@ class Settings(BaseSettings):
     seedance_25_edit_markup_rub_per_second: Decimal | None = Field(default=None, ge=0, allow_inf_nan=False)
     argolink_base_url: str = "https://argolink.io"
     argolink_api_key: str | None = None
+    argolink_shared_fallback_enabled: bool = True
     argolink_registration_key_pool_json: SecretStr | None = None
     provider_notification_webhook_secret: SecretStr | None = None
     infai_system_token: SecretStr | None = None

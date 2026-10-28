@@ -15,6 +15,37 @@ depends_on = None
 
 
 def upgrade() -> None:
+    op.create_table(
+        "registration_invites",
+        sa.Column("id", sa.String(36), primary_key=True),
+        sa.Column("token_hash", sa.String(64), nullable=False),
+        sa.Column("status", sa.String(20), nullable=False),
+        sa.Column("bound_telegram_id", sa.String(64), nullable=True),
+        sa.Column("used_application_id", sa.String(36), nullable=True),
+        sa.Column("created_by", sa.String(80), nullable=False),
+        sa.Column("revoked_by", sa.String(80), nullable=True),
+        sa.Column("used_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.CheckConstraint(
+            "status IN ('active', 'used', 'revoked')",
+            name="ck_registration_invites_registration_invite_status",
+        ),
+        sa.ForeignKeyConstraint(["used_application_id"], ["partner_applications.id"]),
+        sa.UniqueConstraint("token_hash", name="uq_registration_invites_token_hash"),
+        sa.UniqueConstraint("used_application_id", name="uq_registration_invite_used_application"),
+    )
+    op.create_index("ix_registration_invites_status", "registration_invites", ["status"])
+    op.create_index(
+        "ix_registration_invites_bound_telegram_id",
+        "registration_invites",
+        ["bound_telegram_id"],
+    )
+    op.create_index(
+        "ix_registration_invites_used_application_id",
+        "registration_invites",
+        ["used_application_id"],
+    )
     op.add_column(
         "provider_credentials",
         sa.Column("registration_telegram_id", sa.String(64), nullable=True),
@@ -97,6 +128,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_table("provider_key_pool_items")
+    op.drop_table("registration_invites")
     op.drop_column("partners", "requires_dedicated_argolink_credential")
     op.drop_index(
         "ix_provider_credentials_registration_telegram_id",

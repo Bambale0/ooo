@@ -25,6 +25,32 @@ def test_per_partner_credentials_do_not_require_global_provider_key(monkeypatch)
     assert validate_production_config() == []
 
 
+def test_dedicated_only_bot_requires_invites_but_not_global_argolink_key(monkeypatch):
+    settings = Settings(
+        app_env="production",
+        database_url="postgresql+asyncpg://localhost/test",
+        admin_api_token="a" * 40,
+        provider_credentials_master_key="b" * 40,
+        public_api_base_url="https://api.example.com",
+        telegram_bot_token="telegram-token",
+        telegram_bot_username="neironych_bot",
+        admin_telegram_id="999",
+        terms_url="https://example.com/terms",
+        privacy_policy_url="https://example.com/privacy",
+        registration_invite_required=True,
+        argolink_shared_fallback_enabled=False,
+        argolink_api_key=None,
+        _env_file=None,
+    )
+    monkeypatch.setattr("app.infrastructure.production_check.get_settings", lambda: settings)
+    assert validate_production_config() == []
+
+    settings.registration_invite_required = False
+    assert "REGISTRATION_INVITE_REQUIRED must be true for production Telegram registration" in (
+        validate_production_config()
+    )
+
+
 async def test_production_readiness_requires_redis(client, monkeypatch):
     from app.infrastructure import state
     from app.infrastructure.config import get_settings

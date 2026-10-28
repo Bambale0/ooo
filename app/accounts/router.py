@@ -99,15 +99,24 @@ async def approve_application(application_id: str, db: DbSession) -> Partner:
         application_id,
         db,
         require_provider_credential=True,
-        require_dedicated_argolink_credential=False,
+        require_dedicated_argolink_credential=True,
         reason="application_approved",
     )
 
 
 async def auto_activate_application(application_id: str, db: DbSession) -> Partner:
     """Activate a self-service application without an administrator gate."""
+    from app.accounts.registration_invites import consume_registration_invite
     from app.providers.key_pool import provision_application_key
 
+    application = await db.get(PartnerApplication, application_id)
+    if application is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="application_not_found")
+    await consume_registration_invite(
+        db,
+        telegram_id=application.telegram_id,
+        application_id=application.id,
+    )
     await provision_application_key(db, application_id)
     return await _activate_application(
         application_id,
