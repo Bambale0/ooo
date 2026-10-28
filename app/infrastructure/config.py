@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     seedance_25_edit_markup_rub_per_second: Decimal | None = Field(default=None, ge=0, allow_inf_nan=False)
     argolink_base_url: str = "https://argolink.io"
     argolink_api_key: str | None = None
+    argolink_registration_key_pool_json: SecretStr | None = None
     provider_notification_webhook_secret: SecretStr | None = None
     infai_system_token: SecretStr | None = None
     infai_user_id: int | None = Field(default=None, gt=0)

@@ -46,6 +46,11 @@ def configure_logging() -> None:
     secrets = [
         settings.admin_api_token,
         settings.argolink_api_key,
+        (
+            settings.argolink_registration_key_pool_json.get_secret_value()
+            if settings.argolink_registration_key_pool_json
+            else None
+        ),
         settings.infai_system_token.get_secret_value() if settings.infai_system_token else None,
         (
             settings.provider_notification_webhook_secret.get_secret_value()

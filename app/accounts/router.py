@@ -99,16 +99,21 @@ async def approve_application(application_id: str, db: DbSession) -> Partner:
         application_id,
         db,
         require_provider_credential=True,
+        require_dedicated_argolink_credential=False,
         reason="application_approved",
     )
 
 
 async def auto_activate_application(application_id: str, db: DbSession) -> Partner:
     """Activate a self-service application without an administrator gate."""
+    from app.providers.key_pool import provision_application_key
+
+    await provision_application_key(db, application_id)
     return await _activate_application(
         application_id,
         db,
-        require_provider_credential=False,
+        require_provider_credential=True,
+        require_dedicated_argolink_credential=True,
         reason="application_auto_approved",
     )
 
@@ -118,6 +123,7 @@ async def _activate_application(
     db: DbSession,
     *,
     require_provider_credential: bool,
+    require_dedicated_argolink_credential: bool,
     reason: str,
 ) -> Partner:
     application = await db.get(PartnerApplication, application_id, with_for_update=True)
@@ -148,6 +154,7 @@ async def _activate_application(
             telegram_id=application.telegram_id,
             company_name=application.company_name,
             project_name=application.project_name,
+            requires_dedicated_argolink_credential=require_dedicated_argolink_credential,
         )
         db.add(partner)
         await db.flush()
@@ -159,6 +166,8 @@ async def _activate_application(
                 reason=reason,
             )
         )
+    elif require_dedicated_argolink_credential:
+        partner.requires_dedicated_argolink_credential = True
     from app.referrals.service import claim_partner_attribution
 
     await claim_partner_attribution(db, partner)
@@ -179,6 +188,10 @@ async def _activate_application(
         )
         .values(partner_id=partner.id)
     )
+    if require_dedicated_argolink_credential:
+        from app.providers.key_pool import bind_claimed_key_to_partner
+
+        await bind_claimed_key_to_partner(db, application.id, partner.id)
     await db.flush()
     await db.refresh(partner)
     return partner

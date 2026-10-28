@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 from aiogram import Bot
+from pydantic import SecretStr
 from sqlalchemy import func, select
 
 from app.accounts.models import ApiKey, ConsentAcceptance, Partner, PartnerApplication
@@ -25,6 +26,16 @@ async def cabinet(db_session, monkeypatch):
 
     monkeypatch.setattr("app.telegram.app.SessionLocal", session)
     monkeypatch.setattr(get_settings(), "admin_telegram_id", "999")
+    monkeypatch.setattr(
+        get_settings(),
+        "argolink_registration_key_pool_json",
+        SecretStr('["sk-registration-fixture-key-000000000001"]'),
+    )
+
+    async def valid_registration_key(self, api_key):
+        return True
+
+    monkeypatch.setattr("app.providers.argolink.ArgoLinkAdapter.validate_key", valid_registration_key)
     bot = Bot(token="123456:TEST_TOKEN")
     bot.session = AsyncMock()
     counter = 0

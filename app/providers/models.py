@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import JSON, CheckConstraint, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.database import Base
@@ -25,6 +25,26 @@ class ProviderCredential(Base):
         index=True,
     )
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    created_at: Mapped[object] = utc_created_at()
+
+
+class ProviderKeyPoolItem(Base):
+    __tablename__ = "provider_key_pool_items"
+    __table_args__ = (
+        CheckConstraint("status IN ('available', 'assigned')", name="provider_key_pool_status"),
+        UniqueConstraint("assigned_application_id", name="uq_provider_key_pool_assigned_application"),
+    )
+
+    id: Mapped[str] = uuid_pk()
+    provider: Mapped[str] = mapped_column(String(80), nullable=False, default="argolink", index=True)
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    encrypted_api_key: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="available", index=True)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    added_by: Mapped[str] = mapped_column(String(80), nullable=False)
+    assigned_application_id: Mapped[str | None] = mapped_column(ForeignKey("partner_applications.id"), index=True)
+    assigned_partner_id: Mapped[str | None] = mapped_column(ForeignKey("partners.id"), index=True)
+    assigned_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[object] = utc_created_at()
 
 

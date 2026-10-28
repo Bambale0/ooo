@@ -2,6 +2,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.accounts.models import Partner
 from app.infrastructure.config import get_settings
 from app.infrastructure.security import decrypt_secret
 from app.providers.base import ProviderAdapter
@@ -46,11 +47,15 @@ async def has_provider_runtime_credential(
     for_update: bool = True,
 ) -> bool:
     settings = get_settings()
-    if (provider == "asale" and settings.asale_api_key) or (
-        provider == "argolink" and settings.argolink_api_key
-    ):
+    credential = await get_active_provider_credential(db, partner_id, provider, for_update=for_update)
+    if credential is not None:
         return True
-    return await get_active_provider_credential(db, partner_id, provider, for_update=for_update) is not None
+    if provider == "asale" and settings.asale_api_key:
+        return True
+    if provider == "argolink" and settings.argolink_api_key:
+        partner = await db.get(Partner, partner_id)
+        return bool(partner and not partner.requires_dedicated_argolink_credential)
+    return False
 
 
 async def get_partner_provider_adapter(
@@ -66,7 +71,9 @@ async def get_partner_provider_adapter(
         if credential is None and provider == "asale" and settings.asale_api_key:
             return get_provider_adapter(provider, api_key=settings.asale_api_key)
         if credential is None and provider == "argolink" and settings.argolink_api_key:
-            return get_provider_adapter(provider, api_key=settings.argolink_api_key)
+            partner = await db.get(Partner, partner_id)
+            if partner is not None and not partner.requires_dedicated_argolink_credential:
+                return get_provider_adapter(provider, api_key=settings.argolink_api_key)
     else:
         # Existing jobs belong to the original upstream account, even after key rotation.
         scope = (

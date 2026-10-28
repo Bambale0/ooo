@@ -45,6 +45,12 @@ async def confirm_action(event, db, telegram_id: str, action_id: str) -> None:
         from app.catalog.sync import import_reviewed_catalog
 
         await import_reviewed_catalog(db)
+    elif kind == "admin_argolink_pool_add":
+        from app.telegram.argolink_key_pool import execute_add_action
+
+        added = await execute_add_action(db, action, telegram_id)
+        result = f"Пул пополнен. Добавлено ключей: {added}. Значения ключей не отображаются."
+        markup = keyboard(("Открыть пул", "admin_argolink_pool"), back="admin_menu")
     elif kind == "admin_form":
         from app.telegram.admin_forms import execute
 

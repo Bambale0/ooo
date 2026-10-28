@@ -81,7 +81,25 @@ async def registration_documents(event, dialog) -> None:
 
 
 async def activate_application_and_issue_key(db, application: PartnerApplication):
-    partner = await auto_activate_application(application.id, db)
+    try:
+        partner = await auto_activate_application(application.id, db)
+    except HTTPException as exc:
+        if str(exc.detail) not in {
+            "provider_key_pool_empty",
+            "provider_key_pool_unavailable",
+            "provider_key_pool_configuration_invalid",
+            "provider_key_pool_duplicate",
+            "provider_credentials_encryption_not_configured",
+            "provider_key_invalid",
+        }:
+            raise
+        await notify(
+            db,
+            get_settings().admin_telegram_id,
+            f"Новая заявка {application.id} ожидает отдельный ключ ArgoLink: пул пуст или недоступен.",
+            f"argolink-key-pool-depleted:{application.id}",
+        )
+        return None
     api_key = await create_partner_api_key(
         partner.id,
         ApiKeyCreate(name="Автоматический ключ"),
@@ -129,7 +147,17 @@ async def home(event, db, dialog) -> None:
         if not pending:
             await registration_documents(event, dialog)
             return
-        _, api_key = await activate_application_and_issue_key(db, pending)
+        result = await activate_application_and_issue_key(db, pending)
+        if result is None:
+            await db.commit()
+            await show(
+                event,
+                "Заявка сохранена и ожидает отдельный ключ ArgoLink. Администратор уже уведомлён. "
+                "Откройте /start после пополнения пула — повторная заявка не нужна.",
+                keyboard(back=None),
+            )
+            return
+        _, api_key = result
         await db.commit()
         await show(
             event,
@@ -659,9 +687,18 @@ async def admin_callback(event, db, dialog, data: str) -> None:
                 ("InfAI: модели и цены", "admin_infai"),
                 ("Поддержка", "admin_support"),
                 ("Партнёры", "admin_partners:0"),
+                ("Ключи ArgoLink для регистраций", "admin_argolink_pool"),
                 ("Состояние", "admin_health"),
             ),
         )
+    elif data == "admin_argolink_pool":
+        from app.telegram.argolink_key_pool import show_pool
+
+        await show_pool(event, db, dialog)
+    elif data == "admin_argolink_pool_add":
+        from app.telegram.argolink_key_pool import prompt_add
+
+        await prompt_add(event, dialog)
     elif data == "admin_infai":
         from app.telegram.infai import overview
 
@@ -870,6 +907,11 @@ async def handle_message(event, db, dialog) -> None:
     if state.startswith("admin_") and not is_admin(user):
         reset(dialog)
         raise HTTPException(403, "admin_required")
+    if state == "admin_argolink_pool_add":
+        from app.telegram.argolink_key_pool import accept_keys
+
+        await accept_keys(event, db, dialog, value)
+        return
     if state == "development_intake":
         from app.telegram.development import handle_message as development_message
 
@@ -911,8 +953,18 @@ async def handle_message(event, db, dialog) -> None:
             ),
             db,
         )
-        _, api_key = await activate_application_and_issue_key(db, app)
+        result = await activate_application_and_issue_key(db, app)
         reset(dialog)
+        if result is None:
+            await db.commit()
+            await show(
+                event,
+                "Заявка сохранена и ожидает отдельный ключ ArgoLink. Администратор уже уведомлён. "
+                "Откройте /start после пополнения пула — повторная заявка не нужна.",
+                keyboard(back=None),
+            )
+            return
+        _, api_key = result
         await db.commit()
         await show(
             event,

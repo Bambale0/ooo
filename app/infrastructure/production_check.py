@@ -52,7 +52,7 @@ def validate_production_config() -> list[str]:
         if not settings.admin_telegram_id or not settings.admin_telegram_id.isdigit():
             errors.append("ADMIN_TELEGRAM_ID must be the verified administrator's numeric ID")
         if not settings.argolink_api_key:
-            errors.append("ARGOLINK_API_KEY is required for automatic partner activation")
+            errors.append("ARGOLINK_API_KEY is required for legacy partners without a dedicated provider credential")
         username = (settings.telegram_bot_username or "").lstrip("@")
         if not username or not username.replace("_", "").isalnum():
             errors.append("TELEGRAM_BOT_USERNAME is required for referral links")

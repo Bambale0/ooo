@@ -38,6 +38,9 @@ class Partner(Base):
     )
     cost_coverage_rub: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=Decimal("0.00"))
     is_admin: Mapped[bool] = mapped_column(default=False, nullable=False)
+    requires_dedicated_argolink_credential: Mapped[bool] = mapped_column(
+        default=False, nullable=False, server_default="false"
+    )
     created_at: Mapped[object] = utc_created_at()
 
     api_keys: Mapped[list["ApiKey"]] = relationship(back_populates="partner")
