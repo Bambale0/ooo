@@ -20,7 +20,9 @@ def parse_key_list(value: str) -> list[str]:
         raw = json.loads(value)
     except (TypeError, ValueError) as exc:
         raise HTTPException(503, "provider_key_pool_configuration_invalid") from exc
-    if not isinstance(raw, list) or not raw:
+    if not isinstance(raw, list):
+        raise HTTPException(503, "provider_key_pool_configuration_invalid")
+    if not raw:
         return []
     keys: list[str] = []
     for item in raw:

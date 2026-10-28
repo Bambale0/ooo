@@ -12,7 +12,7 @@ from app.accounts.router import auto_activate_application
 from app.infrastructure.config import get_settings
 from app.infrastructure.database import Base
 from app.infrastructure.security import decrypt_secret
-from app.providers.key_pool import add_pool_keys, provision_application_key
+from app.providers.key_pool import add_pool_keys, parse_key_list, provision_application_key
 from app.providers.models import ProviderCredential, ProviderKeyPoolItem
 from app.providers.service import has_provider_runtime_credential
 from app.referrals import models as referral_models  # noqa: F401
@@ -86,6 +86,12 @@ async def test_duplicate_batch_is_rejected_without_partial_rows(db_session, monk
         )
     assert error.value.detail == "provider_key_pool_duplicate"
     assert await db_session.scalar(select(func.count()).select_from(ProviderKeyPoolItem)) == 0
+
+
+def test_bootstrap_secret_requires_a_json_array():
+    with pytest.raises(HTTPException) as error:
+        parse_key_list('{"key":"not-an-array"}')
+    assert error.value.detail == "provider_key_pool_configuration_invalid"
 
 
 async def test_dedicated_partner_never_falls_back_to_shared_key(db_session, monkeypatch):
