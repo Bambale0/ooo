@@ -219,9 +219,23 @@
             "label": "1080p",
             "price": 0.483
           }
-        ]
+        ],
+        "video_input_tiers": {
+          "480p": 0.0523,
+          "720p": 0.117,
+          "1080p": 0.289
+        },
+        "extend_tiers": {
+          "480p": 0.0615,
+          "720p": 0.1379,
+          "1080p": 0.3398
+        },
+        "draft_tiers": {
+          "preview_480p": 0.1028,
+          "full_1080p": 0.5682
+        }
       },
-      "checked_at": "2026-10-09",
+      "checked_at": "2026-10-28",
       "source": "https://argolink.io/en/models/seedance-2.5"
     },
     "seedance-2.5-self-developed-nsfw": {

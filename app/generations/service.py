@@ -289,7 +289,39 @@ async def dispatch_generation_to_provider(
 
     if not await admit(db, generation.id, provider=provider):
         return None
-    if provider == "infai":
+    draft_credential_id = (generation.request_payload or {}).get("draft_source_credential_id")
+    draft_runtime_credential = (generation.request_payload or {}).get("draft_source_runtime_credential") is True
+    if provider == PRIMARY_PROVIDER and draft_runtime_credential:
+        api_key = get_settings().argolink_api_key
+        if not api_key:
+            return await cancel_before_submit(db, generation, provider=provider)
+        from app.providers.registry import get_provider_adapter
+
+        credential = None
+        adapter = get_provider_adapter(provider, api_key=api_key)
+    elif provider == PRIMARY_PROVIDER and isinstance(draft_credential_id, str):
+        credential = (
+            await db.execute(
+                select(ProviderCredential)
+                .where(
+                    ProviderCredential.id == draft_credential_id,
+                    ProviderCredential.partner_id == generation.partner_id,
+                    ProviderCredential.provider == PRIMARY_PROVIDER,
+                    ProviderCredential.is_active.is_(True),
+                    ProviderCredential.encrypted_api_key.is_not(None),
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if credential is None:
+            return await cancel_before_submit(db, generation, provider=provider)
+        adapter = await get_partner_provider_adapter(
+            db,
+            generation.partner_id,
+            provider,
+            credential_id=credential.id,
+        )
+    elif provider == "infai":
         # Pin the group-specific credential chosen with the procurement quote.
         # Rotation/revocation must not move a queued request to another group.
         pinned_id = (generation.request_payload or {}).get("fallback_credential_id")

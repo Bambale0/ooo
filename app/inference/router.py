@@ -47,6 +47,29 @@ def public_error(code, status=503, *, generation_id=None, headers=None):
 def video_failure_error(public_code: str, raw_error: str | None) -> dict[str, object]:
     """Return a stable, provider-agnostic public error for video polling."""
     normalized = (raw_error or "").strip().lower()
+    if public_code == "provider_rejected_request":
+        try:
+            diagnostics = json.loads(raw_error or "")
+        except (TypeError, ValueError):
+            diagnostics = None
+        upstream_status = diagnostics.get("upstream_status") if isinstance(diagnostics, dict) else None
+        if upstream_status == 400:
+            return {
+                "type": "provider_rejected_request",
+                "code": "invalid_request",
+                "message": "The video request was rejected as invalid. Check its parameters and input media.",
+                "retryable": False,
+            }
+        if upstream_status == 402:
+            return {
+                "type": "provider_rejected_request",
+                "code": "provider_temporarily_unavailable",
+                "message": (
+                    "The video service is temporarily unavailable. "
+                    "Submit a new request later with a new idempotency key."
+                ),
+                "retryable": True,
+            }
     if public_code == "provider_generation_failed":
         if "at capacity" in normalized:
             return {

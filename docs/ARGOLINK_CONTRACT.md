@@ -81,12 +81,24 @@ database model status: `production` publishes discovery, pricing and the enabled
 model documentation; `restricted` retains the existing per-partner grant behavior.
 Contract coverage by itself does not confirm a successful live generation.
 
-Rechecked Seedance against the provider documentation on 2026-09-28: frame modes
+Rechecked Seedance against the provider documentation on 2026-10-28: frame modes
 accept explicit `adaptive`; the 2.0 family also accepts fixed ratios, while 2.5
 frames accept only `adaptive`. Text and ordinary reference requests still reject
 `adaptive`. Seedance 2.5 edit accepts omitted duration or integer `-1`, and omitted
-aspect ratio or `adaptive`; fixed output dimensions are rejected. Its conservative
-60-second reservation remains unchanged until actual usage is reported.
+aspect ratio or `adaptive`; fixed output dimensions are rejected. The first video
+is the edit source and up to 30 images may steer it; audio and a second source
+video remain rejected. `extend` requires a source video, 4–30 output seconds and
+no aspect ratio, while optional image/audio references are preserved. Draft preview
+forces 480p; its completed Neironych request ID can be submitted within seven days
+as the only `draft_task.id`, which is resolved internally to the pinned ArgoLink
+task and credential before a 1080p render. Provider task IDs never cross the public
+API. Conservative reservations remain until provider-confirmed actual usage.
+
+Special procurement rates are snapshot at admission: ordinary video input uses
+0.0523/0.117/0.289 USD per billed second, extend uses the documented official
+0.0615/0.1379/0.3398 rates, and draft preview/full use 0.1028 at 480p and 0.5682
+at 1080p respectively. Existing partner retail rates are unchanged; admission
+fails closed if the selected retail rate no longer covers the applicable cost.
 
 For a supplied image used as a reference, send `reference_images` rather than
 `start_image`. A verified 480p request is:

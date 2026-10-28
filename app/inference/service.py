@@ -3,6 +3,7 @@
 import hashlib
 import json
 import logging
+from datetime import UTC, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
 from fastapi import HTTPException
@@ -31,7 +32,7 @@ from app.inference.accounting import MILLION, TOKEN_MODES, charges
 from app.infrastructure.config import get_settings
 from app.media.video_inputs import eligible_video_input, prepare_video_inputs, snapshot_is_fresh
 from app.providers.base import ProviderGenerationRequest
-from app.providers.models import ProviderAttempt
+from app.providers.models import ProviderAttempt, ProviderCredential
 from app.providers.service import get_active_provider_credential, has_provider_runtime_credential
 
 logger = logging.getLogger(__name__)
@@ -140,7 +141,29 @@ async def reserve(
         raise InferenceAdmissionError(404, "model_not_available", failure_stage="model_access")
     if model.status == RESTRICTED_STATUS and not await has_model_grant(db, model.id, partner.id):
         raise HTTPException(404, "model_not_available")
-    credential = await get_active_provider_credential(db, partner.id, "argolink")
+    draft_context = (
+        await _resolve_draft_completion(db, partner.id, body)
+        if protocol == "videos/generations" and "draft_task" in body
+        else None
+    )
+    if draft_context is not None and isinstance(draft_context["credential_id"], str):
+        credential = await db.scalar(
+            select(ProviderCredential).where(
+                ProviderCredential.id == draft_context["credential_id"],
+                ProviderCredential.partner_id == partner.id,
+                ProviderCredential.provider == "argolink",
+                ProviderCredential.is_active.is_(True),
+                ProviderCredential.encrypted_api_key.is_not(None),
+            )
+        )
+        if credential is None:
+            raise InferenceAdmissionError(422, "invalid_draft_source", failure_stage="request_context")
+    elif draft_context is not None:
+        credential = None
+        if not get_settings().argolink_api_key:
+            raise InferenceAdmissionError(422, "invalid_draft_source", failure_stage="request_context")
+    else:
+        credential = await get_active_provider_credential(db, partner.id, "argolink")
     if credential is None and not await has_provider_runtime_credential(db, partner.id, "argolink"):
         raise InferenceAdmissionError(503, "provider_temporarily_unavailable", failure_stage="provider_credential")
     prices = await effective_partner_prices(db, partner_id=partner.id, model_id=model.id)
@@ -167,7 +190,13 @@ async def reserve(
             prices,
             fx=fx_data["rate"],
             trial=trial_telegram_id is not None,
-            video_seconds=prepared["billable_seconds"] if prepared else None,
+            video_seconds=(
+                prepared["billable_seconds"]
+                if prepared
+                else draft_context["duration_seconds"]
+                if draft_context is not None
+                else None
+            ),
         )
     except HTTPException as exc:
         raise _admission_error(exc, "pricing") from exc
@@ -187,7 +216,13 @@ async def reserve(
     fx = fx_data["rate"]
     provider_cost_reserve_usdt = cost
     if protocol == "videos/generations":
-        effective_body = prepared["body"] if prepared else body
+        effective_body = (
+            prepared["body"]
+            if prepared
+            else draft_context["effective_body"]
+            if draft_context is not None
+            else body
+        )
         video_body = normalized_video(effective_body)
 
         def media_url(value) -> str | None:
@@ -261,6 +296,13 @@ async def reserve(
         if prepared:
             snapshot["effective_native_body"] = prepared["body"]
             snapshot["video_inputs"] = {key: value for key, value in prepared.items() if key != "body"}
+        if draft_context is not None:
+            snapshot["effective_native_body"] = draft_context["effective_body"]
+            snapshot["draft_source_generation_id"] = draft_context["generation_id"]
+            if isinstance(draft_context["credential_id"], str):
+                snapshot["draft_source_credential_id"] = draft_context["credential_id"]
+            else:
+                snapshot["draft_source_runtime_credential"] = True
         if video_pricing_mode(body) == "edit":
             snapshot["pricing_policy"] = {
                 "mode": "edit",
@@ -328,6 +370,50 @@ async def reserve(
         },
     )
     return generation, attempt
+
+
+async def _resolve_draft_completion(db, partner_id: str, body: dict) -> dict[str, object]:
+    """Translate our public draft ID to the private task ID without exposing it."""
+    source_id = body["draft_task"]["id"]
+    source = await db.get(Generation, source_id)
+    if source is None or source.partner_id != partner_id or source.model_slug != "seedance-2.5":
+        raise InferenceAdmissionError(422, "invalid_draft_source", failure_stage="request_context")
+    source_body = (source.request_payload or {}).get("native_body")
+    created_at = source.created_at
+    if getattr(created_at, "tzinfo", None) is None:
+        created_at = created_at.replace(tzinfo=UTC)
+    from app.infrastructure.retry import utc_now
+
+    if (
+        source.status != "completed"
+        or not isinstance(source_body, dict)
+        or source_body.get("draft") is not True
+        or utc_now() - created_at > timedelta(days=7)
+    ):
+        raise InferenceAdmissionError(422, "invalid_draft_source", failure_stage="request_context")
+    attempt = await db.scalar(
+        select(ProviderAttempt)
+        .where(
+            ProviderAttempt.generation_id == source.id,
+            ProviderAttempt.provider == "argolink",
+            ProviderAttempt.status == "completed",
+            ProviderAttempt.provider_task_id.is_not(None),
+        )
+        .order_by(ProviderAttempt.created_at.desc(), ProviderAttempt.id.desc())
+        .limit(1)
+    )
+    duration = source_body.get("duration", 5)
+    if attempt is None or isinstance(duration, bool) or not isinstance(duration, int) or not 4 <= duration <= 30:
+        raise InferenceAdmissionError(422, "invalid_draft_source", failure_stage="request_context")
+    return {
+        "generation_id": source.id,
+        "credential_id": attempt.credential_id,
+        "duration_seconds": duration,
+        "effective_body": {
+            "model": "seedance-2.5",
+            "draft_task": {"id": attempt.provider_task_id},
+        },
+    }
 
 
 async def _existing_generation(db, partner_id, idempotency_key, request_hash, client_request_id):
@@ -423,7 +509,13 @@ def quote(protocol, body, prices, *, fx=None, trial=False, video_seconds=None):
         )
         return rates, {tier: body.get("n", 1)}, tier
     video = normalized_video(body)
-    resolution = video.get("resolution", "768p" if body["model"] == "minimax-h3" else "720p")
+    resolution = (
+        "1080p"
+        if "draft_task" in video
+        else "480p"
+        if video.get("draft") is True
+        else video.get("resolution", "768p" if body["model"] == "minimax-h3" else "720p")
+    )
     video_cost = video_input_cost(body["model"], video, resolution)
     add("seconds", video_pricing_mode(video), resolution, "second", cost_override=video_cost)
     maximum = video_reserve_seconds(body)

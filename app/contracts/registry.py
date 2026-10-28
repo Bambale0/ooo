@@ -6,6 +6,7 @@ ArgoLink remains authoritative for the underlying model's semantic validation.
 
 import copy
 import json
+import re
 from decimal import Decimal
 from importlib.resources import files
 from typing import Any
@@ -238,9 +239,31 @@ def validate_video(original: dict[str, Any]) -> None:
     wan = model in {"wan-3", "wan-3-prime"}
     prime = model == "wan-3-prime"
     url_video = seedance or minimax or wan
+    draft_task = body.get("draft_task")
+    if "draft_task" in body:
+        if (
+            model != "seedance-2.5"
+            or set(body) != {"model", "draft_task"}
+            or not isinstance(draft_task, dict)
+            or set(draft_task) != {"id"}
+            or not isinstance(draft_task.get("id"), str)
+            or not re.fullmatch(r"[A-Za-z0-9_-]{1,255}", draft_task["id"])
+        ):
+            raise ValueError("invalid_draft_request")
+        return
+    task_type = body.get("omni_reference_task_type", "auto")
+    draft = body.get("draft")
+    if "draft" in body and (
+        model != "seedance-2.5"
+        or draft is not True
+        or task_type not in {"auto", "reference"}
+        or body.get("resolution", "480p") != "480p"
+    ):
+        raise ValueError("invalid_draft_request")
     maximum = 30 if model in SEEDANCE_25_FAMILY or wan else 15
     minimum = 2 if model == "wan-3" else 4 if url_video else 1
-    edit = body.get("omni_reference_task_type") == "edit"
+    edit = task_type == "edit"
+    extend = task_type == "extend"
     if edit and model == "wan-3":
         if any(key in body for key in ("duration", "aspect_ratio", "size")):
             raise ValueError("invalid_edit_request")
@@ -251,6 +274,12 @@ def validate_video(original: dict[str, Any]) -> None:
         or body.get("aspect_ratio", "adaptive") != "adaptive"
     ):
         raise ValueError("invalid_edit_request")
+    if extend and (
+        model != "seedance-2.5"
+        or "aspect_ratio" in body
+        or "size" in original
+    ):
+        raise ValueError("invalid_extend_request")
     if not edit:
         integer(body.get("duration", 5), "duration", minimum, maximum)
     integer(body.get("n", 1), "n", 1, 1)
@@ -279,14 +308,16 @@ def validate_video(original: dict[str, Any]) -> None:
         refs.extend(items)
     if sum(counts) > limits[3]:
         raise ValueError("reference_limit_exceeded")
-    if edit and model == "seedance-2.5" and (counts != [0, 1, 0] or "size" in original):
+    if edit and model == "seedance-2.5" and (counts[1] != 1 or counts[2] or "size" in original):
         raise ValueError("edit_requires_single_video")
+    if extend and not counts[1]:
+        raise ValueError("extend_requires_video")
     audio_needs_visual = (seedance and model not in SEEDANCE_25_FAMILY) or minimax or prime
     if audio_needs_visual and counts[2] and not (counts[0] or counts[1]):
         raise ValueError("audio_requires_visual_reference")
     start = body.get("start_image", body.get("image"))
     end = body.get("end_image")
-    if (start and refs) or (end and not start) or (edit and (start or not counts[1])):
+    if (start and refs) or (end and not start) or ((edit or extend) and (start or not counts[1])):
         raise ValueError("conflicting_media_inputs")
     if prime and (start or end):
         raise ValueError("frames_not_supported")
@@ -307,7 +338,7 @@ def validate_video(original: dict[str, Any]) -> None:
     if "aspect_ratio" in body and body["aspect_ratio"] not in ratios:
         raise ValueError("unsupported_aspect_ratio")
     prompt = body.get("prompt", "")
-    if (not prompt.strip() and not (refs or start)) or ((edit or wan or minimax) and not prompt.strip()):
+    if (not prompt.strip() and not (refs or start)) or ((edit or extend or wan or minimax) and not prompt.strip()):
         raise ValueError("prompt_required")
     if (seedance and len(prompt.encode()) > 40000) or (wan and len(prompt) > 20000) or (minimax and len(prompt) > 7000):
         raise ValueError("prompt_too_long")
@@ -332,7 +363,7 @@ def validate_video(original: dict[str, Any]) -> None:
                 or (body.get("generate_audio") is False and model != "seedance-2.5")
             ):
                 raise ValueError("unsupported_generation_control")
-        if body.get("omni_reference_task_type", "auto") not in {"auto", "reference", "edit"}:
+        if task_type not in {"auto", "reference", "edit", "extend"}:
             raise ValueError("unsupported_task_type")
         for ref in [*refs, *([start] if start else []), *([end] if end else [])]:
             if not isinstance(ref, dict) or not isinstance(ref.get("url"), str):
@@ -346,7 +377,11 @@ def video_reserve_seconds(original: dict[str, Any]) -> int:
     body = normalized_video(original)
     model = body["model"]
     refs = body.get("reference_videos", [])
-    output = 30 if body.get("omni_reference_task_type") == "edit" else int(body.get("duration", 5))
+    output = (
+        30
+        if body.get("omni_reference_task_type") == "edit" or "draft_task" in body
+        else int(body.get("duration", 5))
+    )
     # Provider validates actual media lengths. Reserve the documented upper bound,
     # never trust a client-supplied duration for billable input media.
     ref_bound = 30 if model in SEEDANCE_25_FAMILY else 15

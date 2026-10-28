@@ -1,8 +1,8 @@
 """Reviewed provider contract: no live calls or customer media.
 
-The detailed ArgoLink edit guide explicitly forbids extra assets, even though
-its generic field table says 'reference and edit'. Do not turn a doc conflict
-into an unverified acceptance promise or silently rewrite edit as reference.
+The current ArgoLink model card explicitly permits up to 30 image references
+to steer an edit. The first video remains the edited source; audio and frame
+inputs are still rejected and the mode is never silently rewritten.
 """
 
 import copy
@@ -36,7 +36,7 @@ def test_single_video_edit_keeps_controls_and_conservative_accounting(controls):
 
 
 @pytest.mark.parametrize("wire_format", ["native", "url_aliases", "input_references"])
-def test_apix_photo_video_edit_is_not_silently_converted_to_reference(wire_format):
+def test_photo_video_edit_preserves_documented_images_and_wire_format(wire_format):
     body = edit_request(reference_images=[{"url": "https://example.org/appearance.jpg"}])
     if wire_format == "url_aliases":
         for field, alias in (("reference_images", "image_urls"), ("reference_videos", "video_urls")):
@@ -46,8 +46,7 @@ def test_apix_photo_video_edit_is_not_silently_converted_to_reference(wire_forma
         for field, kind in (("reference_images", "image_url"), ("reference_videos", "video_url")):
             body["input_references"].extend({"type": kind, kind: item} for item in body.pop(field))
     original = copy.deepcopy(body)
-    with pytest.raises(ValueError, match="edit_requires_single_video"):
-        validate_request(PROTOCOL, body)
+    assert validate_request(PROTOCOL, body) == original
     assert body == original
 
 

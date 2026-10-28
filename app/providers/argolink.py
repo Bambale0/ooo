@@ -417,11 +417,39 @@ class ArgoLinkAdapter:
                 retryable=True,
                 retry_after_seconds=retry_after_seconds,
             )
+        if response.status_code in {400, 402}:
+            return ProviderAdapterError(
+                "provider_rejected_request",
+                ArgoLinkAdapter._safe_http_error_diagnostics(response),
+                retryable=False,
+            )
         return ProviderAdapterError(
             "provider_rejected_request",
             f"argolink_{response.status_code}",
             retryable=False,
         )
+
+    @staticmethod
+    def _safe_http_error_diagnostics(response: httpx.Response) -> str:
+        """Persist only allowlisted correlation metadata, never provider body text."""
+        event: dict[str, object] = {
+            "kind": "argolink_http_error",
+            "upstream_status": response.status_code,
+        }
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = None
+        error = payload.get("error") if isinstance(payload, dict) else None
+        code = error.get("code") if isinstance(error, dict) else None
+        if isinstance(code, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", code):
+            event["upstream_error_code"] = code
+        for header in ("X-Client-Request-ID", "X-Request-ID"):
+            request_id = response.headers.get(header)
+            if isinstance(request_id, str) and re.fullmatch(r"[A-Za-z0-9._:/-]{1,160}", request_id):
+                event["upstream_request_id"] = request_id
+                break
+        return json.dumps(event, separators=(",", ":"), sort_keys=True)
 
     @staticmethod
     def _normalize_video_status(data: Any) -> str:

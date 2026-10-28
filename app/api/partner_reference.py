@@ -117,6 +117,33 @@ EXAMPLES = {
             "aspect_ratio": "adaptive",
         },
     ),
+    "video-extend": (
+        "videos/generations",
+        {
+            "model": "seedance-2.5",
+            "prompt": "Continue @Video 1 forward as the camera rises above the forest",
+            "reference_videos": [{"url": "https://media.example.com/source.mp4"}],
+            "omni_reference_task_type": "extend",
+            "duration": 5,
+            "resolution": "720p",
+        },
+    ),
+    "video-draft": (
+        "videos/generations",
+        {
+            "model": "seedance-2.5",
+            "prompt": "Preview a slow aerial shot over a foggy forest",
+            "duration": 5,
+            "draft": True,
+        },
+    ),
+    "video-draft-full": (
+        "videos/generations",
+        {
+            "model": "seedance-2.5",
+            "draft_task": {"id": "11111111-1111-4111-8111-111111111111"},
+        },
+    ),
 }
 
 # Public contract limits, deliberately independent of procurement/pricing metadata.
@@ -508,8 +535,18 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
                 "omni_reference_task_type",
                 "string · optional, auto",
                 t(
-                    "Seedance 2.5: auto, reference или edit; для edit см. отдельный пример.",
-                    "Seedance 2.5: auto, reference or edit; see the dedicated edit example.",
+                    "Seedance 2.5: auto, reference, edit или extend; для edit/extend см. отдельные примеры.",
+                    "Seedance 2.5: auto, reference, edit or extend; see the dedicated edit/extend examples.",
+                ),
+            ),
+            (
+                "draft / draft_task",
+                "boolean / object · Seedance 2.5",
+                t(
+                    "draft=true создаёт 480p-превью. Для полного 1080p результата отправьте только model и "
+                    'draft_task:{"id":"11111111-1111-4111-8111-111111111111"} в течение 7 дней.',
+                    "draft=true creates a 480p preview. For the full 1080p result send only model and "
+                    'draft_task:{"id":"11111111-1111-4111-8111-111111111111"} within 7 days.',
                 ),
             ),
             (
@@ -591,28 +628,32 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
     body += "<h3>Seedance 2.5 · " + t("первый и последний кадры", "first and last frames") + "</h3>"
     body += example("video-frames")
     body += "<h3>Seedance 2.5 · edit</h3>" + example("video-edit")
+    body += "<h3>Seedance 2.5 · extend</h3>" + example("video-extend")
+    body += "<h3>Seedance 2.5 · draft</h3>" + example("video-draft") + example("video-draft-full")
     body += p(
-        "Тарификация Seedance 2.5: если в запросе есть reference_videos, применяется тариф edit "
-        "для выбранного разрешения, даже когда omni_reference_task_type=reference и также переданы фото/аудио. "
+        "Тарификация Seedance 2.5: для обычного reference с reference_videos применяется тариф edit "
+        "для выбранного разрешения, даже когда также переданы фото/аудио. "
+        "Extend и draft имеют отдельные ставки и проходят проверку покрытия действующей розничной ценой. "
         "Без reference_videos применяется обычный тариф. "
         "При наличии видео поставщик считает оплачиваемые секунды как длительность результата плюс суммарную "
         "длительность видеореференсов; после завершения списывается только фактический usage. "
         "Наличие видео не меняет режим запроса автоматически.",
-        "Seedance 2.5 billing: when reference_videos are present, the edit retail rate applies at the selected "
-        "resolution, even for reference mode combined with image/audio. Without reference_videos, the normal rate "
+        "Seedance 2.5 billing: an ordinary reference request with reference_videos uses the edit retail rate at the "
+        "selected resolution, even when combined with image/audio. Extend and draft use separate cost rates "
+        "and must be covered by the active retail rate. Without reference_videos, the normal rate "
         "applies. With video input, billable seconds include output plus reference video duration; final billing "
         "uses actual provider usage. Pricing never changes the provider request mode.",
     )
 
     body += p(
         "Для seedance-2.5 edit обязателен prompt и ровно один reference_videos, длиной 4–30 секунд. "
-        "Фото, аудио и второе видео в edit не принимаются. Для смешанных референсов используйте reference "
-        "с явно выбранной длительностью: сервер не переключает режим и не удаляет референсы автоматически. "
+        "До 30 reference_images могут направлять edit; аудио и второе видео не принимаются. "
+        "Для остальных смешанных референсов используйте reference: сервер не переключает режим автоматически. "
         "В edit длина и пропорции следуют исходному ролику: duration=-1 или пропустить, "
         "aspect_ratio=adaptive или пропустить; start_image, end_image и фиксированный size не используются.",
         "seedance-2.5 edit requires prompt and exactly one reference_videos entry, 4–30 seconds long. "
-        "Images, audio and a second video are not accepted in edit. Use reference with an explicit duration "
-        "for mixed assets: the server never silently changes modes or removes references. "
+        "Up to 30 reference_images may steer the edit; audio and a second video are rejected. "
+        "Use reference for other mixed assets: the server never silently changes modes. "
         "Edit output duration and aspect follow that video: duration=-1 or omit, "
         "aspect_ratio=adaptive or omit; do not use start_image, end_image or fixed size.",
     )

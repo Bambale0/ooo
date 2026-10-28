@@ -13,6 +13,7 @@ from app.inference.service import quote
 from app.infrastructure.config import get_settings
 
 VIDEO_COSTS = {"480p": Decimal("0.0523"), "720p": Decimal("0.117"), "1080p": Decimal("0.289")}
+EXTEND_COSTS = {"480p": Decimal("0.0615"), "720p": Decimal("0.1379"), "1080p": Decimal("0.3398")}
 
 
 @pytest.fixture
@@ -65,6 +66,36 @@ def test_edit_single_video_uses_same_video_input_procurement(edit_rule):
     rates, reserved, _ = quote("videos/generations", body, prices(), fx=FX)
     assert Decimal(rates["seconds"]["cost"]) == VIDEO_COSTS["720p"]
     assert reserved == {"seconds": 60}
+
+
+@pytest.mark.parametrize("tier", EXTEND_COSTS)
+def test_extend_uses_documented_procurement_rate_and_reference_seconds(edit_rule, tier):
+    body = request(tier, task_mode="extend", image=False)
+    rates, reserved, resolution = quote("videos/generations", body, prices(), fx=FX)
+
+    assert resolution == tier
+    assert Decimal(rates["seconds"]["cost"]) == EXTEND_COSTS[tier]
+    assert reserved == {"seconds": 41}
+
+
+def test_draft_preview_and_completion_force_documented_tiers_and_costs(edit_rule):
+    preview = {"model": "seedance-2.5", "prompt": "Preview", "duration": 7, "draft": True}
+    completion = {
+        "model": "seedance-2.5",
+        "draft_task": {"id": "b1674e84-47a3-441f-9c77-7c3b7b4b4a69"},
+    }
+
+    preview_rates, preview_units, preview_resolution = quote(
+        "videos/generations", preview, prices(), fx=FX
+    )
+    full_rates, full_units, full_resolution = quote(
+        "videos/generations", completion, prices(), fx=FX, video_seconds=7
+    )
+
+    assert (preview_resolution, preview_units) == ("480p", {"seconds": 7})
+    assert Decimal(preview_rates["seconds"]["cost"]) == Decimal("0.1028")
+    assert (full_resolution, full_units) == ("1080p", {"seconds": 7})
+    assert Decimal(full_rates["seconds"]["cost"]) == Decimal("0.5682")
 
 
 @pytest.mark.parametrize("mode", [None, "auto", "reference"])

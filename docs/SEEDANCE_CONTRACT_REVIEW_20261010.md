@@ -1,5 +1,11 @@
 # Seedance 2.5 contract review (2026-10-10)
 
+> Superseded for edit/extend/draft semantics by the provider contract recheck on
+> 2026-10-28 in `ARGOLINK_CONTRACT.md`. The current model card now explicitly
+> permits up to 30 image references to steer edit; this historical conflict no
+> longer controls admission. The `generate_audio` and safe-validation findings
+> below remain applicable.
+
 ## Confirmed fixes
 
 - ArgoLink documents `generate_audio: false` for a silent result. The gateway
