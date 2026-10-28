@@ -106,17 +106,29 @@ async def approve_application(application_id: str, db: DbSession) -> Partner:
 
 async def auto_activate_application(application_id: str, db: DbSession) -> Partner:
     """Activate a self-service application without an administrator gate."""
-    from app.accounts.registration_invites import consume_registration_invite
     from app.providers.key_pool import provision_application_key
 
-    application = await db.get(PartnerApplication, application_id)
+    application = await db.get(PartnerApplication, application_id, with_for_update=True)
     if application is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="application_not_found")
-    await consume_registration_invite(
-        db,
-        telegram_id=application.telegram_id,
-        application_id=application.id,
+    existing_partner = await db.scalar(
+        select(Partner)
+        .where(Partner.telegram_id == application.telegram_id, Partner.status != "deleted")
+        .with_for_update()
     )
+    if existing_partner is not None:
+        existing_credential = await db.scalar(
+            select(ProviderCredential.id).where(
+                ProviderCredential.partner_id == existing_partner.id,
+                ProviderCredential.provider == "argolink",
+                ProviderCredential.is_active.is_(True),
+                ProviderCredential.encrypted_api_key.is_not(None),
+            )
+        )
+        if existing_credential is None:
+            # Pool keys are only for genuinely new registrations. Existing
+            # legacy partners require an explicit admin credential workflow.
+            raise HTTPException(409, "existing_partner_requires_manual_provider_credential")
     await provision_application_key(db, application_id)
     return await _activate_application(
         application_id,

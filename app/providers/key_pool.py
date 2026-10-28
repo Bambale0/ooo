@@ -1,6 +1,7 @@
 """Durable, encrypted pool of pre-issued ArgoLink keys for self-service onboarding."""
 
 import json
+from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
 from sqlalchemy import func, select, text, update
@@ -212,6 +213,22 @@ async def provision_application_key(db: AsyncSession, application_id: str) -> Pr
         )
         await db.flush()
         return reusable
+    settings = get_settings()
+    # Serialize the global rolling budget in production so rotating Telegram
+    # identities cannot race past the operator-funded onboarding ceiling.
+    await lock_key_hashes(db, [hash_secret("argolink-registration-claim-budget")])
+    cutoff = datetime.now(UTC) - timedelta(seconds=settings.argolink_registration_claim_window_seconds)
+    recent_claims = await db.scalar(
+        select(func.count())
+        .select_from(ProviderKeyPoolItem)
+        .where(
+            ProviderKeyPoolItem.provider == "argolink",
+            ProviderKeyPoolItem.status == "assigned",
+            ProviderKeyPoolItem.assigned_at >= cutoff,
+        )
+    )
+    if int(recent_claims or 0) >= settings.argolink_registration_claim_budget:
+        raise HTTPException(503, "provider_key_registration_budget_exhausted")
     await bootstrap_configured_pool(db)
     claimed = None
     # PostgreSQL skips rows already being assigned by another registration.

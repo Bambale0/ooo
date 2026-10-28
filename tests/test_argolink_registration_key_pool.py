@@ -10,7 +10,6 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.accounts.models import ApiKey, Partner, PartnerApplication, RegistrationInvite
-from app.accounts.registration_invites import bind_registration_invite, create_registration_invite
 from app.accounts.router import auto_activate_application, delete_partner, transfer_telegram
 from app.accounts.schemas import DeletePartnerCreate, TransferTelegramCreate
 from app.infrastructure.config import get_settings
@@ -60,6 +59,72 @@ async def test_two_registrations_receive_two_distinct_upstream_keys(db_session, 
     assert all(item.encrypted_api_key is None and item.status == "assigned" for item in await db_session.scalars(
         select(ProviderKeyPoolItem)
     ))
+
+
+async def test_repeated_new_registration_reuses_one_key_for_same_telegram(db_session, monkeypatch):
+    monkeypatch.setattr("app.providers.argolink.ArgoLinkAdapter.validate_key", _valid)
+    await add_pool_keys(
+        db_session,
+        [
+            "sk-pool-same-user-a-000000000000001",
+            "sk-pool-same-user-b-000000000000002",
+        ],
+        source="test",
+        actor="test",
+    )
+    applications = [
+        PartnerApplication(telegram_id="same-new-user", company_name="C", project_name=f"P{index}")
+        for index in (1, 2)
+    ]
+    db_session.add_all(applications)
+    await db_session.flush()
+
+    first_partner = await auto_activate_application(applications[0].id, db_session)
+    second_partner = await auto_activate_application(applications[1].id, db_session)
+    await db_session.commit()
+
+    assert second_partner.id == first_partner.id
+    credentials = list(await db_session.scalars(select(ProviderCredential)))
+    assert len(credentials) == 1
+    assert credentials[0].partner_id == first_partner.id
+    assert credentials[0].partner_application_id == applications[1].id
+    assert await pool_counts(db_session) == (1, 1)
+
+
+async def test_global_claim_budget_blocks_new_identity_without_consuming_key(db_session, monkeypatch):
+    monkeypatch.setattr("app.providers.argolink.ArgoLinkAdapter.validate_key", _valid)
+    monkeypatch.setattr(get_settings(), "argolink_registration_claim_budget", 1)
+    monkeypatch.setattr(get_settings(), "argolink_registration_claim_window_seconds", 86400)
+    monkeypatch.setattr(get_settings(), "admin_telegram_id", "999")
+    await add_pool_keys(
+        db_session,
+        [
+            "sk-pool-budget-a-00000000000000001",
+            "sk-pool-budget-b-00000000000000002",
+        ],
+        source="test",
+        actor="test",
+    )
+    first = PartnerApplication(telegram_id="budget-first", company_name="C", project_name="P")
+    blocked = PartnerApplication(telegram_id="budget-blocked", company_name="C", project_name="P")
+    db_session.add_all([first, blocked])
+    await db_session.flush()
+
+    await auto_activate_application(first.id, db_session)
+    with pytest.raises(HTTPException) as error:
+        await auto_activate_application(blocked.id, db_session)
+
+    assert error.value.detail == "provider_key_registration_budget_exhausted"
+    assert await activate_application_and_issue_key(db_session, blocked) == "budget"
+    assert blocked.status == "pending"
+    assert await pool_counts(db_session) == (1, 1)
+    assert await db_session.scalar(select(func.count()).select_from(ProviderCredential)) == 1
+    assert await db_session.scalar(select(func.count()).select_from(Partner)) == 1
+    assert await db_session.scalar(
+        select(func.count())
+        .select_from(BotNotification)
+        .where(BotNotification.dedupe_key == f"argolink-key-registration-budget:{blocked.id}")
+    ) == 1
 
 
 async def test_claim_rolls_back_to_available_with_secret_intact(db_session, monkeypatch):
@@ -306,72 +371,90 @@ async def test_empty_pool_keeps_application_pending_and_retry_uses_same_applicat
     ) == 0
 
 
-async def test_single_use_invite_gates_distinct_telegram_ids_before_pool_claim(db_session, monkeypatch):
-    monkeypatch.setattr(get_settings(), "registration_invite_required", True)
+async def test_existing_partner_without_credential_never_consumes_pool_key(db_session, monkeypatch):
     monkeypatch.setattr("app.providers.argolink.ArgoLinkAdapter.validate_key", _valid)
-    invite, token = await create_registration_invite(db_session, actor="telegram:999")
-    await bind_registration_invite(db_session, telegram_id="invite-owner", token=token)
-    with pytest.raises(HTTPException) as rebound:
-        await bind_registration_invite(db_session, telegram_id="attacker", token=token)
-    assert rebound.value.detail == "registration_invite_invalid"
     await add_pool_keys(
         db_session,
-        ["sk-pool-invite-a-000000000000000001", "sk-pool-invite-b-000000000000000002"],
+        ["sk-pool-existing-partner-000000000001"],
         source="test",
         actor="test",
     )
-    allowed = PartnerApplication(telegram_id="invite-owner", company_name="C", project_name="P")
-    blocked = PartnerApplication(telegram_id="attacker", company_name="C", project_name="P")
-    db_session.add_all([allowed, blocked])
+    existing = Partner(telegram_id="existing-legacy", company_name="Existing", project_name="Existing")
+    db_session.add(existing)
+    await db_session.flush()
+    application = PartnerApplication(
+        telegram_id=existing.telegram_id,
+        company_name="Repeated",
+        project_name="Repeated",
+    )
+    db_session.add(application)
     await db_session.flush()
 
-    await auto_activate_application(allowed.id, db_session)
-    with pytest.raises(HTTPException) as denied:
-        await auto_activate_application(blocked.id, db_session)
-    assert denied.value.detail == "registration_invite_required"
-    await db_session.refresh(invite)
-    assert invite.status == "used" and invite.used_application_id == allowed.id
-    assert await pool_counts(db_session) == (1, 1)
+    with pytest.raises(HTTPException) as error:
+        await auto_activate_application(application.id, db_session)
+
+    assert error.value.detail == "existing_partner_requires_manual_provider_credential"
+    assert await pool_counts(db_session) == (1, 0)
+    assert await db_session.scalar(select(func.count()).select_from(ProviderCredential)) == 0
+    assert application.status == "pending"
 
 
-async def test_pending_alert_tracks_current_invite_then_pool_blocker(db_session, monkeypatch):
-    monkeypatch.setattr(get_settings(), "registration_invite_required", True)
+async def test_empty_pool_replaces_legacy_invite_blocker_notification(db_session, monkeypatch):
     monkeypatch.setattr(get_settings(), "admin_telegram_id", "999")
     monkeypatch.setattr(get_settings(), "argolink_registration_key_pool_json", None)
-    application = PartnerApplication(telegram_id="alert-transition", company_name="C", project_name="P")
+    application = PartnerApplication(telegram_id="legacy-alert", company_name="C", project_name="P")
     db_session.add(application)
+    await db_session.flush()
+    db_session.add(
+        BotNotification(
+            telegram_id="999",
+            text="obsolete invite blocker",
+            dedupe_key=f"registration-invite-required:{application.id}",
+        )
+    )
     await db_session.commit()
 
-    assert await activate_application_and_issue_key(db_session, application) is None
-    await db_session.commit()
-    invite_alert = f"registration-invite-required:{application.id}"
-    pool_alert = f"argolink-key-pool-depleted:{application.id}"
-    assert await db_session.scalar(
-        select(func.count()).select_from(BotNotification).where(BotNotification.dedupe_key == invite_alert)
-    ) == 1
-
-    _, token = await create_registration_invite(db_session, actor="telegram:999")
-    await bind_registration_invite(db_session, telegram_id=application.telegram_id, token=token)
     assert await activate_application_and_issue_key(db_session, application) is None
     await db_session.commit()
 
     alerts = set(await db_session.scalars(select(BotNotification.dedupe_key)))
-    assert pool_alert in alerts
-    assert invite_alert not in alerts
+    assert alerts == {f"argolink-key-pool-depleted:{application.id}"}
 
 
-async def test_admin_can_create_and_revoke_registration_invite(cabinet, db_session, monkeypatch):
-    feed, _ = cabinet
-    monkeypatch.setattr(get_settings(), "telegram_bot_username", "neironych_test_bot")
-    screen = (await feed(user=999, callback="admin_argolink_invite_create"))[-1]
-    invite = await db_session.scalar(select(RegistrationInvite))
-    assert invite is not None and invite.status == "active"
-    assert "https://t.me/neironych_test_bot?start=invite_" in screen.text
-    assert invite.token_hash not in screen.text
+async def test_legacy_invite_rows_remain_inert_during_normal_registration(db_session, monkeypatch):
+    monkeypatch.setattr("app.providers.argolink.ArgoLinkAdapter.validate_key", _valid)
+    invite = RegistrationInvite(
+        token_hash=hash_secret("legacy-invite-token"),
+        status="active",
+        bound_telegram_id="new-with-legacy-invite",
+        created_by="telegram:999",
+    )
+    db_session.add(invite)
+    await add_pool_keys(
+        db_session,
+        ["sk-pool-inert-invite-000000000000001"],
+        source="test",
+        actor="test",
+    )
+    application = PartnerApplication(
+        telegram_id="new-with-legacy-invite",
+        company_name="New",
+        project_name="New",
+    )
+    db_session.add(application)
+    await db_session.flush()
 
-    await feed(user=999, callback=f"admin_argolink_invite_revoke:{invite.id}")
+    partner = await auto_activate_application(application.id, db_session)
+    await db_session.commit()
+
     await db_session.refresh(invite)
-    assert invite.status == "revoked" and invite.revoked_by == "999"
+    credential = await db_session.scalar(
+        select(ProviderCredential).where(ProviderCredential.partner_id == partner.id)
+    )
+    assert credential is not None
+    assert invite.status == "active"
+    assert invite.used_application_id is None
+    assert await pool_counts(db_session) == (0, 1)
 
 
 async def test_admin_pool_add_is_authorized_encrypted_and_all_or_nothing(cabinet, db_session, monkeypatch):
@@ -414,6 +497,7 @@ async def test_admin_pool_add_is_authorized_encrypted_and_all_or_nothing(cabinet
 
 async def test_concurrent_claims_do_not_assign_the_same_key(tmp_path, monkeypatch):
     monkeypatch.setattr("app.providers.argolink.ArgoLinkAdapter.validate_key", _valid)
+    monkeypatch.setattr(get_settings(), "argolink_registration_claim_budget", 10)
     database = tmp_path / "pool-concurrency.sqlite3"
     engine = create_async_engine(f"sqlite+aiosqlite:///{database}", connect_args={"timeout": 30})
     factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -450,6 +534,7 @@ async def test_postgres_four_way_claim_and_cross_table_insert_race(monkeypatch):
     if not url:
         pytest.skip("TEST_POSTGRES_DATABASE_URL is not configured")
     monkeypatch.setattr("app.providers.argolink.ArgoLinkAdapter.validate_key", _valid)
+    monkeypatch.setattr(get_settings(), "argolink_registration_claim_budget", 10)
     engine = create_async_engine(url, pool_size=8, max_overflow=0)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     suffix = uuid4().hex
