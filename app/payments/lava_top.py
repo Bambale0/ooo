@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -18,6 +18,19 @@ class LavaTopError(RuntimeError):
 
 class LavaTopBuyerEmailRejected(LavaTopError):
     """Lava.top definitively rejected the buyer email before creating an invoice."""
+
+
+LAVA_TOP_SURCHARGE_RATE = Decimal("0.10")
+WHOLE_RUBLE = Decimal("1")
+
+
+def lava_top_checkout_amount(requested_rub: Decimal | int) -> Decimal:
+    """Return the immutable Lava checkout gross for an API-balance top-up."""
+    requested = Decimal(requested_rub)
+    return (requested * (Decimal(1) + LAVA_TOP_SURCHARGE_RATE)).quantize(
+        WHOLE_RUBLE,
+        rounding=ROUND_HALF_UP,
+    )
 
 
 @dataclass(frozen=True)

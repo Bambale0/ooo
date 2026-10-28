@@ -23,6 +23,7 @@ class PaymentInvoice(Base):
     idempotency_key: Mapped[str] = mapped_column(String(160), nullable=False)
     status: Mapped[str] = mapped_column(String(40), nullable=False, default="creating", index=True)
     requested_rub: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    provider_amount_rub: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
     accepted_assets: Mapped[str] = mapped_column(String(120), nullable=False, default="USDT,TON")
     buyer_email: Mapped[str | None] = mapped_column(String(320))
     invoice_url: Mapped[str | None] = mapped_column(Text)
@@ -40,6 +41,11 @@ class PaymentInvoice(Base):
     reconciliation_snapshot: Mapped[dict | None] = mapped_column(JSON)
     refunded_rub: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=Decimal("0.00"))
     created_at: Mapped[object] = utc_created_at()
+
+    @property
+    def amount_due_rub(self) -> Decimal:
+        """Gross checkout amount; legacy invoices had no separate provider amount."""
+        return Decimal(self.provider_amount_rub if self.provider_amount_rub is not None else self.requested_rub)
 
 
 class CryptoPayWebhookEvent(Base):

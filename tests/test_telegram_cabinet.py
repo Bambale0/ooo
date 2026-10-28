@@ -338,7 +338,9 @@ async def test_lava_top_payment_email_is_saved_reused_and_changeable(cabinet, db
     await feed(text="Buyer@Example.org")
     await db_session.refresh(owner)
     assert owner.payment_email == "buyer@example.org"
-    await feed(text="1500")
+    confirmation = (await feed(text="1500"))[-1]
+    assert "Создать счёт на 1,650 ₽" in confirmation.text
+    assert "На баланс зачислится 1,500 ₽" in confirmation.text
     action = (
         await db_session.execute(
             select(BotAction).where(BotAction.kind == "invoice_create", BotAction.status == "pending")
@@ -356,7 +358,7 @@ async def test_lava_top_payment_email_is_saved_reused_and_changeable(cabinet, db
         )
     ).scalar_one()
     await feed(callback=f"confirm:{action.id}")
-    assert fake.created == [(1500, "buyer@example.org"), (1600, "buyer@example.org")]
+    assert fake.created == [(1650, "buyer@example.org"), (1760, "buyer@example.org")]
 
     await feed(callback="payment_email")
     await feed(text="new@example.org")

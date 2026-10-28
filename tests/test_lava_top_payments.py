@@ -16,9 +16,15 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.billing.models import CoverageLedgerEntry, LedgerEntry
 from app.infrastructure.config import get_settings
-from app.payments.lava_top import LavaTopBuyerEmailRejected, LavaTopClient, LavaTopError, LavaTopInvoice
+from app.payments.lava_top import (
+    LavaTopBuyerEmailRejected,
+    LavaTopClient,
+    LavaTopError,
+    LavaTopInvoice,
+    lava_top_checkout_amount,
+)
 from app.payments.models import LavaTopWebhookEvent, PaymentInvoice
-from app.payments.service import create_or_resume_lava_invoice
+from app.payments.service import create_or_resume_lava_invoice, sync_lava_provider_invoice
 from tests.test_crypto_payments import _partner_with_api_key
 
 
@@ -46,6 +52,35 @@ class FakeLavaTopClient:
 
     async def get_invoice(self, invoice_id: str) -> LavaTopInvoice | None:
         return self.invoices.get(invoice_id)
+
+
+@pytest.mark.parametrize(
+    ("requested", "checkout"),
+    [
+        (Decimal("1000"), Decimal("1100")),
+        (Decimal("1500"), Decimal("1650")),
+        (Decimal("1505"), Decimal("1656")),
+    ],
+)
+def test_lava_top_checkout_adds_ten_percent_with_whole_ruble_rounding(requested, checkout):
+    assert lava_top_checkout_amount(requested) == checkout
+
+
+def test_lava_top_surcharge_migration_is_additive_and_reversible():
+    path = Path(__file__).parents[1] / "alembic/versions/20261028_0039_lava_top_surcharge.py"
+    spec = spec_from_file_location("lava_top_surcharge_migration", path)
+    migration = module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    engine = create_engine("sqlite://")
+    with engine.begin() as connection:
+        connection.execute(text("CREATE TABLE payment_invoices (id VARCHAR(36) PRIMARY KEY)"))
+        with Operations.context(MigrationContext.configure(connection)):
+            migration.upgrade()
+            assert inspect(connection).get_columns("payment_invoices")[-1]["name"] == "provider_amount_rub"
+            migration.downgrade()
+            assert "provider_amount_rub" not in {
+                column["name"] for column in inspect(connection).get_columns("payment_invoices")
+            }
 
 
 def test_partner_payment_email_migration_backfills_latest_invoice_and_rolls_back():
@@ -212,7 +247,8 @@ async def test_lava_top_sbp_webhook_rechecks_and_credits_exactly_once(
     assert created.status_code == 202
     assert created.json()["provider"] == "lava_top"
     assert created.json()["accepted_assets"] == "RUB:SBP"
-    assert fake.created == [(1500, "buyer@example.org")]
+    assert fake.created == [(1650, "buyer@example.org")]
+    assert Decimal(created.json()["amount_due_rub"]) == Decimal("1650.00")
 
     duplicate = await client.post(
         "/api/v1/payments/invoices",
@@ -268,7 +304,7 @@ async def test_lava_top_sbp_webhook_rechecks_and_credits_exactly_once(
     await db_session.refresh(partner)
     assert payment.status == "credited"
     assert payment.paid_asset == "RUB"
-    assert payment.paid_amount == Decimal("1500")
+    assert payment.paid_amount == Decimal("1650")
     assert payment.paid_usd_rate == Decimal("0.01")
     assert partner.balance_rub == Decimal("1500")
     assert partner.cost_coverage_rub == Decimal("1500")
@@ -304,7 +340,7 @@ async def test_lava_top_reuses_and_updates_partner_payment_email(client, db_sess
         json={"requested_rub": 1600, "idempotency_key": "lava-save-email-reused"},
     )
     assert reused.status_code == 202
-    assert fake.created[-1] == (1600, "buyer@example.org")
+    assert fake.created[-1] == (1760, "buyer@example.org")
 
     updated = await client.post(
         "/api/v1/payments/invoices",
@@ -348,7 +384,8 @@ async def test_lava_top_unknown_create_is_not_replayed(db_session):
         client=fake,
     )
     assert repeated.status == "creation_unknown"
-    assert fake.created == [(1500, "buyer@example.org")]
+    assert repeated.provider_amount_rub == Decimal("1650")
+    assert fake.created == [(1650, "buyer@example.org")]
 
 
 async def test_lava_top_rejected_buyer_email_is_failed_not_ambiguous(db_session):
@@ -381,6 +418,28 @@ async def test_lava_top_rejected_buyer_email_is_failed_not_ambiguous(db_session)
         "source": "create_response",
         "result": "buyer_email_rejected",
     }
+
+
+async def test_lava_top_new_invoice_rejects_provider_amount_without_surcharge(db_session):
+    partner, _ = await _partner_with_api_key(db_session, telegram_id="lava-underpaid")
+    fake = FakeLavaTopClient()
+    payment = await create_or_resume_lava_invoice(
+        db_session,
+        partner=partner,
+        requested_rub=1500,
+        idempotency_key="lava-underpaid-provider-amount",
+        buyer_email="buyer@example.org",
+        client=fake,
+    )
+    underpaid = replace(fake.invoices[payment.provider_reference], status="paid", amount="1500")
+
+    with pytest.raises(HTTPException) as mismatch:
+        await sync_lava_provider_invoice(db_session, provider_invoice=underpaid, payment_id=payment.id)
+
+    assert mismatch.value.status_code == 409
+    assert mismatch.value.detail == "payment_amount_or_currency_mismatch"
+    await db_session.refresh(partner)
+    assert partner.balance_rub == Decimal("0")
 
 
 async def test_lava_top_reconciliation_recovers_lost_webhook(db_session):
