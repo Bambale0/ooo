@@ -22,7 +22,6 @@ class Settings(BaseSettings):
     admin_telegram_id: str | None = None
     telegram_bot_token: str | None = None
     telegram_bot_username: str | None = None
-    registration_invite_required: bool = True
     terms_url: str | None = None
     privacy_policy_url: str | None = None
     legal_document_version: str = "2026-09-19"

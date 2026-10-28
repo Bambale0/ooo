@@ -102,42 +102,32 @@ async def activate_application_and_issue_key(db, application: PartnerApplication
             "provider_credentials_encryption_not_configured",
             "provider_key_invalid",
             "provider_key_mode_unsupported",
-            "registration_invite_required",
+            "existing_partner_requires_manual_provider_credential",
         }:
             raise
-        invite_missing = str(exc.detail) == "registration_invite_required"
-        await db.execute(
-            delete(BotNotification).where(
-                BotNotification.dedupe_key
-                == (
-                    f"argolink-key-pool-depleted:{application.id}"
-                    if invite_missing
-                    else f"registration-invite-required:{application.id}"
-                ),
-                BotNotification.sent_at.is_(None),
-            )
-        )
+        existing_partner = str(exc.detail) == "existing_partner_requires_manual_provider_credential"
         await notify(
             db,
             get_settings().admin_telegram_id,
             (
-                f"Заявка {application.id} ожидает подтверждённое одноразовое приглашение."
-                if invite_missing
+                f"Заявка {application.id} относится к существующему партнёру; автоматическая выдача ключа запрещена."
+                if existing_partner
                 else f"Новая заявка {application.id} ожидает отдельный ключ ArgoLink: пул пуст или недоступен."
             ),
             (
-                f"registration-invite-required:{application.id}"
-                if invite_missing
+                f"existing-partner-key-blocked:{application.id}"
+                if existing_partner
                 else f"argolink-key-pool-depleted:{application.id}"
             ),
         )
-        return None
+        return "existing_partner" if existing_partner else None
     await db.execute(
         delete(BotNotification).where(
             BotNotification.dedupe_key.in_(
                 (
                     f"argolink-key-pool-depleted:{application.id}",
                     f"registration-invite-required:{application.id}",
+                    f"existing-partner-key-blocked:{application.id}",
                 )
             ),
             BotNotification.sent_at.is_(None),
@@ -183,35 +173,24 @@ async def home(event, db, dialog) -> None:
             .first()
         )
         if not pending:
-            from app.accounts.registration_invites import has_registration_eligibility
-
-            if not await has_registration_eligibility(db, telegram_id=actor(event)):
-                reset(dialog)
-                await show(
-                    event,
-                    "Регистрация партнёров доступна по одноразовому приглашению. "
-                    "Откройте персональную ссылку, полученную от администратора. "
-                    "Ключ ArgoLink будет назначен автоматически после анкеты.",
-                    keyboard(back=None),
-                )
-                return
             await registration_documents(event, dialog)
             return
         result = await activate_application_and_issue_key(db, pending)
-        if result is None:
-            from app.accounts.registration_invites import has_registration_eligibility
-
-            eligible = await has_registration_eligibility(db, telegram_id=actor(event))
+        if result == "existing_partner":
             await db.commit()
             await show(
                 event,
-                (
-                    "Заявка сохранена и ожидает отдельный ключ ArgoLink. Администратор уже уведомлён. "
-                    "Откройте /start после пополнения пула — повторная заявка не нужна."
-                    if eligible
-                    else "Заявка сохранена, но для автоматического подключения нужно одноразовое приглашение. "
-                    "Попросите администратора прислать персональную ссылку и откройте её в этом Telegram."
-                ),
+                "Существующий аккаунт не изменён и новый ключ ему не выдавался. "
+                "Администратор уведомлён и проверит доступ вручную.",
+                keyboard(back=None),
+            )
+            return
+        if result is None:
+            await db.commit()
+            await show(
+                event,
+                "Заявка сохранена и ожидает отдельный ключ ArgoLink. Администратор уже уведомлён. "
+                "Откройте /start после пополнения пула — повторная заявка не нужна.",
                 keyboard(back=None),
             )
             return
@@ -757,14 +736,6 @@ async def admin_callback(event, db, dialog, data: str) -> None:
         from app.telegram.argolink_key_pool import prompt_add
 
         await prompt_add(event, dialog)
-    elif data == "admin_argolink_invite_create":
-        from app.telegram.argolink_key_pool import create_invite
-
-        await create_invite(event, db, dialog)
-    elif data.startswith("admin_argolink_invite_revoke:"):
-        from app.telegram.argolink_key_pool import revoke_invite
-
-        await revoke_invite(event, db, dialog, str(UUID(data.split(":", 1)[1])))
     elif data == "admin_infai":
         from app.telegram.infai import overview
 
@@ -960,25 +931,6 @@ async def handle_message(event, db, dialog) -> None:
     if command == "/start":
         parts = value.split(maxsplit=1)
         parameter = parts[1] if len(parts) == 2 else ""
-        if parameter.startswith("invite_"):
-            from app.accounts.registration_invites import bind_registration_invite
-
-            try:
-                await bind_registration_invite(
-                    db,
-                    telegram_id=actor(event),
-                    token=parameter.removeprefix("invite_"),
-                )
-            except HTTPException as exc:
-                if str(exc.detail) != "registration_invite_invalid":
-                    raise
-                await show(
-                    event,
-                    "Приглашение недействительно, уже использовано или отозвано. "
-                    "Попросите администратора прислать новую персональную ссылку.",
-                    keyboard(back=None),
-                )
-                return
         code = parameter[4:] if parameter.startswith("ref_") else None
         from app.referrals.service import bind_referral
 
@@ -1041,20 +993,21 @@ async def handle_message(event, db, dialog) -> None:
         )
         result = await activate_application_and_issue_key(db, app)
         reset(dialog)
-        if result is None:
-            from app.accounts.registration_invites import has_registration_eligibility
-
-            eligible = await has_registration_eligibility(db, telegram_id=user)
+        if result == "existing_partner":
             await db.commit()
             await show(
                 event,
-                (
-                    "Заявка сохранена и ожидает отдельный ключ ArgoLink. Администратор уже уведомлён. "
-                    "Откройте /start после пополнения пула — повторная заявка не нужна."
-                    if eligible
-                    else "Заявка сохранена, но для автоматического подключения нужно одноразовое приглашение. "
-                    "Попросите администратора прислать персональную ссылку и откройте её в этом Telegram."
-                ),
+                "Существующий аккаунт не изменён и новый ключ ему не выдавался. "
+                "Администратор уведомлён и проверит доступ вручную.",
+                keyboard(back=None),
+            )
+            return
+        if result is None:
+            await db.commit()
+            await show(
+                event,
+                "Заявка сохранена и ожидает отдельный ключ ArgoLink. Администратор уже уведомлён. "
+                "Откройте /start после пополнения пула — повторная заявка не нужна.",
                 keyboard(back=None),
             )
             return
