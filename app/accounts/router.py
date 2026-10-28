@@ -25,8 +25,8 @@ from app.accounts.schemas import (
 )
 from app.api.dependencies import DbSession, require_admin
 from app.infrastructure.config import get_settings
-from app.infrastructure.security import create_api_key, encrypt_secret
-from app.providers.models import ProviderCredential
+from app.infrastructure.security import create_api_key, encrypt_secret, hash_secret
+from app.providers.models import PartnerProviderCredentialBinding, ProviderCredential
 from app.webhooks.security import validate_public_webhook_url
 
 router = APIRouter()
@@ -106,29 +106,41 @@ async def approve_application(application_id: str, db: DbSession) -> Partner:
 
 async def auto_activate_application(application_id: str, db: DbSession) -> Partner:
     """Activate a self-service application without an administrator gate."""
-    from app.providers.key_pool import provision_application_key
+    from app.providers.key_pool import lock_key_hashes, provision_application_key, provision_shared_registration_key
+    from app.providers.service import get_active_provider_credential
 
     application = await db.get(PartnerApplication, application_id, with_for_update=True)
     if application is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="application_not_found")
+    await lock_key_hashes(db, [hash_secret(f"partner-registration:{application.telegram_id}")])
     existing_partner = await db.scalar(
         select(Partner)
         .where(Partner.telegram_id == application.telegram_id, Partner.status != "deleted")
         .with_for_update()
     )
     if existing_partner is not None:
-        existing_credential = await db.scalar(
-            select(ProviderCredential.id).where(
-                ProviderCredential.partner_id == existing_partner.id,
-                ProviderCredential.provider == "argolink",
-                ProviderCredential.is_active.is_(True),
-                ProviderCredential.encrypted_api_key.is_not(None),
-            )
-        )
+        existing_credential = await get_active_provider_credential(db, existing_partner.id, "argolink")
         if existing_credential is None:
             # Pool keys are only for genuinely new registrations. Existing
             # legacy partners require an explicit admin credential workflow.
             raise HTTPException(409, "existing_partner_requires_manual_provider_credential")
+    if get_settings().argolink_registration_shared_pool_item_id:
+        # Existing partners keep their current route; only a genuinely new account
+        # receives the shared binding. A repeated application cannot drain a pool.
+        credential = await provision_shared_registration_key(db) if existing_partner is None else None
+        partner = await _activate_application(
+            application_id,
+            db,
+            require_provider_credential=False,
+            require_dedicated_argolink_credential=(
+                True if existing_partner is None else existing_partner.requires_dedicated_argolink_credential
+            ),
+            reason="application_auto_approved",
+        )
+        if credential is not None:
+            db.add(PartnerProviderCredentialBinding(partner_id=partner.id, credential_id=credential.id))
+            await db.flush()
+        return partner
     await provision_application_key(db, application_id)
     return await _activate_application(
         application_id,

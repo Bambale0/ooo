@@ -29,10 +29,23 @@ class ProviderCredential(Base):
     created_at: Mapped[object] = utc_created_at()
 
 
+class PartnerProviderCredentialBinding(Base):
+    """Explicit access to a shared credential; billing remains owned by Partner."""
+
+    __tablename__ = "partner_provider_credential_bindings"
+
+    partner_id: Mapped[str] = mapped_column(ForeignKey("partners.id"), primary_key=True)
+    credential_id: Mapped[str] = mapped_column(
+        ForeignKey("provider_credentials.id"), primary_key=True, index=True,
+    )
+    is_active: Mapped[bool] = mapped_column(default=True, nullable=False, server_default="true")
+    created_at: Mapped[object] = utc_created_at()
+
+
 class ProviderKeyPoolItem(Base):
     __tablename__ = "provider_key_pool_items"
     __table_args__ = (
-        CheckConstraint("status IN ('available', 'assigned')", name="provider_key_pool_status"),
+        CheckConstraint("status IN ('available', 'assigned', 'shared')", name="provider_key_pool_status"),
         UniqueConstraint("assigned_application_id", name="uq_provider_key_pool_assigned_application"),
     )
 

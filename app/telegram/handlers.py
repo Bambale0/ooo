@@ -82,12 +82,14 @@ async def registration_documents(event, dialog) -> None:
 
 
 async def activate_application_and_issue_key(db, application: PartnerApplication):
+    # Savepoint rollback expires ORM attributes; keep a scalar for safe alerts.
+    application_id = application.id
     try:
         # Pool assignment, partner activation, and internal key creation are
         # one savepoint. A handled provisioning failure must roll the pool row
         # back to available before the durable admin notification is written.
         async with db.begin_nested():
-            partner = await auto_activate_application(application.id, db)
+            partner = await auto_activate_application(application_id, db)
             api_key = await create_partner_api_key(
                 partner.id,
                 ApiKeyCreate(name="Автоматический ключ"),
@@ -109,18 +111,18 @@ async def activate_application_and_issue_key(db, application: PartnerApplication
         existing_partner = str(exc.detail) == "existing_partner_requires_manual_provider_credential"
         budget_exhausted = str(exc.detail) == "provider_key_registration_budget_exhausted"
         blocker_keys = {
-            f"argolink-key-pool-depleted:{application.id}",
-            f"argolink-key-registration-budget:{application.id}",
-            f"registration-invite-required:{application.id}",
-            f"existing-partner-key-blocked:{application.id}",
+            f"argolink-key-pool-depleted:{application_id}",
+            f"argolink-key-registration-budget:{application_id}",
+            f"registration-invite-required:{application_id}",
+            f"existing-partner-key-blocked:{application_id}",
         }
         current_blocker = (
-            f"existing-partner-key-blocked:{application.id}"
+            f"existing-partner-key-blocked:{application_id}"
             if existing_partner
             else (
-                f"argolink-key-registration-budget:{application.id}"
+                f"argolink-key-registration-budget:{application_id}"
                 if budget_exhausted
-                else f"argolink-key-pool-depleted:{application.id}"
+                else f"argolink-key-pool-depleted:{application_id}"
             )
         )
         await db.execute(
@@ -133,12 +135,12 @@ async def activate_application_and_issue_key(db, application: PartnerApplication
             db,
             get_settings().admin_telegram_id,
             (
-                f"Заявка {application.id} относится к существующему партнёру; автоматическая выдача ключа запрещена."
+                f"Заявка {application_id} относится к существующему партнёру; автоматическая выдача ключа запрещена."
                 if existing_partner
                 else (
-                    f"Новая заявка {application.id} ожидает: достигнут глобальный лимит автоматических регистраций."
+                    f"Новая заявка {application_id} ожидает: достигнут глобальный лимит автоматических регистраций."
                     if budget_exhausted
-                    else f"Новая заявка {application.id} ожидает отдельный ключ ArgoLink: пул пуст или недоступен."
+                    else f"Новая заявка {application_id} ожидает: настроенный маршрут регистрации недоступен."
                 )
             ),
             current_blocker,
@@ -148,10 +150,10 @@ async def activate_application_and_issue_key(db, application: PartnerApplication
         delete(BotNotification).where(
             BotNotification.dedupe_key.in_(
                 (
-                    f"argolink-key-pool-depleted:{application.id}",
-                    f"argolink-key-registration-budget:{application.id}",
-                    f"registration-invite-required:{application.id}",
-                    f"existing-partner-key-blocked:{application.id}",
+                    f"argolink-key-pool-depleted:{application_id}",
+                    f"argolink-key-registration-budget:{application_id}",
+                    f"registration-invite-required:{application_id}",
+                    f"existing-partner-key-blocked:{application_id}",
                 )
             ),
             BotNotification.sent_at.is_(None),
@@ -160,8 +162,8 @@ async def activate_application_and_issue_key(db, application: PartnerApplication
     await notify(
         db,
         get_settings().admin_telegram_id,
-        f"Новый партнёр подключён автоматически: {partner.id}, заявка {application.id}.",
-        f"application-auto-approved:{application.id}",
+        f"Новый партнёр подключён автоматически: {partner.id}, заявка {application_id}.",
+        f"application-auto-approved:{application_id}",
     )
     return partner, api_key
 
@@ -222,8 +224,8 @@ async def home(event, db, dialog) -> None:
             await db.commit()
             await show(
                 event,
-                "Заявка сохранена и ожидает отдельный ключ ArgoLink. Администратор уже уведомлён. "
-                "Откройте /start после пополнения пула — повторная заявка не нужна.",
+                "Заявка сохранена. Подключение временно недоступно, администратор уже уведомлён. "
+                "Откройте /start позже — повторная заявка не нужна.",
                 keyboard(back=None),
             )
             return
@@ -1048,8 +1050,8 @@ async def handle_message(event, db, dialog) -> None:
             await db.commit()
             await show(
                 event,
-                "Заявка сохранена и ожидает отдельный ключ ArgoLink. Администратор уже уведомлён. "
-                "Откройте /start после пополнения пула — повторная заявка не нужна.",
+                "Заявка сохранена. Подключение временно недоступно, администратор уже уведомлён. "
+                "Откройте /start позже — повторная заявка не нужна.",
                 keyboard(back=None),
             )
             return

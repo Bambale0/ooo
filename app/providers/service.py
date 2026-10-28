@@ -1,5 +1,5 @@
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.accounts.models import Partner
@@ -7,8 +7,30 @@ from app.infrastructure.config import get_settings
 from app.infrastructure.security import decrypt_secret
 from app.providers.base import ProviderAdapter
 from app.providers.infai_video import INFAI_CREDENTIAL_LABEL
-from app.providers.models import ProviderCredential
+from app.providers.models import PartnerProviderCredentialBinding, ProviderCredential
 from app.providers.registry import get_provider_adapter
+
+
+def partner_credential_scope(partner_id: str, provider: str, *, active_binding: bool = True):
+    """Keep shared credentials private to explicitly bound tenants.
+
+    Historical bindings remain usable for polling an already pinned attempt;
+    an inactive binding cannot authorize a new submission.
+    """
+    if provider == "infai":
+        return ProviderCredential.partner_id.is_(None) & (ProviderCredential.label == INFAI_CREDENTIAL_LABEL)
+    binding = select(PartnerProviderCredentialBinding.partner_id).where(
+        PartnerProviderCredentialBinding.partner_id == partner_id,
+        PartnerProviderCredentialBinding.credential_id == ProviderCredential.id,
+    )
+    if active_binding:
+        binding = binding.where(PartnerProviderCredentialBinding.is_active.is_(True))
+    shared = (
+        ProviderCredential.partner_id.is_(None)
+        & ProviderCredential.partner_application_id.is_(None)
+        & binding.correlate(ProviderCredential).exists()
+    )
+    return (ProviderCredential.partner_id == partner_id) | shared
 
 
 async def get_active_provider_credential(
@@ -18,11 +40,7 @@ async def get_active_provider_credential(
     *,
     for_update: bool = True,
 ) -> ProviderCredential | None:
-    scope = (
-        (ProviderCredential.partner_id.is_(None) & (ProviderCredential.label == INFAI_CREDENTIAL_LABEL))
-        if provider == "infai"
-        else ProviderCredential.partner_id == partner_id
-    )
+    scope = partner_credential_scope(partner_id, provider)
     query = (
         select(ProviderCredential)
         .where(
@@ -31,7 +49,11 @@ async def get_active_provider_credential(
             ProviderCredential.is_active.is_(True),
             ProviderCredential.encrypted_api_key.is_not(None),
         )
-        .order_by(ProviderCredential.created_at.desc())
+        .order_by(
+            case((ProviderCredential.partner_id == partner_id, 0), else_=1),
+            ProviderCredential.created_at.desc(),
+            ProviderCredential.id.desc(),
+        )
     )
     if for_update:
         query = query.with_for_update()
@@ -81,11 +103,7 @@ async def get_partner_provider_adapter(
                 return get_provider_adapter(provider, api_key=settings.argolink_api_key)
     else:
         # Existing jobs belong to the original upstream account, even after key rotation.
-        scope = (
-            (ProviderCredential.partner_id.is_(None) & (ProviderCredential.label == INFAI_CREDENTIAL_LABEL))
-            if provider == "infai"
-            else ProviderCredential.partner_id == partner_id
-        )
+        scope = partner_credential_scope(partner_id, provider, active_binding=False)
         result = await db.execute(
             select(ProviderCredential).where(
                 ProviderCredential.id == credential_id,

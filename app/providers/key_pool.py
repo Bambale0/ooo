@@ -311,3 +311,60 @@ async def pool_counts(db: AsyncSession) -> tuple[int, int]:
     )
     counts = dict(rows.all())
     return int(counts.get("available", 0)), int(counts.get("assigned", 0))
+
+
+async def provision_shared_registration_key(db: AsyncSession) -> ProviderCredential:
+    """Promote the explicitly selected pool item once, without consuming it per signup."""
+    settings = get_settings()
+    pool_id = settings.argolink_registration_shared_pool_item_id
+    if not pool_id:
+        raise HTTPException(503, "provider_key_pool_configuration_invalid")
+    master_key = settings.provider_credentials_master_key
+    if not master_key:
+        raise HTTPException(503, "provider_credentials_encryption_not_configured")
+    # All registrations serialize only promotion/binding, not external provider HTTP.
+    item = await db.scalar(
+        select(ProviderKeyPoolItem)
+        .where(ProviderKeyPoolItem.id == pool_id, ProviderKeyPoolItem.provider == "argolink")
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if item is None or item.status not in {"available", "shared"}:
+        raise HTTPException(503, "provider_key_pool_configuration_invalid")
+    if item.assigned_partner_id is not None or item.assigned_application_id is not None:
+        raise HTTPException(503, "provider_key_pool_configuration_invalid")
+    await lock_key_hashes(db, [item.key_hash])
+    credential = await db.scalar(select(ProviderCredential).where(ProviderCredential.key_hash == item.key_hash))
+    if item.status == "shared":
+        if (
+            credential is None
+            or credential.provider != "argolink"
+            or credential.partner_id is not None
+            or credential.partner_application_id is not None
+            or not credential.is_active
+            or not credential.encrypted_api_key
+        ):
+            raise HTTPException(503, "provider_key_pool_unavailable")
+        ciphertext = credential.encrypted_api_key
+    else:
+        if credential is not None or not item.encrypted_api_key:
+            raise HTTPException(503, "provider_key_pool_unavailable")
+        ciphertext = item.encrypted_api_key
+    try:
+        plaintext = decrypt_secret(ciphertext, master_key)
+    except ValueError as exc:
+        raise HTTPException(503, "provider_key_pool_unavailable") from exc
+    if credential is None:
+        credential = ProviderCredential(
+            provider="argolink",
+            label="Shared registration key",
+            key_hash=item.key_hash,
+            key_prefix=plaintext[:8],
+            encrypted_api_key=ciphertext,
+        )
+        db.add(credential)
+        item.status = "shared"
+        item.encrypted_api_key = None
+        item.assigned_at = func.now()
+        await db.flush()
+    return credential
