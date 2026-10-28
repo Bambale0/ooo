@@ -14,6 +14,8 @@ from app.infrastructure.database import Base
 from app.infrastructure.security import decrypt_secret
 from app.providers.key_pool import add_pool_keys, parse_key_list, provision_application_key
 from app.providers.models import ProviderCredential, ProviderKeyPoolItem
+from app.providers.router import create_provider_credential
+from app.providers.schemas import ProviderCredentialCreate
 from app.providers.service import has_provider_runtime_credential
 from app.referrals import models as referral_models  # noqa: F401
 from app.telegram.models import BotAction, BotNotification
@@ -92,6 +94,23 @@ def test_bootstrap_secret_requires_a_json_array():
     with pytest.raises(HTTPException) as error:
         parse_key_list('{"key":"not-an-array"}')
     assert error.value.detail == "provider_key_pool_configuration_invalid"
+
+
+async def test_manual_credential_cannot_reuse_a_pooled_key(db_session, monkeypatch):
+    monkeypatch.setattr("app.providers.argolink.ArgoLinkAdapter.validate_key", _valid)
+    key = "sk-pool-cross-table-duplicate-000000001"
+    await add_pool_keys(db_session, [key], source="test", actor="test")
+    application = PartnerApplication(telegram_id="cross-table", company_name="C", project_name="P")
+    db_session.add(application)
+    await db_session.flush()
+
+    with pytest.raises(HTTPException) as error:
+        await create_provider_credential(
+            ProviderCredentialCreate(label="manual", api_key=key, partner_application_id=application.id),
+            db_session,
+        )
+    assert error.value.detail == "provider_key_pool_duplicate"
+    assert await db_session.scalar(select(func.count()).select_from(ProviderCredential)) == 0
 
 
 async def test_dedicated_partner_never_falls_back_to_shared_key(db_session, monkeypatch):

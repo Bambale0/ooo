@@ -7,7 +7,7 @@ from app.api.dependencies import DbSession, require_admin
 from app.catalog.models import Model
 from app.infrastructure.config import get_settings
 from app.infrastructure.security import encrypt_secret, hash_secret
-from app.providers.models import ProviderCredential, ProviderModelCapability
+from app.providers.models import ProviderCredential, ProviderKeyPoolItem, ProviderModelCapability
 from app.providers.registry import get_provider_adapter
 from app.providers.schemas import (
     ProviderCapabilityRead,
@@ -60,6 +60,10 @@ async def create_provider_credential(
         if partner is None or partner.status == "deleted":
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="partner_not_found")
 
+    key_hash = hash_secret(payload.api_key)
+    if await db.scalar(select(ProviderKeyPoolItem.id).where(ProviderKeyPoolItem.key_hash == key_hash)):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="provider_key_pool_duplicate")
+
     adapter = get_provider_adapter(payload.provider, api_key=payload.api_key)
     if not await adapter.validate_key(payload.api_key):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="provider_key_invalid")
@@ -83,7 +87,7 @@ async def create_provider_credential(
     credential = ProviderCredential(
         provider=payload.provider,
         label=payload.label,
-        key_hash=hash_secret(payload.api_key),
+        key_hash=key_hash,
         key_prefix=payload.api_key[:8],
         encrypted_api_key=encrypt_secret(payload.api_key, settings.provider_credentials_master_key),
         partner_application_id=payload.partner_application_id,
