@@ -1,3 +1,6 @@
+import pytest
+
+from app.accounts.models import Partner
 from app.infrastructure.config import get_settings
 from app.infrastructure.security import decrypt_secret
 from app.providers.models import ProviderCredential
@@ -92,6 +95,8 @@ async def test_provider_credential_is_scoped_to_application_and_encrypted(
     await db_session.refresh(credential)
     assert credential.partner_id == approved_first.json()["id"]
     assert credential.partner_application_id == first.json()["id"]
+    approved_partner = await db_session.get(Partner, approved_first.json()["id"])
+    assert approved_partner.requires_dedicated_argolink_credential is True
 
 
 async def test_existing_job_uses_original_credential_after_rotation(db_session, monkeypatch):
@@ -140,3 +145,20 @@ async def test_partner_without_individual_key_uses_system_argolink_key(db_sessio
 
     assert await has_provider_runtime_credential(db_session, partner.id, "argolink")
     assert await get_partner_provider_adapter(db_session, partner.id, "argolink") == "system-argolink-key"
+
+
+async def test_dedicated_only_mode_disables_shared_argolink_fallback(db_session, monkeypatch):
+    from fastapi import HTTPException
+
+    from app.providers.service import get_partner_provider_adapter, has_provider_runtime_credential
+
+    partner = Partner(telegram_id="dedicated-only", company_name="Test", project_name="Test")
+    db_session.add(partner)
+    await db_session.flush()
+    monkeypatch.setattr(get_settings(), "argolink_api_key", "system-argolink-key")
+    monkeypatch.setattr(get_settings(), "argolink_shared_fallback_enabled", False)
+
+    assert not await has_provider_runtime_credential(db_session, partner.id, "argolink")
+    with pytest.raises(HTTPException) as error:
+        await get_partner_provider_adapter(db_session, partner.id, "argolink")
+    assert error.value.detail == "provider_temporarily_unavailable"

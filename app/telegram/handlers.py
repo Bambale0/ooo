@@ -4,7 +4,7 @@ from uuid import UUID
 
 from aiogram.types import FSInputFile
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.accounts.models import ApiKey, PartnerApplication
 from app.accounts.router import (
@@ -25,6 +25,7 @@ from app.payments.service import get_partner_payment, refresh_configured_invoice
 from app.support.models import SupportAttachment, SupportTicket
 from app.support.service import append_message, attachment_for, get_ticket, ticket_messages
 from app.telegram.actions import confirm_action
+from app.telegram.models import BotNotification
 from app.telegram.service import is_admin, new_action, notify, partner_for
 from app.telegram.ui import format_msk, home_keyboard, keyboard, show, status_label, transaction_label
 
@@ -81,11 +82,66 @@ async def registration_documents(event, dialog) -> None:
 
 
 async def activate_application_and_issue_key(db, application: PartnerApplication):
-    partner = await auto_activate_application(application.id, db)
-    api_key = await create_partner_api_key(
-        partner.id,
-        ApiKeyCreate(name="Автоматический ключ"),
-        db,
+    try:
+        # Pool assignment, partner activation, and internal key creation are
+        # one savepoint. A handled provisioning failure must roll the pool row
+        # back to available before the durable admin notification is written.
+        async with db.begin_nested():
+            partner = await auto_activate_application(application.id, db)
+            api_key = await create_partner_api_key(
+                partner.id,
+                ApiKeyCreate(name="Автоматический ключ"),
+                db,
+            )
+    except HTTPException as exc:
+        if str(exc.detail) not in {
+            "provider_key_pool_empty",
+            "provider_key_pool_unavailable",
+            "provider_key_pool_configuration_invalid",
+            "provider_key_pool_duplicate",
+            "provider_credentials_encryption_not_configured",
+            "provider_key_invalid",
+            "provider_key_mode_unsupported",
+            "registration_invite_required",
+        }:
+            raise
+        invite_missing = str(exc.detail) == "registration_invite_required"
+        await db.execute(
+            delete(BotNotification).where(
+                BotNotification.dedupe_key
+                == (
+                    f"argolink-key-pool-depleted:{application.id}"
+                    if invite_missing
+                    else f"registration-invite-required:{application.id}"
+                ),
+                BotNotification.sent_at.is_(None),
+            )
+        )
+        await notify(
+            db,
+            get_settings().admin_telegram_id,
+            (
+                f"Заявка {application.id} ожидает подтверждённое одноразовое приглашение."
+                if invite_missing
+                else f"Новая заявка {application.id} ожидает отдельный ключ ArgoLink: пул пуст или недоступен."
+            ),
+            (
+                f"registration-invite-required:{application.id}"
+                if invite_missing
+                else f"argolink-key-pool-depleted:{application.id}"
+            ),
+        )
+        return None
+    await db.execute(
+        delete(BotNotification).where(
+            BotNotification.dedupe_key.in_(
+                (
+                    f"argolink-key-pool-depleted:{application.id}",
+                    f"registration-invite-required:{application.id}",
+                )
+            ),
+            BotNotification.sent_at.is_(None),
+        )
     )
     await notify(
         db,
@@ -127,9 +183,39 @@ async def home(event, db, dialog) -> None:
             .first()
         )
         if not pending:
+            from app.accounts.registration_invites import has_registration_eligibility
+
+            if not await has_registration_eligibility(db, telegram_id=actor(event)):
+                reset(dialog)
+                await show(
+                    event,
+                    "Регистрация партнёров доступна по одноразовому приглашению. "
+                    "Откройте персональную ссылку, полученную от администратора. "
+                    "Ключ ArgoLink будет назначен автоматически после анкеты.",
+                    keyboard(back=None),
+                )
+                return
             await registration_documents(event, dialog)
             return
-        _, api_key = await activate_application_and_issue_key(db, pending)
+        result = await activate_application_and_issue_key(db, pending)
+        if result is None:
+            from app.accounts.registration_invites import has_registration_eligibility
+
+            eligible = await has_registration_eligibility(db, telegram_id=actor(event))
+            await db.commit()
+            await show(
+                event,
+                (
+                    "Заявка сохранена и ожидает отдельный ключ ArgoLink. Администратор уже уведомлён. "
+                    "Откройте /start после пополнения пула — повторная заявка не нужна."
+                    if eligible
+                    else "Заявка сохранена, но для автоматического подключения нужно одноразовое приглашение. "
+                    "Попросите администратора прислать персональную ссылку и откройте её в этом Telegram."
+                ),
+                keyboard(back=None),
+            )
+            return
+        _, api_key = result
         await db.commit()
         await show(
             event,
@@ -659,9 +745,26 @@ async def admin_callback(event, db, dialog, data: str) -> None:
                 ("InfAI: модели и цены", "admin_infai"),
                 ("Поддержка", "admin_support"),
                 ("Партнёры", "admin_partners:0"),
+                ("Ключи ArgoLink для регистраций", "admin_argolink_pool"),
                 ("Состояние", "admin_health"),
             ),
         )
+    elif data == "admin_argolink_pool":
+        from app.telegram.argolink_key_pool import show_pool
+
+        await show_pool(event, db, dialog)
+    elif data == "admin_argolink_pool_add":
+        from app.telegram.argolink_key_pool import prompt_add
+
+        await prompt_add(event, dialog)
+    elif data == "admin_argolink_invite_create":
+        from app.telegram.argolink_key_pool import create_invite
+
+        await create_invite(event, db, dialog)
+    elif data.startswith("admin_argolink_invite_revoke:"):
+        from app.telegram.argolink_key_pool import revoke_invite
+
+        await revoke_invite(event, db, dialog, str(UUID(data.split(":", 1)[1])))
     elif data == "admin_infai":
         from app.telegram.infai import overview
 
@@ -856,7 +959,27 @@ async def handle_message(event, db, dialog) -> None:
     command = value.split(" ", 1)[0].split("@", 1)[0]
     if command == "/start":
         parts = value.split(maxsplit=1)
-        code = parts[1][4:] if len(parts) == 2 and parts[1].startswith("ref_") else None
+        parameter = parts[1] if len(parts) == 2 else ""
+        if parameter.startswith("invite_"):
+            from app.accounts.registration_invites import bind_registration_invite
+
+            try:
+                await bind_registration_invite(
+                    db,
+                    telegram_id=actor(event),
+                    token=parameter.removeprefix("invite_"),
+                )
+            except HTTPException as exc:
+                if str(exc.detail) != "registration_invite_invalid":
+                    raise
+                await show(
+                    event,
+                    "Приглашение недействительно, уже использовано или отозвано. "
+                    "Попросите администратора прислать новую персональную ссылку.",
+                    keyboard(back=None),
+                )
+                return
+        code = parameter[4:] if parameter.startswith("ref_") else None
         from app.referrals.service import bind_referral
 
         await bind_referral(db, referred_telegram_id=actor(event), code=code)
@@ -870,6 +993,11 @@ async def handle_message(event, db, dialog) -> None:
     if state.startswith("admin_") and not is_admin(user):
         reset(dialog)
         raise HTTPException(403, "admin_required")
+    if state == "admin_argolink_pool_add":
+        from app.telegram.argolink_key_pool import accept_keys
+
+        await accept_keys(event, db, dialog, value)
+        return
     if state == "development_intake":
         from app.telegram.development import handle_message as development_message
 
@@ -911,8 +1039,26 @@ async def handle_message(event, db, dialog) -> None:
             ),
             db,
         )
-        _, api_key = await activate_application_and_issue_key(db, app)
+        result = await activate_application_and_issue_key(db, app)
         reset(dialog)
+        if result is None:
+            from app.accounts.registration_invites import has_registration_eligibility
+
+            eligible = await has_registration_eligibility(db, telegram_id=user)
+            await db.commit()
+            await show(
+                event,
+                (
+                    "Заявка сохранена и ожидает отдельный ключ ArgoLink. Администратор уже уведомлён. "
+                    "Откройте /start после пополнения пула — повторная заявка не нужна."
+                    if eligible
+                    else "Заявка сохранена, но для автоматического подключения нужно одноразовое приглашение. "
+                    "Попросите администратора прислать персональную ссылку и откройте её в этом Telegram."
+                ),
+                keyboard(back=None),
+            )
+            return
+        _, api_key = result
         await db.commit()
         await show(
             event,

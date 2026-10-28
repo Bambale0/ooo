@@ -10,6 +10,7 @@ os.environ.setdefault("ADMIN_API_TOKEN", "test-admin-token")
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite://")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6399/0")
 os.environ.setdefault("ARGOLINK_API_KEY", "test-argolink-key")
+os.environ.setdefault("REGISTRATION_INVITE_REQUIRED", "false")
 os.environ.setdefault("PROVIDER_CREDENTIALS_MASTER_KEY", "test-provider-credentials-master-key-32")
 os.environ.setdefault("CRYPTO_PAY_API_TOKEN", "test-crypto-pay-token")
 

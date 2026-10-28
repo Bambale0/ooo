@@ -160,7 +160,8 @@ async def reserve(
             raise InferenceAdmissionError(422, "invalid_draft_source", failure_stage="request_context")
     elif draft_context is not None:
         credential = None
-        if not get_settings().argolink_api_key:
+        settings = get_settings()
+        if not settings.argolink_shared_fallback_enabled or not settings.argolink_api_key:
             raise InferenceAdmissionError(422, "invalid_draft_source", failure_stage="request_context")
     else:
         credential = await get_active_provider_credential(db, partner.id, "argolink")

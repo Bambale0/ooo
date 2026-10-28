@@ -49,10 +49,12 @@ def validate_production_config() -> list[str]:
     if not settings.redis_url.startswith(("redis://", "rediss://")):
         errors.append("REDIS_URL must use redis or rediss")
     if settings.telegram_bot_token:
+        if not settings.registration_invite_required:
+            errors.append("REGISTRATION_INVITE_REQUIRED must be true for production Telegram registration")
         if not settings.admin_telegram_id or not settings.admin_telegram_id.isdigit():
             errors.append("ADMIN_TELEGRAM_ID must be the verified administrator's numeric ID")
-        if not settings.argolink_api_key:
-            errors.append("ARGOLINK_API_KEY is required for automatic partner activation")
+        if settings.argolink_shared_fallback_enabled and not settings.argolink_api_key:
+            errors.append("ARGOLINK_API_KEY is required for legacy partners without a dedicated provider credential")
         username = (settings.telegram_bot_username or "").lstrip("@")
         if not username or not username.replace("_", "").isalnum():
             errors.append("TELEGRAM_BOT_USERNAME is required for referral links")
