@@ -4,6 +4,7 @@ import json
 
 from aiogram.exceptions import TelegramBadRequest
 from fastapi import HTTPException
+from sqlalchemy import func, select
 
 from app.infrastructure.config import get_settings
 from app.infrastructure.security import decrypt_secret, encrypt_secret
@@ -13,6 +14,7 @@ from app.providers.key_pool import (
     pool_counts,
     validate_new_pool_keys,
 )
+from app.providers.models import ProviderKeyPoolItem
 from app.telegram.service import is_admin, new_action
 from app.telegram.ui import keyboard, show
 
@@ -20,9 +22,19 @@ from app.telegram.ui import keyboard, show
 async def show_pool(event, db, dialog) -> None:
     dialog.state, dialog.data = "menu", {}
     free, assigned = await pool_counts(db)
+    shared = await db.scalar(select(func.count()).select_from(ProviderKeyPoolItem).where(
+        ProviderKeyPoolItem.status == "shared", ProviderKeyPoolItem.provider == "argolink",
+    ))
+    mode = (
+        "Новые партнёры автоматически используют выбранный общий ключ. "
+        "Он не расходуется на каждую регистрацию; балансы и API-ключи партнёров раздельные."
+        if get_settings().argolink_registration_shared_pool_item_id
+        else "Режим: отдельный ключ из пула на каждого нового партнёра."
+    )
     await show(
         event,
-        f"Пул ключей ArgoLink для новых регистраций\n\nСвободно: {free}\nВыдано: {assigned}\n\n"
+        f"Пул ключей ArgoLink для новых регистраций\n\nСвободно: {free}\nВыдано: {assigned}\nОбщих: {shared}\n\n"
+        f"{mode}\n\n"
         "Секреты и префиксы здесь никогда не отображаются.",
         keyboard(("Добавить ключи", "admin_argolink_pool_add"), back="admin_menu"),
     )

@@ -34,6 +34,7 @@ from app.providers.service import (
     get_active_provider_credential,
     get_partner_provider_adapter,
     has_provider_runtime_credential,
+    partner_credential_scope,
 )
 from app.webhooks.service import ensure_terminal_webhook_event
 
@@ -306,7 +307,7 @@ async def dispatch_generation_to_provider(
                 select(ProviderCredential)
                 .where(
                     ProviderCredential.id == draft_credential_id,
-                    ProviderCredential.partner_id == generation.partner_id,
+                    partner_credential_scope(generation.partner_id, provider),
                     ProviderCredential.provider == PRIMARY_PROVIDER,
                     ProviderCredential.is_active.is_(True),
                     ProviderCredential.encrypted_api_key.is_not(None),
@@ -351,7 +352,7 @@ async def dispatch_generation_to_provider(
                 select(ProviderCredential)
                 .where(
                     ProviderCredential.id == attempt.credential_id,
-                    ProviderCredential.partner_id == generation.partner_id,
+                    partner_credential_scope(generation.partner_id, provider),
                     ProviderCredential.provider == provider,
                     ProviderCredential.is_active.is_(True),
                     ProviderCredential.encrypted_api_key.is_not(None),

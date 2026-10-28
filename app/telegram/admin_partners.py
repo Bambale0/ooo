@@ -13,6 +13,7 @@ from app.generations.models import Generation
 from app.inference.correlation import generation_client_request_id
 from app.payments.models import PaymentInvoice
 from app.providers.models import ProviderAttempt, ProviderCredential
+from app.providers.service import partner_credential_scope
 from app.telegram.models import BotDialog
 from app.telegram.service import is_admin
 from app.telegram.ui import format_msk, keyboard, show
@@ -376,7 +377,7 @@ async def show_partner_credentials(event, db, data: str) -> None:
         (
             await db.execute(
                 select(ProviderCredential)
-                .where(ProviderCredential.partner_id == partner_id)
+                .where(partner_credential_scope(partner_id, "argolink", active_binding=False))
                 .order_by(ProviderCredential.created_at.desc())
                 .offset(page * DETAIL_PAGE_SIZE)
                 .limit(DETAIL_PAGE_SIZE + 1)

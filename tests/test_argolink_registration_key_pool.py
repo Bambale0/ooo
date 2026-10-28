@@ -346,7 +346,7 @@ async def test_empty_pool_keeps_application_pending_and_retry_uses_same_applicat
 
     application = await db_session.scalar(select(PartnerApplication))
     assert application.status == "pending"
-    assert "ожидает отдельный ключ ArgoLink" in screen.text
+    assert "Подключение временно недоступно" in screen.text
     assert await db_session.scalar(select(func.count()).select_from(Partner)) == 0
     assert await db_session.scalar(select(func.count()).select_from(ApiKey)) == 0
     assert await db_session.scalar(select(func.count()).select_from(BotNotification)) == 1

@@ -33,7 +33,11 @@ from app.infrastructure.config import get_settings
 from app.media.video_inputs import eligible_video_input, prepare_video_inputs, snapshot_is_fresh
 from app.providers.base import ProviderGenerationRequest
 from app.providers.models import ProviderAttempt, ProviderCredential
-from app.providers.service import get_active_provider_credential, has_provider_runtime_credential
+from app.providers.service import (
+    get_active_provider_credential,
+    has_provider_runtime_credential,
+    partner_credential_scope,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +154,7 @@ async def reserve(
         credential = await db.scalar(
             select(ProviderCredential).where(
                 ProviderCredential.id == draft_context["credential_id"],
-                ProviderCredential.partner_id == partner.id,
+                partner_credential_scope(partner.id, "argolink"),
                 ProviderCredential.provider == "argolink",
                 ProviderCredential.is_active.is_(True),
                 ProviderCredential.encrypted_api_key.is_not(None),
