@@ -174,6 +174,7 @@ async def test_admin_pool_add_is_authorized_encrypted_and_all_or_nothing(cabinet
     assert "sk-pool" not in screen.text
     await feed(user=999, callback=f"confirm:{action.id}")
     assert action.status == "applied"
+    assert action.payload == {"count": 2, "added": 2}
     assert await db_session.scalar(select(func.count()).select_from(ProviderKeyPoolItem)) == 2
     pool_screen = (await feed(user=999, callback="admin_argolink_pool"))[-1]
     assert "Свободно: 2" in pool_screen.text and "sk-" not in pool_screen.text

@@ -83,4 +83,8 @@ async def execute_add_action(db, action, actor: str) -> int:
         or not all(isinstance(x, str) for x in keys)
     ):
         raise HTTPException(422, "provider_key_pool_input_invalid")
-    return await add_pool_keys(db, keys, source="telegram_admin", actor=f"telegram:{actor}")
+    added = await add_pool_keys(db, keys, source="telegram_admin", actor=f"telegram:{actor}")
+    # Keep the durable audit count, but discard the now-redundant ciphertext
+    # after the pool rows have been staged in the same transaction.
+    action.payload = {"count": len(keys), "added": added}
+    return added
