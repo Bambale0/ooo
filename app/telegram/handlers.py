@@ -106,6 +106,17 @@ async def activate_application_and_issue_key(db, application: PartnerApplication
         }:
             raise
         invite_missing = str(exc.detail) == "registration_invite_required"
+        await db.execute(
+            delete(BotNotification).where(
+                BotNotification.dedupe_key
+                == (
+                    f"argolink-key-pool-depleted:{application.id}"
+                    if invite_missing
+                    else f"registration-invite-required:{application.id}"
+                ),
+                BotNotification.sent_at.is_(None),
+            )
+        )
         await notify(
             db,
             get_settings().admin_telegram_id,

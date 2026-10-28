@@ -334,6 +334,32 @@ async def test_single_use_invite_gates_distinct_telegram_ids_before_pool_claim(d
     assert await pool_counts(db_session) == (1, 1)
 
 
+async def test_pending_alert_tracks_current_invite_then_pool_blocker(db_session, monkeypatch):
+    monkeypatch.setattr(get_settings(), "registration_invite_required", True)
+    monkeypatch.setattr(get_settings(), "admin_telegram_id", "999")
+    monkeypatch.setattr(get_settings(), "argolink_registration_key_pool_json", None)
+    application = PartnerApplication(telegram_id="alert-transition", company_name="C", project_name="P")
+    db_session.add(application)
+    await db_session.commit()
+
+    assert await activate_application_and_issue_key(db_session, application) is None
+    await db_session.commit()
+    invite_alert = f"registration-invite-required:{application.id}"
+    pool_alert = f"argolink-key-pool-depleted:{application.id}"
+    assert await db_session.scalar(
+        select(func.count()).select_from(BotNotification).where(BotNotification.dedupe_key == invite_alert)
+    ) == 1
+
+    _, token = await create_registration_invite(db_session, actor="telegram:999")
+    await bind_registration_invite(db_session, telegram_id=application.telegram_id, token=token)
+    assert await activate_application_and_issue_key(db_session, application) is None
+    await db_session.commit()
+
+    alerts = set(await db_session.scalars(select(BotNotification.dedupe_key)))
+    assert pool_alert in alerts
+    assert invite_alert not in alerts
+
+
 async def test_admin_can_create_and_revoke_registration_invite(cabinet, db_session, monkeypatch):
     feed, _ = cabinet
     monkeypatch.setattr(get_settings(), "telegram_bot_username", "neironych_test_bot")

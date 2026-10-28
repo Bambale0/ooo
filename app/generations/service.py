@@ -292,8 +292,9 @@ async def dispatch_generation_to_provider(
     draft_credential_id = (generation.request_payload or {}).get("draft_source_credential_id")
     draft_runtime_credential = (generation.request_payload or {}).get("draft_source_runtime_credential") is True
     if provider == PRIMARY_PROVIDER and draft_runtime_credential:
-        api_key = get_settings().argolink_api_key
-        if not api_key:
+        settings = get_settings()
+        api_key = settings.argolink_api_key
+        if not settings.argolink_shared_fallback_enabled or not api_key:
             return await cancel_before_submit(db, generation, provider=provider)
         from app.providers.registry import get_provider_adapter
 

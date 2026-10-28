@@ -135,6 +135,40 @@ async def test_failed_accepted_task_is_never_resubmitted_to_same_provider(db_ses
     assert partner.balance_rub == Decimal("100")
 
 
+async def test_dedicated_only_mode_blocks_legacy_draft_shared_key(db_session, adapter, monkeypatch):
+    partner = Partner(
+        telegram_id=str(uuid4()),
+        company_name="Dedicated draft",
+        project_name="Dedicated draft",
+        balance_rub=Decimal("100"),
+    )
+    db_session.add(partner)
+    await db_session.flush()
+    generation = Generation(
+        partner_id=partner.id,
+        model_id="draft-model",
+        model_slug="seedance-2.5",
+        mode="videos/generations",
+        resolution="1080p",
+        duration_seconds=5,
+        idempotency_key=str(uuid4()),
+        partner_price_rub=Decimal("0"),
+        prompt="complete draft",
+        status="queued",
+        request_payload={"draft_source_runtime_credential": True},
+    )
+    db_session.add(generation)
+    await db_session.flush()
+    monkeypatch.setattr(get_settings(), "argolink_api_key", "legacy-shared-key")
+    monkeypatch.setattr(get_settings(), "argolink_shared_fallback_enabled", False)
+
+    attempt = await dispatch_generation_to_provider(db_session, generation)
+
+    assert attempt.status == "cancelled"
+    assert generation.status == "cancelled"
+    assert adapter.keys == []
+
+
 async def test_terminal_failed_task_stays_terminal_and_releases_retail_once(db_session, adapter):
     partner, generation, attempt, _ = await _seed(db_session)
     for _ in range(3):
