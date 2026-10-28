@@ -109,7 +109,6 @@ def test_edit_preserves_omitted_duration_and_ratio():
     "changes",
     [
         {"reference_videos": [{"url": "https://example.org/a.mp4"}, {"url": "https://example.org/b.mp4"}]},
-        {"reference_images": [{"url": "https://example.org/photo.jpg"}]},
         {"reference_audios": [{"url": "https://example.org/audio.mp3"}]},
         {"reference_videos": []},
         {"duration": 10},
@@ -121,6 +120,11 @@ def test_edit_preserves_omitted_duration_and_ratio():
 def test_edit_rejects_unsupported_media_before_reserve(changes):
     with pytest.raises(ValueError):
         validate_request("videos/generations", edit_body(**changes))
+
+
+def test_edit_accepts_documented_image_steering():
+    body = edit_body(reference_images=[{"url": "https://example.org/photo.jpg"}])
+    assert validate_request("videos/generations", body) == body
 
 
 def test_normal_reference_still_accepts_multiple_media():

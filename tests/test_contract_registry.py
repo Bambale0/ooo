@@ -197,6 +197,56 @@ def test_seedance_edit_inherited_dimensions_keep_conservative_reserve(controls):
     assert video_reserve_seconds(body) == 60
 
 
+def test_seedance_edit_accepts_documented_image_steering_references():
+    body = {
+        "model": "seedance-2.5",
+        "prompt": "Keep the subject from @Image 1 while warming the source clip",
+        "omni_reference_task_type": "edit",
+        "reference_videos": [{"url": "https://example.org/clip.mp4"}],
+        "reference_images": [{"url": "https://example.org/subject.png"}],
+        "resolution": "720p",
+    }
+
+    assert validate_request("videos/generations", body) == body
+    assert video_reserve_seconds(body) == 60
+
+
+def test_seedance_extend_accepts_documented_mixed_steering_references():
+    body = {
+        "model": "seedance-2.5",
+        "prompt": "Continue @Video 1 forward using @Image 1 and @Audio 1",
+        "omni_reference_task_type": "extend",
+        "reference_videos": [{"url": "https://example.org/clip.mp4"}],
+        "reference_images": [{"url": "https://example.org/subject.png"}],
+        "reference_audios": [{"url": "https://example.org/beat.mp3"}],
+        "duration": 8,
+        "resolution": "1080p",
+    }
+
+    assert validate_request("videos/generations", body) == body
+    assert video_reserve_seconds(body) == 38
+
+
+def test_seedance_draft_preview_and_completion_have_explicit_shapes():
+    preview = {
+        "model": "seedance-2.5",
+        "prompt": "Preview the shot",
+        "duration": 7,
+        "draft": True,
+    }
+    completion = {
+        "model": "seedance-2.5",
+        "draft_task": {"id": "b1674e84-47a3-441f-9c77-7c3b7b4b4a69"},
+    }
+
+    assert validate_request("videos/generations", preview) == preview
+    assert validate_request("videos/generations", completion) == completion
+    with pytest.raises(ValueError, match="invalid_draft_request"):
+        validate_request("videos/generations", {**preview, "resolution": "720p"})
+    with pytest.raises(ValueError, match="invalid_draft_request"):
+        validate_request("videos/generations", {**completion, "prompt": "must be inherited"})
+
+
 @pytest.mark.parametrize(
     "controls",
     [
@@ -229,7 +279,7 @@ def test_seedance_edit_rejects_explicit_output_dimensions(controls):
         ("generate_audio", "false"),
         ("seed", 123),
         ("resolution", "8k"),
-        ("omni_reference_task_type", "extend"),
+        ("omni_reference_task_type", "unknown"),
     ],
 )
 def test_reject_provider_unsupported_controls(field, value):

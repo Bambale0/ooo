@@ -21,10 +21,25 @@ VIDEO_INPUT_USD_PER_SECOND = {
     "720p": Decimal("0.117"),
     "1080p": Decimal("0.289"),
 }
+EXTEND_USD_PER_SECOND = {
+    "480p": Decimal("0.0615"),
+    "720p": Decimal("0.1379"),
+    "1080p": Decimal("0.3398"),
+}
+DRAFT_PREVIEW_USD_PER_SECOND = Decimal("0.1028")
+DRAFT_FULL_USD_PER_SECOND = Decimal("0.5682")
 
 
 def video_input_cost(model: str, body: dict, resolution: str) -> Decimal | None:
-    if model == EDIT_MODEL and body.get("reference_videos"):
+    if model != EDIT_MODEL:
+        return None
+    if "draft_task" in body:
+        return DRAFT_FULL_USD_PER_SECOND
+    if body.get("draft") is True:
+        return DRAFT_PREVIEW_USD_PER_SECOND
+    if body.get("omni_reference_task_type") == "extend":
+        return EXTEND_USD_PER_SECOND[resolution]
+    if body.get("reference_videos"):
         return VIDEO_INPUT_USD_PER_SECOND[resolution]
     return None
 
@@ -47,6 +62,9 @@ def video_pricing_mode(body: dict) -> str:
         body.get("model") == EDIT_MODEL
         and edit_markup(body.get("model")) is not None
         and bool(body.get("reference_videos"))
+        and body.get("omni_reference_task_type") != "extend"
+        and body.get("draft") is not True
+        and "draft_task" not in body
     ):
         return EDIT_MODE
     return "default"

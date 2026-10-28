@@ -487,7 +487,94 @@ async def test_native_video_reserves_references_and_preserves_controls(client, d
     await upstream.aclose()
 
 
-@pytest.mark.parametrize("media_field", ["reference_images", "reference_audios", "reference_videos"])
+async def test_seedance_draft_completion_resolves_private_provider_task_and_pins_credential(
+    client, db_session, monkeypatch
+):
+    from unittest.mock import AsyncMock
+
+    from app.generations.service import dispatch_generation_to_provider, poll_generation_provider
+
+    submitted = []
+
+    def handler(request):
+        if request.method == "POST":
+            submitted.append(json.loads(request.content))
+            task_id = "private-draft-task" if len(submitted) == 1 else "private-full-task"
+            return httpx.Response(202, json={"request_id": task_id})
+        task_id = request.url.path.rsplit("/", 1)[-1]
+        duration = 7
+        return httpx.Response(
+            200,
+            json={
+                "request_id": task_id,
+                "model": "seedance-2.5",
+                "status": "done",
+                "usage": {
+                    "output_seconds": duration,
+                    "reference_video_seconds": 0,
+                    "billed_seconds": duration,
+                },
+            },
+        )
+
+    partner, headers, upstream = await setup(
+        db_session,
+        monkeypatch,
+        handler,
+        model="seedance-2.5",
+        category="video",
+        rates=[
+            ("default", "480p", "second", Decimal("20"), Decimal(".0874")),
+            ("default", "1080p", "second", Decimal("80"), Decimal(".483")),
+        ],
+    )
+    adapter = ArgoLinkAdapter(api_key="upstream", client=upstream)
+    monkeypatch.setattr(
+        "app.generations.service.get_partner_provider_adapter",
+        AsyncMock(return_value=adapter),
+    )
+    try:
+        preview_body = {
+            "model": "seedance-2.5",
+            "prompt": "Preview this shot",
+            "duration": 7,
+            "draft": True,
+        }
+        preview = await client.post("/v1/videos/generations", headers=headers, json=preview_body)
+        assert preview.status_code == 202, preview.text
+        preview_generation = await db_session.get(Generation, preview.json()["request_id"])
+        preview_attempt = await dispatch_generation_to_provider(db_session, preview_generation)
+        preview_attempt.next_poll_at = None
+        await db_session.commit()
+        await poll_generation_provider(db_session, preview_generation)
+        assert preview_generation.status == "completed"
+
+        completion_body = {
+            "model": "seedance-2.5",
+            "draft_task": {"id": preview_generation.id},
+        }
+        completion = await client.post(
+            "/v1/videos/generations",
+            headers={**headers, "Idempotency-Key": "draft-completion-key"},
+            json=completion_body,
+        )
+        assert completion.status_code == 202, completion.text
+        full = await db_session.get(Generation, completion.json()["request_id"])
+        assert full.resolution == "1080p" and full.duration_seconds == 7
+        assert full.request_payload["native_body"] == completion_body
+        assert full.request_payload["effective_native_body"] == {
+            "model": "seedance-2.5",
+            "draft_task": {"id": "private-draft-task"},
+        }
+        assert full.request_payload["draft_source_credential_id"] == preview_attempt.credential_id
+
+        await dispatch_generation_to_provider(db_session, full)
+        assert submitted == [preview_body, full.request_payload["effective_native_body"]]
+    finally:
+        await upstream.aclose()
+
+
+@pytest.mark.parametrize("media_field", ["reference_audios", "reference_videos"])
 async def test_edit_extra_media_rejected_before_money_or_job(client, db_session, monkeypatch, media_field):
     def forbidden(request):
         raise AssertionError("Invalid edit must not contact the provider")

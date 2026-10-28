@@ -33,12 +33,12 @@ async def test_argolink_adapter_submits_polls_and_streams_with_configured_key():
         requests.append(request)
         assert request.headers.get("Authorization") == "Bearer test-key"
         if request.method == "POST" and request.url.path == "/v1/videos/generations":
-            body = request.read().decode("utf-8")
-            assert "seedance-2.5" in body
+            body = __import__("json").loads(request.read())
+            assert body["model"] == "seedance-2.5"
             assert "metadata" not in body
-            assert '"duration":5' in body
-            assert '"aspect_ratio":"9:16"' in body
-            assert "https://cdn.example.test/reference.jpg" in body
+            assert body["duration"] == 5
+            assert body["aspect_ratio"] == "9:16"
+            assert body["reference_images"] == [{"url": "https://cdn.example.test/reference.jpg"}]
             return httpx.Response(202, json={"request_id": "video_task_123"})
         if request.method == "GET" and request.url.path == "/v1/videos/video_task_123":
             return httpx.Response(200, json={"status": "done"})
@@ -150,6 +150,79 @@ async def test_argolink_rate_limit_preserves_retry_after_hint():
     assert error.raw_error == "argolink_rate_limited"
     assert error.retryable is True
     assert error.retry_after_seconds == 17.0
+
+
+@pytest.mark.parametrize(
+    "status,provider_code",
+    [(400, "invalid_input"), (402, "insufficient_balance")],
+)
+async def test_argolink_rejection_keeps_only_safe_structured_diagnostics(status, provider_code):
+    private_message = "private prompt and signed media URL must never be persisted"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            status,
+            headers={"X-Client-Request-ID": "provider-request-123"},
+            json={"error": {"code": provider_code, "message": private_message}},
+            request=request,
+        )
+
+    async with httpx.AsyncClient(
+        base_url="https://argolink.io", transport=httpx.MockTransport(handler)
+    ) as client:
+        with pytest.raises(ProviderAdapterError) as exc_info:
+            await ArgoLinkAdapter(api_key="test-key", client=client).submit_generation(
+                ProviderGenerationRequest(
+                    generation_id="generation-rejected",
+                    model_slug="seedance-2.5",
+                    mode="text_to_video",
+                    resolution="720p",
+                    prompt="test",
+                    duration_seconds=5,
+                )
+            )
+
+    diagnostics = __import__("json").loads(exc_info.value.raw_error)
+    assert diagnostics == {
+        "kind": "argolink_http_error",
+        "upstream_status": status,
+        "upstream_error_code": provider_code,
+        "upstream_request_id": "provider-request-123",
+    }
+    assert private_message not in exc_info.value.raw_error
+
+
+def test_video_rejection_exposes_distinct_safe_400_and_402_reasons():
+    import json
+
+    from app.inference.router import video_failure_error
+
+    invalid = video_failure_error(
+        "provider_rejected_request",
+        json.dumps({"kind": "argolink_http_error", "upstream_status": 400, "upstream_error_code": "invalid_input"}),
+    )
+    funding = video_failure_error(
+        "provider_rejected_request",
+        json.dumps(
+            {"kind": "argolink_http_error", "upstream_status": 402, "upstream_error_code": "insufficient_balance"}
+        ),
+    )
+
+    assert invalid == {
+        "type": "provider_rejected_request",
+        "code": "invalid_request",
+        "message": "The video request was rejected as invalid. Check its parameters and input media.",
+        "retryable": False,
+    }
+    assert funding == {
+        "type": "provider_rejected_request",
+        "code": "provider_temporarily_unavailable",
+        "message": (
+            "The video service is temporarily unavailable. "
+            "Submit a new request later with a new idempotency key."
+        ),
+        "retryable": True,
+    }
 
 
 async def test_argolink_submit_read_timeout_is_not_replayed_automatically():

@@ -15,7 +15,7 @@ from app.providers.models import ProviderAttempt
     "controls,reason",
     [
         (
-            {"omni_reference_task_type": "edit", "reference_images": [{"url": "https://example.org/ref.jpg"}]},
+            {"omni_reference_task_type": "edit", "reference_audios": [{"url": "https://example.org/ref.mp3"}]},
             "edit_requires_single_video",
         ),
         ({"duration": "5"}, "invalid_duration"),
