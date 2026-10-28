@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     argolink_api_key: str | None = None
     argolink_shared_fallback_enabled: bool = True
     argolink_registration_key_pool_json: SecretStr | None = None
+    argolink_registration_claim_budget: int = Field(default=2, ge=1, le=1000)
+    argolink_registration_claim_window_seconds: int = Field(default=86400, ge=60, le=604800)
     provider_notification_webhook_secret: SecretStr | None = None
     infai_system_token: SecretStr | None = None
     infai_user_id: int | None = Field(default=None, gt=0)

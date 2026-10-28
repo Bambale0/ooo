@@ -102,19 +102,26 @@ async def activate_application_and_issue_key(db, application: PartnerApplication
             "provider_credentials_encryption_not_configured",
             "provider_key_invalid",
             "provider_key_mode_unsupported",
+            "provider_key_registration_budget_exhausted",
             "existing_partner_requires_manual_provider_credential",
         }:
             raise
         existing_partner = str(exc.detail) == "existing_partner_requires_manual_provider_credential"
+        budget_exhausted = str(exc.detail) == "provider_key_registration_budget_exhausted"
         blocker_keys = {
             f"argolink-key-pool-depleted:{application.id}",
+            f"argolink-key-registration-budget:{application.id}",
             f"registration-invite-required:{application.id}",
             f"existing-partner-key-blocked:{application.id}",
         }
         current_blocker = (
             f"existing-partner-key-blocked:{application.id}"
             if existing_partner
-            else f"argolink-key-pool-depleted:{application.id}"
+            else (
+                f"argolink-key-registration-budget:{application.id}"
+                if budget_exhausted
+                else f"argolink-key-pool-depleted:{application.id}"
+            )
         )
         await db.execute(
             delete(BotNotification).where(
@@ -128,16 +135,21 @@ async def activate_application_and_issue_key(db, application: PartnerApplication
             (
                 f"Заявка {application.id} относится к существующему партнёру; автоматическая выдача ключа запрещена."
                 if existing_partner
-                else f"Новая заявка {application.id} ожидает отдельный ключ ArgoLink: пул пуст или недоступен."
+                else (
+                    f"Новая заявка {application.id} ожидает: достигнут глобальный лимит автоматических регистраций."
+                    if budget_exhausted
+                    else f"Новая заявка {application.id} ожидает отдельный ключ ArgoLink: пул пуст или недоступен."
+                )
             ),
             current_blocker,
         )
-        return "existing_partner" if existing_partner else None
+        return "existing_partner" if existing_partner else "budget" if budget_exhausted else None
     await db.execute(
         delete(BotNotification).where(
             BotNotification.dedupe_key.in_(
                 (
                     f"argolink-key-pool-depleted:{application.id}",
+                    f"argolink-key-registration-budget:{application.id}",
                     f"registration-invite-required:{application.id}",
                     f"existing-partner-key-blocked:{application.id}",
                 )
@@ -194,6 +206,15 @@ async def home(event, db, dialog) -> None:
                 event,
                 "Существующий аккаунт не изменён и новый ключ ему не выдавался. "
                 "Администратор уведомлён и проверит доступ вручную.",
+                keyboard(back=None),
+            )
+            return
+        if result == "budget":
+            await db.commit()
+            await show(
+                event,
+                "Заявка сохранена: безопасный лимит автоматических регистраций временно исчерпан. "
+                "Администратор уведомлён. Откройте /start позже — повторная заявка не нужна.",
                 keyboard(back=None),
             )
             return
@@ -1011,6 +1032,15 @@ async def handle_message(event, db, dialog) -> None:
                 event,
                 "Существующий аккаунт не изменён и новый ключ ему не выдавался. "
                 "Администратор уведомлён и проверит доступ вручную.",
+                keyboard(back=None),
+            )
+            return
+        if result == "budget":
+            await db.commit()
+            await show(
+                event,
+                "Заявка сохранена: безопасный лимит автоматических регистраций временно исчерпан. "
+                "Администратор уведомлён. Откройте /start позже — повторная заявка не нужна.",
                 keyboard(back=None),
             )
             return

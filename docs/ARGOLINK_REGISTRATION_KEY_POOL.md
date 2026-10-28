@@ -8,6 +8,11 @@ rows created by the previous release remain inert for audit compatibility and ar
 Existing partners are never backfilled from the pool. A repeated registration for an existing legacy partner without an
 individual credential fails closed for administrator review without consuming a key.
 
+Automatic claims also have a global rolling anti-abuse budget. The defaults allow two new claims per 24 hours and can be
+changed deliberately with `ARGOLINK_REGISTRATION_CLAIM_BUDGET` and
+`ARGOLINK_REGISTRATION_CLAIM_WINDOW_SECONDS`. PostgreSQL serializes the budget check and claim in the same transaction;
+budget exhaustion keeps the application pending and notifies the user and administrator without consuming a key.
+
 ## Production secret bootstrap
 
 `ARGOLINK_REGISTRATION_KEY_POOL_JSON` is an optional one-time bootstrap secret. Its value is a JSON array:
@@ -36,6 +41,7 @@ administrator confirms. Mixed valid/invalid and duplicate batches are all-or-not
 ## Assignment guarantees
 
 - PostgreSQL is the source of truth. A conditional `UPDATE ... RETURNING` claims one available row atomically.
+- A transaction-scoped PostgreSQL advisory lock serializes the global rolling claim budget across different Telegram IDs.
 - `key_hash`, and the assignment's application ID, are unique. Replaying the same registration returns its existing
   credential instead of consuming another key.
 - Assignment, partner activation, encrypted `ProviderCredential`, consents and the internal `nrn_` key commit in the same

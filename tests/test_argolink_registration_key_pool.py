@@ -91,6 +91,42 @@ async def test_repeated_new_registration_reuses_one_key_for_same_telegram(db_ses
     assert await pool_counts(db_session) == (1, 1)
 
 
+async def test_global_claim_budget_blocks_new_identity_without_consuming_key(db_session, monkeypatch):
+    monkeypatch.setattr("app.providers.argolink.ArgoLinkAdapter.validate_key", _valid)
+    monkeypatch.setattr(get_settings(), "argolink_registration_claim_budget", 1)
+    monkeypatch.setattr(get_settings(), "argolink_registration_claim_window_seconds", 86400)
+    monkeypatch.setattr(get_settings(), "admin_telegram_id", "999")
+    await add_pool_keys(
+        db_session,
+        [
+            "sk-pool-budget-a-00000000000000001",
+            "sk-pool-budget-b-00000000000000002",
+        ],
+        source="test",
+        actor="test",
+    )
+    first = PartnerApplication(telegram_id="budget-first", company_name="C", project_name="P")
+    blocked = PartnerApplication(telegram_id="budget-blocked", company_name="C", project_name="P")
+    db_session.add_all([first, blocked])
+    await db_session.flush()
+
+    await auto_activate_application(first.id, db_session)
+    with pytest.raises(HTTPException) as error:
+        await auto_activate_application(blocked.id, db_session)
+
+    assert error.value.detail == "provider_key_registration_budget_exhausted"
+    assert await activate_application_and_issue_key(db_session, blocked) == "budget"
+    assert blocked.status == "pending"
+    assert await pool_counts(db_session) == (1, 1)
+    assert await db_session.scalar(select(func.count()).select_from(ProviderCredential)) == 1
+    assert await db_session.scalar(select(func.count()).select_from(Partner)) == 1
+    assert await db_session.scalar(
+        select(func.count())
+        .select_from(BotNotification)
+        .where(BotNotification.dedupe_key == f"argolink-key-registration-budget:{blocked.id}")
+    ) == 1
+
+
 async def test_claim_rolls_back_to_available_with_secret_intact(db_session, monkeypatch):
     monkeypatch.setattr("app.providers.argolink.ArgoLinkAdapter.validate_key", _valid)
     await add_pool_keys(
@@ -461,6 +497,7 @@ async def test_admin_pool_add_is_authorized_encrypted_and_all_or_nothing(cabinet
 
 async def test_concurrent_claims_do_not_assign_the_same_key(tmp_path, monkeypatch):
     monkeypatch.setattr("app.providers.argolink.ArgoLinkAdapter.validate_key", _valid)
+    monkeypatch.setattr(get_settings(), "argolink_registration_claim_budget", 10)
     database = tmp_path / "pool-concurrency.sqlite3"
     engine = create_async_engine(f"sqlite+aiosqlite:///{database}", connect_args={"timeout": 30})
     factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -497,6 +534,7 @@ async def test_postgres_four_way_claim_and_cross_table_insert_race(monkeypatch):
     if not url:
         pytest.skip("TEST_POSTGRES_DATABASE_URL is not configured")
     monkeypatch.setattr("app.providers.argolink.ArgoLinkAdapter.validate_key", _valid)
+    monkeypatch.setattr(get_settings(), "argolink_registration_claim_budget", 10)
     engine = create_async_engine(url, pool_size=8, max_overflow=0)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     suffix = uuid4().hex
