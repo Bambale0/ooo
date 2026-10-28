@@ -48,17 +48,20 @@ async def create_provider_credential(
             detail="provider_credentials_encryption_not_configured",
         )
 
+    registration_telegram_id = None
     if payload.partner_application_id is not None:
         application = await db.get(PartnerApplication, payload.partner_application_id)
         if application is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="application_not_found")
         if application.status != "pending":
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="application_not_pending")
+        registration_telegram_id = application.telegram_id
 
     if payload.partner_id is not None:
         partner = await db.get(Partner, payload.partner_id)
         if partner is None or partner.status == "deleted":
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="partner_not_found")
+        registration_telegram_id = partner.telegram_id
 
     key_hash = hash_secret(payload.api_key)
     from app.providers.key_pool import lock_key_hashes
@@ -95,6 +98,7 @@ async def create_provider_credential(
         encrypted_api_key=encrypt_secret(payload.api_key, settings.provider_credentials_master_key),
         partner_application_id=payload.partner_application_id,
         partner_id=payload.partner_id,
+        registration_telegram_id=registration_telegram_id,
     )
     db.add(credential)
     await db.flush()

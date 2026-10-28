@@ -10,8 +10,8 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.accounts.models import ApiKey, Partner, PartnerApplication
-from app.accounts.router import auto_activate_application, delete_partner
-from app.accounts.schemas import DeletePartnerCreate
+from app.accounts.router import auto_activate_application, delete_partner, transfer_telegram
+from app.accounts.schemas import DeletePartnerCreate, TransferTelegramCreate
 from app.infrastructure.config import get_settings
 from app.infrastructure.database import Base
 from app.infrastructure.security import decrypt_secret, hash_secret
@@ -196,6 +196,55 @@ async def test_delete_and_reregister_reuses_upstream_key_without_consuming_secon
     assert credentials[0].partner_id == second_partner.id
     assert credentials[0].partner_application_id == second_application.id
     assert (available, assigned) == (1, 1)
+
+
+async def test_transferred_identity_reuses_key_and_former_identity_cannot_inherit_it(db_session, monkeypatch):
+    monkeypatch.setattr("app.providers.argolink.ArgoLinkAdapter.validate_key", _valid)
+    keys = [f"sk-pool-transfer-{index}-000000000000001" for index in range(3)]
+    await add_pool_keys(db_session, keys, source="test", actor="test")
+    original_application = PartnerApplication(
+        telegram_id="111111", company_name="Original", project_name="Original"
+    )
+    db_session.add(original_application)
+    await db_session.flush()
+    original_partner = await auto_activate_application(original_application.id, db_session)
+    original_credential = await db_session.scalar(
+        select(ProviderCredential).where(ProviderCredential.partner_id == original_partner.id)
+    )
+    original_hash = original_credential.key_hash
+
+    await transfer_telegram(
+        original_partner.id,
+        TransferTelegramCreate(telegram_id="222222", reason="verified transfer"),
+        db_session,
+    )
+    assert original_credential.registration_telegram_id == "222222"
+    await delete_partner(original_partner.id, DeletePartnerCreate(reason="test transferred deletion"), db_session)
+
+    transferred_application = PartnerApplication(
+        telegram_id="222222", company_name="Transferred", project_name="Transferred"
+    )
+    former_application = PartnerApplication(
+        telegram_id="111111", company_name="Former", project_name="Former"
+    )
+    db_session.add_all([transferred_application, former_application])
+    await db_session.flush()
+    transferred_partner = await auto_activate_application(transferred_application.id, db_session)
+    former_partner = await auto_activate_application(former_application.id, db_session)
+    await db_session.commit()
+
+    transferred_credential = await db_session.scalar(
+        select(ProviderCredential).where(ProviderCredential.partner_id == transferred_partner.id)
+    )
+    former_credential = await db_session.scalar(
+        select(ProviderCredential).where(ProviderCredential.partner_id == former_partner.id)
+    )
+    available, assigned = await pool_counts(db_session)
+    assert transferred_credential.key_hash == original_hash
+    assert transferred_credential.registration_telegram_id == "222222"
+    assert former_credential.key_hash != original_hash
+    assert former_credential.registration_telegram_id == "111111"
+    assert (available, assigned) == (1, 2)
 
 
 async def test_empty_pool_keeps_application_pending_and_retry_uses_same_application(

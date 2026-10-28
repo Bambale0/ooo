@@ -16,6 +16,41 @@ depends_on = None
 
 def upgrade() -> None:
     op.add_column(
+        "provider_credentials",
+        sa.Column("registration_telegram_id", sa.String(64), nullable=True),
+    )
+    op.create_index(
+        "ix_provider_credentials_registration_telegram_id",
+        "provider_credentials",
+        ["registration_telegram_id"],
+    )
+    # Preserve the current identity for existing live credentials. Deleted
+    # accounts are intentionally not inferred from their original application:
+    # a prior Telegram transfer cannot be reconstructed safely.
+    op.execute(
+        sa.text(
+            """
+            UPDATE provider_credentials AS credential
+            SET registration_telegram_id = partner.telegram_id
+            FROM partners AS partner
+            WHERE credential.partner_id = partner.id
+              AND partner.status <> 'deleted'
+            """
+        )
+    )
+    op.execute(
+        sa.text(
+            """
+            UPDATE provider_credentials AS credential
+            SET registration_telegram_id = application.telegram_id
+            FROM partner_applications AS application
+            WHERE credential.partner_application_id = application.id
+              AND credential.partner_id IS NULL
+              AND credential.registration_telegram_id IS NULL
+            """
+        )
+    )
+    op.add_column(
         "partners",
         sa.Column(
             "requires_dedicated_argolink_credential",
@@ -63,3 +98,8 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_table("provider_key_pool_items")
     op.drop_column("partners", "requires_dedicated_argolink_credential")
+    op.drop_index(
+        "ix_provider_credentials_registration_telegram_id",
+        table_name="provider_credentials",
+    )
+    op.drop_column("provider_credentials", "registration_telegram_id")

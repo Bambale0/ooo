@@ -3,10 +3,9 @@
 import json
 
 from fastapi import HTTPException
-from sqlalchemy import and_, func, or_, select, text, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased
 
 from app.accounts.models import Partner, PartnerApplication
 from app.infrastructure.config import get_settings
@@ -178,19 +177,13 @@ async def provision_application_key(db: AsyncSession, application_id: str) -> Pr
     )
     if existing is not None:
         return existing
-    owner_application = aliased(PartnerApplication)
     reusable = await db.scalar(
         select(ProviderCredential)
-        .join(owner_application, ProviderCredential.partner_application_id == owner_application.id)
-        .join(Partner, ProviderCredential.partner_id == Partner.id)
         .where(
             ProviderCredential.provider == "argolink",
             ProviderCredential.is_active.is_(True),
             ProviderCredential.encrypted_api_key.is_not(None),
-            or_(
-                and_(Partner.status == "deleted", owner_application.telegram_id == application.telegram_id),
-                and_(Partner.status != "deleted", Partner.telegram_id == application.telegram_id),
-            ),
+            ProviderCredential.registration_telegram_id == application.telegram_id,
         )
         .order_by(ProviderCredential.created_at.desc())
         .with_for_update(of=ProviderCredential)
@@ -269,6 +262,7 @@ async def provision_application_key(db: AsyncSession, application_id: str) -> Pr
         key_prefix=plaintext[:8],
         encrypted_api_key=encrypt_secret(plaintext, master_key),
         partner_application_id=application_id,
+        registration_telegram_id=application.telegram_id,
     )
     db.add(credential)
     claimed.encrypted_api_key = None

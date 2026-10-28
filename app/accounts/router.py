@@ -360,6 +360,11 @@ async def transfer_telegram(partner_id: str, payload: TransferTelegramCreate, db
         raise HTTPException(409, "telegram_id_already_assigned")
     old = partner.telegram_id
     partner.telegram_id = payload.telegram_id
+    await db.execute(
+        update(ProviderCredential)
+        .where(ProviderCredential.partner_id == partner.id)
+        .values(registration_telegram_id=payload.telegram_id)
+    )
     db.add(
         PartnerAccountStateHistory(
             partner_id=partner.id,

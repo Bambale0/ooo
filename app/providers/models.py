@@ -24,6 +24,7 @@ class ProviderCredential(Base):
         ForeignKey("partners.id"),
         index=True,
     )
+    registration_telegram_id: Mapped[str | None] = mapped_column(String(64), index=True)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
     created_at: Mapped[object] = utc_created_at()
 
