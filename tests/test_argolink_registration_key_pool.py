@@ -363,6 +363,28 @@ async def test_existing_partner_without_credential_never_consumes_pool_key(db_se
     assert application.status == "pending"
 
 
+async def test_empty_pool_replaces_legacy_invite_blocker_notification(db_session, monkeypatch):
+    monkeypatch.setattr(get_settings(), "admin_telegram_id", "999")
+    monkeypatch.setattr(get_settings(), "argolink_registration_key_pool_json", None)
+    application = PartnerApplication(telegram_id="legacy-alert", company_name="C", project_name="P")
+    db_session.add(application)
+    await db_session.flush()
+    db_session.add(
+        BotNotification(
+            telegram_id="999",
+            text="obsolete invite blocker",
+            dedupe_key=f"registration-invite-required:{application.id}",
+        )
+    )
+    await db_session.commit()
+
+    assert await activate_application_and_issue_key(db_session, application) is None
+    await db_session.commit()
+
+    alerts = set(await db_session.scalars(select(BotNotification.dedupe_key)))
+    assert alerts == {f"argolink-key-pool-depleted:{application.id}"}
+
+
 async def test_legacy_invite_rows_remain_inert_during_normal_registration(db_session, monkeypatch):
     monkeypatch.setattr("app.providers.argolink.ArgoLinkAdapter.validate_key", _valid)
     invite = RegistrationInvite(

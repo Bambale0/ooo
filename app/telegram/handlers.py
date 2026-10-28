@@ -106,6 +106,22 @@ async def activate_application_and_issue_key(db, application: PartnerApplication
         }:
             raise
         existing_partner = str(exc.detail) == "existing_partner_requires_manual_provider_credential"
+        blocker_keys = {
+            f"argolink-key-pool-depleted:{application.id}",
+            f"registration-invite-required:{application.id}",
+            f"existing-partner-key-blocked:{application.id}",
+        }
+        current_blocker = (
+            f"existing-partner-key-blocked:{application.id}"
+            if existing_partner
+            else f"argolink-key-pool-depleted:{application.id}"
+        )
+        await db.execute(
+            delete(BotNotification).where(
+                BotNotification.dedupe_key.in_(blocker_keys - {current_blocker}),
+                BotNotification.sent_at.is_(None),
+            )
+        )
         await notify(
             db,
             get_settings().admin_telegram_id,
@@ -114,11 +130,7 @@ async def activate_application_and_issue_key(db, application: PartnerApplication
                 if existing_partner
                 else f"Новая заявка {application.id} ожидает отдельный ключ ArgoLink: пул пуст или недоступен."
             ),
-            (
-                f"existing-partner-key-blocked:{application.id}"
-                if existing_partner
-                else f"argolink-key-pool-depleted:{application.id}"
-            ),
+            current_blocker,
         )
         return "existing_partner" if existing_partner else None
     await db.execute(
