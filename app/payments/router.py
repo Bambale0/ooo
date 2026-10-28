@@ -310,7 +310,7 @@ async def reconcile_invoice(payment_id: str, payload: PaymentReconcileCreate, db
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="payment_provider_temporarily_unavailable",
             ) from exc
-        if provider is None or provider.currency.upper() != "RUB" or Decimal(provider.amount) != payment.requested_rub:
+        if provider is None or provider.currency.upper() != "RUB" or Decimal(provider.amount) != payment.amount_due_rub:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="invoice_reconciliation_mismatch")
         if payment.provider_reference not in {None, provider.invoice_id}:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="payment_provider_id_conflict")

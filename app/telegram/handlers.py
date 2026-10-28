@@ -272,6 +272,11 @@ async def handle_callback(event, db, dialog) -> None:
         balance_buttons = [("Пополнить", "topup"), ("Мои счета", "payments:0")]
         if lava_top_enabled:
             balance_buttons.append(("Изменить email", "payment_email"))
+        lava_fee_text = (
+            "Для Lava.top сумма к оплате включает 10%, на баланс зачисляется введённая сумма. "
+            if lava_top_enabled
+            else ""
+        )
         await show(
             event,
             f"Баланс: {partner.balance_rub:.2f} ₽\n"
@@ -287,10 +292,11 @@ async def handle_callback(event, db, dialog) -> None:
                 else ""
             )
             + "Для пополнения нажмите «Пополнить» и укажите сумму от 1 000 ₽. "
-            f"После подтверждения создадим счёт: {payment_method}. "
-            "Рубли зачислятся автоматически после подтверждения платежа.\n\n"
-            "В разделе «Мои счета» доступны ссылки на оплату и текущие статусы. "
-            "Если вы уже оплатили счёт, откройте его и нажмите «Обновить».",
+            + f"После подтверждения создадим счёт: {payment_method}. "
+            + lava_fee_text
+            + "Рубли зачислятся автоматически после подтверждения платежа.\n\n"
+            + "В разделе «Мои счета» доступны ссылки на оплату и текущие статусы. "
+            + "Если вы уже оплатили счёт, откройте его и нажмите «Обновить».",
             keyboard(*balance_buttons),
         )
     elif data == "topup":
@@ -368,6 +374,7 @@ async def handle_callback(event, db, dialog) -> None:
         await show(
             event,
             f"Счёт {payment.id}\nСумма пополнения: {payment.requested_rub:.2f} ₽\n"
+            f"К оплате: {payment.amount_due_rub:.2f} ₽\n"
             f"Статус: {status_label(payment.status)}\n\n"
             "Кнопка «Обновить» проверяет текущее состояние счёта. "
             f"Если оплата ещё доступна, ниже появится кнопка перехода в {destination}. "
@@ -1026,13 +1033,23 @@ async def handle_message(event, db, dialog) -> None:
         if not value.isascii() or not value.isdigit() or not 1000 <= int(value) <= 9999999999999999:
             raise ValueError("amount")
         buyer_email = dialog.data.get("buyer_email")
+        amount = int(value)
         reset(dialog)
+        if get_settings().payment_provider == "lava_top":
+            from app.payments.lava_top import lava_top_checkout_amount
+
+            confirmation = (
+                f"Создать счёт на {lava_top_checkout_amount(amount):,.0f} ₽?\n"
+                f"На баланс зачислится {amount:,} ₽; 10% включены в сумму оплаты."
+            )
+        else:
+            confirmation = f"Создать счёт на {amount:,} ₽?"
         await ask_confirmation(
             event,
             db,
             "invoice_create",
             {"partner_id": partner.id, "amount": value, "buyer_email": buyer_email},
-            f"Создать счёт на {int(value):,} ₽?"
+            confirmation
             + (f"\nEmail для чека: {buyer_email}" if buyer_email else ""),
         )
     elif state == "key_name":

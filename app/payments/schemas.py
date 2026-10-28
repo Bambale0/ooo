@@ -37,6 +37,7 @@ class PaymentInvoiceRead(BaseModel):
     provider: str
     status: str
     requested_rub: Decimal
+    amount_due_rub: Decimal
     accepted_assets: str
     invoice_url: str | None
     expires_at: datetime | None

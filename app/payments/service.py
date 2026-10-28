@@ -17,6 +17,7 @@ from app.payments.lava_top import (
     LavaTopError,
     LavaTopInvoice,
     get_lava_top_client,
+    lava_top_checkout_amount,
 )
 from app.payments.models import PaymentInvoice, PaymentRefund
 from app.payments.schemas import normalize_buyer_email
@@ -200,11 +201,13 @@ async def create_or_resume_lava_invoice(
         _mark_expired_if_needed(payment)
         return payment
 
+    provider_amount_rub = lava_top_checkout_amount(requested_rub)
     payment = PaymentInvoice(
         partner_id=partner.id,
         provider="lava_top",
         idempotency_key=idempotency_key,
         requested_rub=Decimal(requested_rub),
+        provider_amount_rub=provider_amount_rub,
         accepted_assets="RUB:SBP",
         buyer_email=normalized_email,
         status="creating",
@@ -218,7 +221,7 @@ async def create_or_resume_lava_invoice(
 
     try:
         provider_invoice = await client.create_sbp_invoice(
-            amount_rub=requested_rub,
+            amount_rub=int(provider_amount_rub),
             buyer_email=normalized_email,
         )
     except LavaTopBuyerEmailRejected as exc:
@@ -245,7 +248,7 @@ async def create_or_resume_lava_invoice(
         ) from exc
 
     payment = await _lock_payment(db, payment.id)
-    if Decimal(provider_invoice.amount) != payment.requested_rub or provider_invoice.currency.upper() != "RUB":
+    if Decimal(provider_invoice.amount) != payment.amount_due_rub or provider_invoice.currency.upper() != "RUB":
         payment.provider_reference = provider_invoice.invoice_id
         payment.status = "creation_unknown"
         payment.creation_claimed_until = None
@@ -356,7 +359,7 @@ async def sync_lava_provider_invoice(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="payment_not_found")
     if payment.provider_reference not in {None, provider_invoice.invoice_id}:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="payment_provider_id_conflict")
-    if provider_invoice.currency.upper() != "RUB" or Decimal(provider_invoice.amount) != payment.requested_rub:
+    if provider_invoice.currency.upper() != "RUB" or Decimal(provider_invoice.amount) != payment.amount_due_rub:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="payment_amount_or_currency_mismatch")
     if payment.buyer_email:
         if provider_invoice.status == "paid" and not provider_invoice.buyer_email:
@@ -374,7 +377,7 @@ async def sync_lava_provider_invoice(
         payment.status = "paid_waiting_credit"
         payment.paid_at = _parse_datetime(provider_invoice.paid_at) or utc_now()
         payment.paid_asset = "RUB"
-        payment.paid_amount = payment.requested_rub
+        payment.paid_amount = payment.amount_due_rub
         payment.paid_fiat_rate = Decimal(1)
         payment.paid_usd_rate = await _rub_to_usdt_rate(db, payment)
         await db.flush()
