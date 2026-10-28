@@ -61,6 +61,9 @@ async def create_provider_credential(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="partner_not_found")
 
     key_hash = hash_secret(payload.api_key)
+    from app.providers.key_pool import lock_key_hashes
+
+    await lock_key_hashes(db, [key_hash])
     if await db.scalar(select(ProviderKeyPoolItem.id).where(ProviderKeyPoolItem.key_hash == key_hash)):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="provider_key_pool_duplicate")
 

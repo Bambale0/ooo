@@ -1,23 +1,27 @@
 import asyncio
 import json
+import os
+from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
 from pydantic import SecretStr
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.accounts.models import ApiKey, Partner, PartnerApplication
-from app.accounts.router import auto_activate_application
+from app.accounts.router import auto_activate_application, delete_partner
+from app.accounts.schemas import DeletePartnerCreate
 from app.infrastructure.config import get_settings
 from app.infrastructure.database import Base
-from app.infrastructure.security import decrypt_secret
-from app.providers.key_pool import add_pool_keys, parse_key_list, provision_application_key
+from app.infrastructure.security import decrypt_secret, hash_secret
+from app.providers.key_pool import add_pool_keys, parse_key_list, pool_counts, provision_application_key
 from app.providers.models import ProviderCredential, ProviderKeyPoolItem
 from app.providers.router import create_provider_credential
 from app.providers.schemas import ProviderCredentialCreate
 from app.providers.service import has_provider_runtime_credential
 from app.referrals import models as referral_models  # noqa: F401
+from app.telegram.handlers import activate_application_and_issue_key
 from app.telegram.models import BotAction, BotNotification
 from tests.test_telegram_cabinet import cabinet as cabinet
 
@@ -76,6 +80,34 @@ async def test_claim_rolls_back_to_available_with_secret_intact(db_session, monk
     assert await db_session.scalar(select(func.count()).select_from(ProviderCredential)) == 0
 
 
+async def test_handled_decrypt_failure_does_not_consume_pool_key(db_session, monkeypatch):
+    monkeypatch.setattr("app.providers.argolink.ArgoLinkAdapter.validate_key", _valid)
+    monkeypatch.setattr(get_settings(), "admin_telegram_id", "999")
+    await add_pool_keys(
+        db_session,
+        ["sk-pool-decrypt-failure-00000000000001"],
+        source="test",
+        actor="test",
+    )
+    application = PartnerApplication(telegram_id="decrypt-failure", company_name="C", project_name="P")
+    db_session.add(application)
+    await db_session.commit()
+
+    def invalid_ciphertext(*args, **kwargs):
+        raise ValueError("synthetic decrypt failure")
+
+    monkeypatch.setattr("app.providers.key_pool.decrypt_secret", invalid_ciphertext)
+    assert await activate_application_and_issue_key(db_session, application) is None
+    await db_session.commit()
+
+    await db_session.refresh(application)
+    item = await db_session.scalar(select(ProviderKeyPoolItem))
+    assert application.status == "pending"
+    assert item.status == "available" and item.encrypted_api_key
+    assert await db_session.scalar(select(func.count()).select_from(ProviderCredential)) == 0
+    assert await db_session.scalar(select(func.count()).select_from(BotNotification)) == 1
+
+
 async def test_duplicate_batch_is_rejected_without_partial_rows(db_session, monkeypatch):
     monkeypatch.setattr("app.providers.argolink.ArgoLinkAdapter.validate_key", _valid)
     duplicate = "sk-pool-duplicate-00000000000000001"
@@ -131,6 +163,39 @@ async def test_dedicated_partner_never_falls_back_to_shared_key(db_session, monk
     await db_session.flush()
 
     assert not await has_provider_runtime_credential(db_session, partner.id, "argolink")
+
+
+async def test_delete_and_reregister_reuses_upstream_key_without_consuming_second(db_session, monkeypatch):
+    monkeypatch.setattr("app.providers.argolink.ArgoLinkAdapter.validate_key", _valid)
+    keys = ["sk-pool-reregister-a-000000000000001", "sk-pool-reregister-b-000000000000002"]
+    await add_pool_keys(db_session, keys, source="test", actor="test")
+    first_application = PartnerApplication(
+        telegram_id="same-telegram", company_name="First", project_name="First"
+    )
+    db_session.add(first_application)
+    await db_session.flush()
+    first_partner = await auto_activate_application(first_application.id, db_session)
+    first_credential = await db_session.scalar(
+        select(ProviderCredential).where(ProviderCredential.partner_id == first_partner.id)
+    )
+    first_hash = first_credential.key_hash
+    await delete_partner(first_partner.id, DeletePartnerCreate(reason="test re-registration"), db_session)
+
+    second_application = PartnerApplication(
+        telegram_id="same-telegram", company_name="Second", project_name="Second"
+    )
+    db_session.add(second_application)
+    await db_session.flush()
+    second_partner = await auto_activate_application(second_application.id, db_session)
+    await db_session.commit()
+
+    credentials = list(await db_session.scalars(select(ProviderCredential)))
+    available, assigned = await pool_counts(db_session)
+    assert len(credentials) == 1
+    assert credentials[0].key_hash == first_hash
+    assert credentials[0].partner_id == second_partner.id
+    assert credentials[0].partner_application_id == second_application.id
+    assert (available, assigned) == (1, 1)
 
 
 async def test_empty_pool_keeps_application_pending_and_retry_uses_same_application(
@@ -213,14 +278,10 @@ async def test_concurrent_claims_do_not_assign_the_same_key(tmp_path, monkeypatc
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
     async with factory() as setup:
-        await add_pool_keys(
-            setup,
-            ["sk-pool-race-a-000000000000000001", "sk-pool-race-b-000000000000000002"],
-            source="test",
-            actor="test",
-        )
+        keys = [f"sk-pool-race-{i}-000000000000000001" for i in range(4)]
+        await add_pool_keys(setup, keys, source="test", actor="test")
         applications = [
-            PartnerApplication(telegram_id=f"race-{i}", company_name="C", project_name="P") for i in (1, 2)
+            PartnerApplication(telegram_id=f"race-{i}", company_name="C", project_name="P") for i in range(4)
         ]
         setup.add_all(applications)
         await setup.commit()
@@ -233,9 +294,101 @@ async def test_concurrent_claims_do_not_assign_the_same_key(tmp_path, monkeypatc
             return credential.key_hash
 
     hashes = await asyncio.gather(*(claim(application_id) for application_id in ids))
-    assert len(set(hashes)) == 2
+    assert len(set(hashes)) == 4
     async with factory() as check:
         assert await check.scalar(
             select(func.count()).select_from(ProviderKeyPoolItem).where(ProviderKeyPoolItem.status == "assigned")
-        ) == 2
+        ) == 4
     await engine.dispose()
+
+
+@pytest.mark.integration
+async def test_postgres_four_way_claim_and_cross_table_insert_race(monkeypatch):
+    url = os.getenv("TEST_POSTGRES_DATABASE_URL")
+    if not url:
+        pytest.skip("TEST_POSTGRES_DATABASE_URL is not configured")
+    monkeypatch.setattr("app.providers.argolink.ArgoLinkAdapter.validate_key", _valid)
+    engine = create_async_engine(url, pool_size=8, max_overflow=0)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    suffix = uuid4().hex
+    claim_keys = [f"sk-pool-pg-{suffix}-{index}" for index in range(4)]
+    race_key = f"sk-pool-pg-race-{suffix}"
+    application_ids: list[str] = []
+    try:
+        async with factory() as setup:
+            await add_pool_keys(setup, claim_keys, source="test", actor="test")
+            applications = [
+                PartnerApplication(
+                    telegram_id=f"pool-pg-{suffix}-{index}", company_name="C", project_name="P"
+                )
+                for index in range(5)
+            ]
+            setup.add_all(applications)
+            await setup.commit()
+            application_ids = [application.id for application in applications]
+
+        async def claim(application_id: str) -> str:
+            async with factory() as session:
+                credential = await provision_application_key(session, application_id)
+                await session.commit()
+                return credential.key_hash
+
+        hashes = await asyncio.wait_for(
+            asyncio.gather(*(claim(application_id) for application_id in application_ids[:4])),
+            timeout=20,
+        )
+        assert len(set(hashes)) == 4
+
+        async def add_racing_pool_key() -> str:
+            async with factory() as session:
+                try:
+                    await add_pool_keys(session, [race_key], source="test", actor="test")
+                    await session.commit()
+                    return "pool"
+                except HTTPException as exc:
+                    await session.rollback()
+                    return str(exc.detail)
+
+        async def add_racing_credential() -> str:
+            async with factory() as session:
+                try:
+                    await create_provider_credential(
+                        ProviderCredentialCreate(
+                            label="race",
+                            api_key=race_key,
+                            partner_application_id=application_ids[4],
+                        ),
+                        session,
+                    )
+                    await session.commit()
+                    return "credential"
+                except HTTPException as exc:
+                    await session.rollback()
+                    return str(exc.detail)
+
+        race_results = await asyncio.wait_for(
+            asyncio.gather(add_racing_pool_key(), add_racing_credential()),
+            timeout=20,
+        )
+        assert "provider_key_pool_duplicate" in race_results
+        assert len({result for result in race_results if result in {"pool", "credential"}}) == 1
+        async with factory() as check:
+            race_hash = hash_secret(race_key)
+            pool_count = await check.scalar(
+                select(func.count()).select_from(ProviderKeyPoolItem).where(ProviderKeyPoolItem.key_hash == race_hash)
+            )
+            credential_count = await check.scalar(
+                select(func.count()).select_from(ProviderCredential).where(ProviderCredential.key_hash == race_hash)
+            )
+            assert pool_count + credential_count == 1
+    finally:
+        async with factory() as cleanup:
+            all_hashes = [hash_secret(key) for key in [*claim_keys, race_key]]
+            await cleanup.execute(delete(ProviderCredential).where(ProviderCredential.key_hash.in_(all_hashes)))
+            await cleanup.execute(delete(ProviderKeyPoolItem).where(ProviderKeyPoolItem.key_hash.in_(all_hashes)))
+            if application_ids:
+                await cleanup.execute(
+                    delete(PartnerApplication).where(PartnerApplication.id.in_(application_ids))
+                )
+            await cleanup.commit()
+        await engine.dispose()

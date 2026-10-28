@@ -3,11 +3,12 @@
 import json
 
 from fastapi import HTTPException
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
-from app.accounts.models import PartnerApplication
+from app.accounts.models import Partner, PartnerApplication
 from app.infrastructure.config import get_settings
 from app.infrastructure.security import decrypt_secret, encrypt_secret, hash_secret
 from app.providers.models import ProviderCredential, ProviderKeyPoolItem
@@ -63,6 +64,20 @@ async def _existing_hashes(db: AsyncSession, hashes: list[str]) -> set[str]:
     return set(pooled).union(assigned)
 
 
+async def lock_key_hashes(db: AsyncSession, hashes: list[str]) -> None:
+    """Serialize cross-table ownership changes for provider keys on PostgreSQL."""
+    if db.get_bind().dialect.name != "postgresql":
+        return
+    # Both the pool and manual-credential writers acquire the same sorted set
+    # of transaction-scoped locks. This closes the check-then-insert race even
+    # though the two owners live in separate tables.
+    for key_hash in sorted(set(hashes)):
+        lock_id = int(key_hash[:16], 16)
+        if lock_id >= 2**63:
+            lock_id -= 2**64
+        await db.execute(text("SELECT pg_advisory_xact_lock(:lock_id)"), {"lock_id": lock_id})
+
+
 async def validate_new_pool_keys(db: AsyncSession, keys: list[str]) -> None:
     normalized = [key.strip() for key in keys]
     if not normalized or len({hash_secret(key) for key in normalized}) != len(normalized):
@@ -88,6 +103,7 @@ async def add_pool_keys(
         raise HTTPException(409, "provider_key_pool_duplicate")
     await _validate_keys(normalized)
     hashes = [hash_secret(key) for key in normalized]
+    await lock_key_hashes(db, hashes)
     existing = await _existing_hashes(db, hashes)
     if existing and not allow_existing_pool_items:
         raise HTTPException(409, "provider_key_pool_duplicate")
@@ -148,6 +164,10 @@ async def provision_application_key(db: AsyncSession, application_id: str) -> Pr
     application = await db.get(PartnerApplication, application_id, with_for_update=True)
     if application is None:
         raise HTTPException(404, "application_not_found")
+    # One Telegram identity must not drain a new pool key through concurrent or
+    # delete/re-register applications. Applications retain the original
+    # Telegram id even after a deleted Partner is anonymized.
+    await lock_key_hashes(db, [hash_secret(f"partner-registration:{application.telegram_id}")])
     existing = await db.scalar(
         select(ProviderCredential).where(
             ProviderCredential.provider == "argolink",
@@ -158,22 +178,64 @@ async def provision_application_key(db: AsyncSession, application_id: str) -> Pr
     )
     if existing is not None:
         return existing
-    await bootstrap_configured_pool(db)
-    candidate_id = (
-        select(ProviderKeyPoolItem.id)
+    owner_application = aliased(PartnerApplication)
+    reusable = await db.scalar(
+        select(ProviderCredential)
+        .join(owner_application, ProviderCredential.partner_application_id == owner_application.id)
+        .join(Partner, ProviderCredential.partner_id == Partner.id)
         .where(
-            ProviderKeyPoolItem.provider == "argolink",
-            ProviderKeyPoolItem.status == "available",
-            ProviderKeyPoolItem.encrypted_api_key.is_not(None),
+            ProviderCredential.provider == "argolink",
+            ProviderCredential.is_active.is_(True),
+            ProviderCredential.encrypted_api_key.is_not(None),
+            or_(
+                and_(Partner.status == "deleted", owner_application.telegram_id == application.telegram_id),
+                and_(Partner.status != "deleted", Partner.telegram_id == application.telegram_id),
+            ),
         )
-        .order_by(ProviderKeyPoolItem.created_at, ProviderKeyPoolItem.id)
+        .order_by(ProviderCredential.created_at.desc())
+        .with_for_update(of=ProviderCredential)
         .limit(1)
-        .scalar_subquery()
     )
+    if reusable is not None:
+        previous_partner = await db.get(Partner, reusable.partner_id)
+        reusable.partner_application_id = application.id
+        if previous_partner is not None and previous_partner.status == "deleted":
+            reusable.partner_id = None
+        await db.execute(
+            update(ProviderKeyPoolItem)
+            .where(ProviderKeyPoolItem.key_hash == reusable.key_hash)
+            .values(
+                assigned_application_id=application.id,
+                assigned_partner_id=reusable.partner_id,
+            )
+        )
+        await db.flush()
+        return reusable
+    await bootstrap_configured_pool(db)
     claimed = None
-    # A concurrent updater can win the selected row between the subquery and
-    # UPDATE. Re-evaluate once to claim the next row without assigning twice.
-    for _ in range(3):
+    # PostgreSQL skips rows already being assigned by another registration.
+    # The conditional update also keeps SQLite-based tests safe. Exhaustion is
+    # reported only after a fresh selection sees no candidate; heavy transient
+    # contention is reported as unavailable, never as an empty pool.
+    for _ in range(20):
+        candidate_query = (
+            select(ProviderKeyPoolItem.id)
+            .where(
+                ProviderKeyPoolItem.provider == "argolink",
+                ProviderKeyPoolItem.status == "available",
+                ProviderKeyPoolItem.encrypted_api_key.is_not(None),
+            )
+            .order_by(ProviderKeyPoolItem.created_at, ProviderKeyPoolItem.id)
+            .limit(1)
+        )
+        candidate_id = await db.scalar(candidate_query.with_for_update(skip_locked=True))
+        if candidate_id is None:
+            # SKIP LOCKED can see no row while another registration temporarily
+            # holds the last candidate. The blocking recheck distinguishes that
+            # from durable exhaustion and observes a rollback if the peer fails.
+            candidate_id = await db.scalar(candidate_query.with_for_update())
+            if candidate_id is None:
+                break
         claimed = await db.scalar(
             update(ProviderKeyPoolItem)
             .where(
@@ -189,6 +251,8 @@ async def provision_application_key(db: AsyncSession, application_id: str) -> Pr
         )
         if claimed is not None:
             break
+    if claimed is None and candidate_id is not None:
+        raise HTTPException(503, "provider_key_pool_unavailable")
     if claimed is None or not claimed.encrypted_api_key:
         raise HTTPException(503, "provider_key_pool_empty")
     master_key = get_settings().provider_credentials_master_key

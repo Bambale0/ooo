@@ -82,7 +82,16 @@ async def registration_documents(event, dialog) -> None:
 
 async def activate_application_and_issue_key(db, application: PartnerApplication):
     try:
-        partner = await auto_activate_application(application.id, db)
+        # Pool assignment, partner activation, and internal key creation are
+        # one savepoint. A handled provisioning failure must roll the pool row
+        # back to available before the durable admin notification is written.
+        async with db.begin_nested():
+            partner = await auto_activate_application(application.id, db)
+            api_key = await create_partner_api_key(
+                partner.id,
+                ApiKeyCreate(name="Автоматический ключ"),
+                db,
+            )
     except HTTPException as exc:
         if str(exc.detail) not in {
             "provider_key_pool_empty",
@@ -100,11 +109,6 @@ async def activate_application_and_issue_key(db, application: PartnerApplication
             f"argolink-key-pool-depleted:{application.id}",
         )
         return None
-    api_key = await create_partner_api_key(
-        partner.id,
-        ApiKeyCreate(name="Автоматический ключ"),
-        db,
-    )
     await notify(
         db,
         get_settings().admin_telegram_id,
