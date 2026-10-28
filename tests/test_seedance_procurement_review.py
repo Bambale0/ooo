@@ -12,7 +12,21 @@ def test_seedance_25_reviewed_procurement_matches_provider_tiers():
         "720p": Decimal(".196"),
         "1080p": Decimal(".483"),
     }
-    assert entry["checked_at"] == "2026-10-09"
+    assert entry["procurement"]["video_input_tiers"] == {
+        "480p": Decimal(".0523"),
+        "720p": Decimal(".117"),
+        "1080p": Decimal(".289"),
+    }
+    assert entry["procurement"]["extend_tiers"] == {
+        "480p": Decimal(".0615"),
+        "720p": Decimal(".1379"),
+        "1080p": Decimal(".3398"),
+    }
+    assert entry["procurement"]["draft_tiers"] == {
+        "preview_480p": Decimal(".1028"),
+        "full_1080p": Decimal(".5682"),
+    }
+    assert entry["checked_at"] == "2026-10-28"
     assert entry["source"] == "https://argolink.io/en/models/seedance-2.5"
 
 
