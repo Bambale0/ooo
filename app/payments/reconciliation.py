@@ -55,7 +55,9 @@ async def _record_provider_expiry(db: AsyncSession, payment_id: str, invoice: Cr
     if invoice.payload not in {None, payment.id} or Decimal(invoice.amount) != payment.requested_rub:
         raise ValueError("payment_amount_or_payload_mismatch")
     if (invoice.status != "expired" or payment.credited_at is not None or payment.paid_at is not None
-        or payment.status not in {"active", "creating", "creation_unknown"}):
+        or payment.status not in {"active", "expired", "creating", "creation_unknown"}):
+        return False
+    if payment.status == "expired" and (payment.reconciliation_snapshot or {}).get("provider_status") == "expired":
         return False
     payment.provider_invoice_id = invoice.invoice_id
     payment.status = "expired"
