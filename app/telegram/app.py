@@ -11,7 +11,9 @@ from pydantic import ValidationError
 from app.infrastructure.config import get_settings
 from app.infrastructure.database import SessionLocal
 from app.payments.crypto_pay import CryptoPayError
+from app.telegram import payment_methods
 from app.telegram.handlers import handle_callback, handle_message
+from app.telegram.lifecycle import InFlightUpdatesMiddleware
 from app.telegram.security import CabinetAccessMiddleware
 from app.telegram.service import lock_dialog
 from app.telegram.ui import highlight_pressed, keyboard, show
@@ -173,17 +175,22 @@ def create_bot() -> Bot | None:
 def create_dispatcher() -> Dispatcher:
     dispatcher = Dispatcher()
     router = Router(name="cabinet")
+    in_flight = InFlightUpdatesMiddleware()
+    dispatcher.shutdown.register(in_flight.drain_updates)
     for observer in (router.message, router.callback_query):
         observer.outer_middleware(CabinetAccessMiddleware())
+        observer.outer_middleware(in_flight)
         observer.outer_middleware(CabinetSessionMiddleware())
 
     @router.callback_query()
     async def callback(event: CallbackQuery, db, dialog) -> None:
-        await handle_callback(event, db, dialog)
+        if not await payment_methods.handle_callback(event, db, dialog):
+            await handle_callback(event, db, dialog)
 
     @router.message()
     async def message(event: Message, db, dialog) -> None:
-        await handle_message(event, db, dialog)
+        if not await payment_methods.handle_message(event, db, dialog):
+            await handle_message(event, db, dialog)
 
     dispatcher.include_router(router)
     return dispatcher
