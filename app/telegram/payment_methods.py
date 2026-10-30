@@ -201,7 +201,7 @@ async def handle_message(event, db, dialog) -> bool:
     dialog.state, dialog.data = "menu", {}
     await db.commit()
     await show(
-        event, f"Способ оплаты: {LABELS[method]}\nСоздать счёт на {due:,.0f} ₽?\n"
+        event, f"Способ оплаты: {LABELS[method]}\nСоздать счёт на {due:,} ₽?\n"
         f"На баланс зачислится {amount:,} ₽."
         + (f"\nEmail для чека: {buyer_email}" if method == "lava_top" else ""),
         keyboard(("Подтвердить", f"confirm:{action.id}"), back="topup"),
