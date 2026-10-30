@@ -55,6 +55,37 @@ ERRORS = {
 }
 
 
+_TOPUP_BOUNDARY_MARKS = frozenset({"\u200b", "\u2060", "\ufeff"})
+
+
+def _normalize_topup_text(value: str) -> str:
+    """Remove only whitespace and harmless paste marks at the input boundary.
+
+    Never join digit groups or reinterpret signs, fractions, currency suffixes,
+    Unicode digits, or format marks between digits as another monetary amount.
+    """
+    start, end = 0, len(value)
+    while start < end and (value[start].isspace() or value[start] in _TOPUP_BOUNDARY_MARKS):
+        start += 1
+    while end > start and (value[end - 1].isspace() or value[end - 1] in _TOPUP_BOUNDARY_MARKS):
+        end -= 1
+    return value[start:end]
+
+
+def _safe_validation_details(exc: Exception) -> dict[str, object]:
+    # Do not log str(exc), Pydantic errors/input, traceback source, or locals:
+    # they can contain emails, keys, provider payloads, or signed URLs.
+    trace = exc.__traceback__
+    while trace is not None and trace.tb_next is not None:
+        trace = trace.tb_next
+    return {
+        "error_type": type(exc).__name__,
+        "error_site_file": trace.tb_frame.f_code.co_filename.rsplit("/", 1)[-1] if trace else None,
+        "error_site_line": trace.tb_lineno if trace else None,
+        "error_site_function": trace.tb_frame.f_code.co_name if trace else None,
+    }
+
+
 class CabinetSessionMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
         if not event.from_user:
@@ -63,8 +94,25 @@ class CabinetSessionMiddleware(BaseMiddleware):
             await event.answer()
             await highlight_pressed(event)
         async with SessionLocal() as db:
+            dialog_state = None
+            input_details = {}
             try:
                 dialog = await lock_dialog(db, str(event.from_user.id))
+                dialog_state = dialog.state
+                if isinstance(event, Message):
+                    raw_text = event.text or ""
+                    input_details = {
+                        "input_chars": len(raw_text),
+                        "input_ascii": raw_text.isascii(),
+                        "input_digits": raw_text.strip().isdigit(),
+                        "input_boundary_marks": any(char in _TOPUP_BOUNDARY_MARKS for char in raw_text),
+                    }
+                    if dialog_state == "topup" and event.text is not None:
+                        normalized = _normalize_topup_text(event.text)
+                        if normalized != event.text:
+                            # A shallow model copy preserves the bound Bot/session.
+                            # The original Update and all other input states stay untouched.
+                            event = event.model_copy(update={"text": normalized})
                 dialog.telegram_username = (event.from_user.username or "").lower() or None
                 data.update(db=db, dialog=dialog)
                 result = await handler(event, data)
@@ -83,9 +131,28 @@ class CabinetSessionMiddleware(BaseMiddleware):
                     ERRORS.get(detail, "Действие недоступно. Проверьте данные или вернитесь в меню."),
                     markup,
                 )
-            except (ValueError, ValidationError, InvalidOperation):
+            except (ValueError, ValidationError, InvalidOperation) as exc:
                 await db.rollback()
-                await show(event, "Не удалось распознать данные. Проверьте формат и повторите ввод.")
+                invalid_amount = dialog_state == "topup" and type(exc) is ValueError and str(exc) == "amount"
+                internal_topup_error = dialog_state == "topup" and not invalid_amount
+                details = {
+                    "dialog_state": dialog_state,
+                    "telegram_update_id": getattr(data.get("event_update"), "update_id", None),
+                    "error_code": "invalid_topup_amount" if invalid_amount else "validation_processing_error",
+                    **input_details,
+                    **_safe_validation_details(exc),
+                }
+                if internal_topup_error:
+                    logger.warning("cabinet_input_processing_failed", extra=details)
+                    await show(
+                        event,
+                        "Не удалось подготовить счёт: техническая ошибка. Это не ошибка введённой суммы. "
+                        "Вернитесь в раздел «Баланс» и попробуйте снова.",
+                        keyboard(back="balance"),
+                    )
+                else:
+                    logger.info("cabinet_input_rejected", extra=details)
+                    await show(event, "Не удалось распознать данные. Проверьте формат и повторите ввод.")
             except CryptoPayError:
                 await db.rollback()
                 await show(event, "Платёжный сервис временно недоступен. Повторите проверку позже.")
