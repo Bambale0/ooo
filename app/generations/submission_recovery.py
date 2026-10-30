@@ -1,7 +1,7 @@
 """Close abandoned customer submissions, retaining unresolved supplier liabilities."""
 
 import logging
-from datetime import UTC, timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy import or_, select
@@ -16,6 +16,7 @@ from app.providers.video_contract import VIDEO_MODELS
 from app.webhooks.service import ensure_terminal_webhook_event
 
 logger = logging.getLogger(__name__)
+TERMINAL_FAILURES = ("failed", "cancelled")
 
 
 def _aware(value):
@@ -30,7 +31,12 @@ async def recover_unconfirmed_submissions_once(db, *, limit: int = 100) -> int:
         ProviderAttempt.status.in_(("submitting", "reconciliation_required")),
         or_(ProviderAttempt.provider_task_id.is_(None), ProviderAttempt.provider_task_id == ""),
     )
-    known = attempts.where(ProviderAttempt.provider_task_id.is_not(None), ProviderAttempt.provider_task_id != "")
+    known = attempts.where(
+        ProviderAttempt.provider_task_id.is_not(None),
+        ProviderAttempt.provider_task_id != "",
+        ProviderAttempt.status.not_in(TERMINAL_FAILURES),
+    )
+    submit_started = Generation.request_payload["provider_submission_started_at"].as_string()
     recent = attempts.where(ProviderAttempt.created_at > cutoff)
     # Never mass-refund legacy reservations, expire a live attempt, or interfere
     # with known-ID video recovery/late success. Filter before LIMIT to avoid starvation.
@@ -43,6 +49,7 @@ async def recover_unconfirmed_submissions_once(db, *, limit: int = 100) -> int:
                 Generation.actual_charge_rub.is_(None),
                 Generation.result_url.is_(None),
                 Generation.created_at <= cutoff,
+                or_(submit_started.is_(None), submit_started <= cutoff.isoformat()),
                 Generation.request_payload["partner_billing_policy"].as_string() == "actual_only",
                 or_(
                     Generation.mode == "videos/generations",
@@ -69,8 +76,19 @@ async def recover_unconfirmed_submissions_once(db, *, limit: int = 100) -> int:
                 .execution_options(populate_existing=True)
             )
         )
-        if not items or any(a.provider_task_id or _aware(a.created_at) > cutoff for a in items):
+        if not items or any(
+            (a.provider_task_id and a.status not in TERMINAL_FAILURES) or _aware(a.created_at) > cutoff for a in items
+        ):
             continue
+        # Recheck after locking, including a retry that began after selection.
+        raw_started = (generation.request_payload or {}).get("provider_submission_started_at")
+        if raw_started is not None:
+            try:
+                started = datetime.fromisoformat(raw_started)
+                if started.tzinfo is None or started > cutoff:
+                    continue
+            except (TypeError, ValueError):
+                continue
         if generation.billing_status != "pending" or generation.actual_charge_rub is not None:
             continue
         unresolved = [a for a in items if a.status in {"submitting", "reconciliation_required"}]

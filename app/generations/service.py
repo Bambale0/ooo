@@ -387,6 +387,12 @@ async def dispatch_generation_to_provider(
         if credential is not None:
             attempt.credential_id = credential.id
         attempt.status = "submitting"
+        # The attempt row can predate a delayed retry. Fence each actual POST
+        # with its own durable start, without rewriting accounting history.
+        generation.request_payload = {
+            **(generation.request_payload or {}),
+            "provider_submission_started_at": utc_now().isoformat(),
+        }
         generation.status = "sent_to_provider"
         await db.commit()
         provider_started_at = monotonic_seconds()
