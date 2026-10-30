@@ -20,6 +20,32 @@ class LavaTopBuyerEmailRejected(LavaTopError):
     """Lava.top definitively rejected the buyer email before creating an invoice."""
 
 
+_SAFE_ERROR_CODES = frozenset({
+    "ConnectTimeout", "ReadTimeout", "WriteTimeout", "PoolTimeout",
+    "ConnectError", "ReadError", "WriteError", "CloseError",
+    "RemoteProtocolError", "LocalProtocolError", "ProxyError", "UnsupportedProtocol",
+    "DecodingError", "TooManyRedirects", "invalid_provider_response",
+    "invalid_lava_top_invoice", "lava_top_not_configured", "buyer_email_rejected",
+})
+
+
+def safe_lava_error_details(exc: LavaTopError) -> dict[str, str | int | None]:
+    """Allowlist diagnostics; never persist/log provider text, requests or credentials."""
+    code = str(exc)
+    cause = exc.__cause__
+    upstream_status = None
+    if isinstance(cause, httpx.HTTPStatusError):
+        upstream_status = cause.response.status_code
+        code = f"provider_http_{upstream_status}"
+    elif code not in _SAFE_ERROR_CODES:
+        code = "payment_provider_error"
+    return {
+        "error_type": type(exc).__name__,
+        "error_code": code,
+        "upstream_status": upstream_status,
+    }
+
+
 LAVA_TOP_SURCHARGE_RATE = Decimal("0.10")
 WHOLE_RUBLE = Decimal("1")
 

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from time import perf_counter
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
@@ -18,9 +20,12 @@ from app.payments.lava_top import (
     LavaTopInvoice,
     get_lava_top_client,
     lava_top_checkout_amount,
+    safe_lava_error_details,
 )
 from app.payments.models import PaymentInvoice, PaymentRefund
 from app.payments.schemas import normalize_buyer_email
+
+logger = logging.getLogger(__name__)
 
 
 async def create_or_resume_invoice(
@@ -219,6 +224,7 @@ async def create_or_resume_lava_invoice(
     await db.commit()
     payment = await _ensure_persisted_fx_snapshot(db, payment=payment)
 
+    create_started = perf_counter()
     try:
         provider_invoice = await client.create_sbp_invoice(
             amount_rub=int(provider_amount_rub),
@@ -238,10 +244,31 @@ async def create_or_resume_lava_invoice(
             detail="buyer_email_rejected_by_provider",
         ) from exc
     except LavaTopError as exc:
+        diagnostics = {
+            **safe_lava_error_details(exc),
+            "elapsed_ms": round((perf_counter() - create_started) * 1000, 3),
+        }
         payment = await _lock_payment(db, payment.id)
         payment.status = "creation_unknown"
         payment.creation_claimed_until = None
+        payment.reconciliation_snapshot = {
+            **(payment.reconciliation_snapshot or {}),
+            "source": "create_error",
+            "result": "provider_request_failed",
+            "observed_at": utc_now().isoformat(),
+            **diagnostics,
+        }
         await db.commit()
+        logger.warning(
+            "lava_top_invoice_creation_failed",
+            extra={
+                "payment_id": payment.id,
+                "partner_id": payment.partner_id,
+                "provider": "lava_top",
+                "phase": "create_invoice",
+                **diagnostics,
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="payment_provider_temporarily_unavailable",
