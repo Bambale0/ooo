@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.infrastructure.config import get_settings
 from app.infrastructure.database import SessionLocal
 from app.infrastructure.retry import utc_now
+from app.payments.creation_recovery import expire_lava_creation_claims
 from app.payments.crypto_pay import CryptoPayClient, CryptoPayInvoice, get_crypto_pay_client
 from app.payments.lava_top import LavaTopClient, get_lava_top_client
 from app.payments.models import PaymentInvoice
@@ -124,6 +125,10 @@ async def reconcile_lava_top_payments_once(
     limit: int = 20,
     after_id: str | None = None,
 ) -> str | None:
+    async with session_factory() as db:
+        await expire_lava_creation_claims(db, limit=limit)
+        await db.commit()
+
     query = select(PaymentInvoice.id, PaymentInvoice.provider_reference).where(
         PaymentInvoice.provider == "lava_top",
         PaymentInvoice.provider_reference.is_not(None),
