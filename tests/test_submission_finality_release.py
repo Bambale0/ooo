@@ -111,7 +111,11 @@ async def test_late_submit_reply_cannot_reopen_customer_finality(db_session, mon
 
     async def submit(request):
         assert g.status == "sent_to_provider"
-        assert await recover_unconfirmed_submissions_once(db_session) == 1
+        # Model a genuinely elapsed POST deadline, not merely an old retry row.
+        expired_at = utc_now() + timedelta(hours=1)
+        with monkeypatch.context() as clock:
+            clock.setattr("app.generations.submission_recovery.utc_now", lambda: expired_at)
+            assert await recover_unconfirmed_submissions_once(db_session) == 1
         await db_session.commit()
         if late_failure:
             raise ProviderAdapterError(

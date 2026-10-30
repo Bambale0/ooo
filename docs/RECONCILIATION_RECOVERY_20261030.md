@@ -40,7 +40,7 @@ and amount. A stale unpaid response cannot downgrade paid_waiting_credit.
 ## Unknown video submissions
 
 The worker closes an actual-only video request without any known provider task ID
-once both the generation and all attempts exceed the configured
+once the generation, all attempts and the latest durably recorded POST start exceed the configured
 WORKER_PROVIDER_PROCESSING_TIMEOUT_SECONDS (default 1800). The customer outcome is
 failed/not_chargeable, the terminal outbox event is idempotent, and any customer
 reserve is released by the existing ledger-aware method. Supplier attempts remain
@@ -70,3 +70,12 @@ must not reopen finalized customer requests or remove appended ledger/audit hist
 
 Provider contract references: https://gate.lava.top/docs/documentation.yaml and
 https://help.send.tg/en/articles/10279948-crypto-pay-api .
+
+## Review hardening
+
+Each provider POST stores provider_submission_started_at before network I/O. An old
+retry row therefore cannot cause premature finalization of a fresh submission.
+Legacy rows without this marker retain the conservative existing timestamp checks.
+Only definitively failed/cancelled historical task IDs stop blocking unknown fallback
+finalization; accepted, processing, provisional timeout, usage review and completed
+IDs remain protected. Supplier-cost uncertainty stays separate from this eligibility.
