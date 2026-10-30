@@ -1,8 +1,10 @@
 """Current cash cover is independent of historical partner coverage snapshots."""
 
+import logging
 from datetime import UTC, timedelta
 from decimal import Decimal
 
+import httpx
 from fastapi import HTTPException
 from sqlalchemy import case, func, select, text
 
@@ -17,6 +19,8 @@ from app.payments.models import PaymentInvoice
 from app.providers.base import ProviderAdapterError
 from app.providers.models import ProviderAttempt
 from app.providers.service import get_partner_provider_adapter
+
+logger = logging.getLogger(__name__)
 
 ACTIVE = ("queued", "sent_to_provider", "processing", "timeout", "submitting", "reconciliation_required")
 
@@ -204,6 +208,12 @@ async def provider_capital_state(db, partner_id, provider="argolink"):
     try:
         balance = await adapter.prepaid_balance_usdt()
     except ProviderAdapterError as exc:
+        cause = exc.__cause__
+        logger.warning("provider_capital_balance_unavailable", extra={
+            "partner_id": partner_id, "provider": provider,
+            "error_type": type(cause).__name__ if cause is not None else type(exc).__name__,
+            "upstream_status": cause.response.status_code if isinstance(cause, httpx.HTTPStatusError) else None,
+        })
         raise HTTPException(503, "provider_temporarily_unavailable") from exc
     active_reserve = func.coalesce(
         Generation.provider_cost_reserve_usdt,
@@ -266,4 +276,10 @@ async def require_provider_capital(db, cost_usdt, *, partner_id, provider="argol
     await lock_capital(db)
     state = await provider_capital_state(db, partner_id, provider)
     if state["available"] < cost_usdt:
+        logger.warning("provider_capital_insufficient", extra={
+            "partner_id": partner_id, "provider": provider,
+            "required_usdt": str(cost_usdt), "available_usdt": str(state["available"]),
+            "balance_usdt": str(state["balance"]), "active_usdt": str(state["active"]),
+            "pending_usdt": str(state["pending"]), "float_usdt": str(state["float"]),
+        })
         raise HTTPException(503, "provider_temporarily_unavailable")

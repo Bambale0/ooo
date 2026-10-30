@@ -34,7 +34,9 @@ class FakeLavaTopClient:
         self.invoices: dict[str, LavaTopInvoice] = {}
         self.next_id = 1
 
-    async def create_sbp_invoice(self, *, amount_rub: int, buyer_email: str) -> LavaTopInvoice:
+    async def create_sbp_invoice(
+        self, *, amount_rub: int, buyer_email: str, payment_id: str | None = None
+    ) -> LavaTopInvoice:
         self.created.append((amount_rub, buyer_email))
         invoice_id = f"11111111-1111-4111-8111-{self.next_id:012d}"
         invoice = LavaTopInvoice(
@@ -360,7 +362,9 @@ async def test_lava_top_unknown_create_is_not_replayed(db_session):
     partner, _ = await _partner_with_api_key(db_session, telegram_id="lava-unknown")
 
     class UnknownClient(FakeLavaTopClient):
-        async def create_sbp_invoice(self, *, amount_rub: int, buyer_email: str) -> LavaTopInvoice:
+        async def create_sbp_invoice(
+            self, *, amount_rub: int, buyer_email: str, payment_id: str | None = None
+        ) -> LavaTopInvoice:
             self.created.append((amount_rub, buyer_email))
             raise LavaTopError("connection_lost_after_submission")
 
@@ -392,7 +396,9 @@ async def test_lava_top_rejected_buyer_email_is_failed_not_ambiguous(db_session)
     partner, _ = await _partner_with_api_key(db_session, telegram_id="lava-rejected-email")
 
     class RejectedEmailClient(FakeLavaTopClient):
-        async def create_sbp_invoice(self, *, amount_rub: int, buyer_email: str) -> LavaTopInvoice:
+        async def create_sbp_invoice(
+            self, *, amount_rub: int, buyer_email: str, payment_id: str | None = None
+        ) -> LavaTopInvoice:
             self.created.append((amount_rub, buyer_email))
             raise LavaTopBuyerEmailRejected("buyer_email_rejected")
 
@@ -415,6 +421,7 @@ async def test_lava_top_rejected_buyer_email_is_failed_not_ambiguous(db_session)
     assert payment.status == "failed"
     assert payment.creation_claimed_until is None
     assert payment.reconciliation_snapshot == {
+        "creation_correlation_id": payment.id,
         "source": "create_response",
         "result": "buyer_email_rejected",
     }

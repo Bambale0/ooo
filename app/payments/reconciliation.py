@@ -3,10 +3,11 @@
 import asyncio
 import logging
 from contextlib import suppress
+from datetime import timedelta
 from decimal import Decimal
 
 import httpx
-from sqlalchemy import or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.infrastructure.config import get_settings
@@ -30,7 +31,8 @@ def _safe_error_details(exc: Exception) -> dict:
         "invalid_crypto_pay_invoice", "invalid_provider_response", "crypto_pay_request_failed",
         "payment_provider_id_conflict", "payment_amount_or_payload_mismatch",
         "payment_amount_or_currency_mismatch", "payment_buyer_mismatch",
-        "invalid_lava_top_invoice", "lava_top_not_configured",
+        "invalid_lava_top_invoice", "lava_top_not_configured", "invoice_lookup_incomplete",
+        "invoice_correlation_ambiguous", "invoice_correlation_mismatch",
     }
     code = str(exc)
     cause = exc.__cause__
@@ -74,10 +76,17 @@ async def reconcile_payments_once(
     limit: int = 20,
     after_id: str | None = None,
 ) -> str | None:
+    expired_cutoff = utc_now() - timedelta(seconds=get_settings().payment_expired_recheck_seconds)
     query = select(PaymentInvoice.id, PaymentInvoice.provider_invoice_id).where(
         PaymentInvoice.provider == "crypto_pay",
         PaymentInvoice.credited_at.is_(None),
         PaymentInvoice.status.in_(("active", "expired", "paid_waiting_credit", "creation_unknown", "creating")),
+        or_(
+            PaymentInvoice.status != "expired",
+            PaymentInvoice.expires_at.is_(None),
+            PaymentInvoice.expires_at > expired_cutoff,
+            func.coalesce(PaymentInvoice.reconciliation_snapshot["provider_status"].as_string(), "") != "expired",
+        ),
         or_(PaymentInvoice.creation_claimed_until.is_(None), PaymentInvoice.creation_claimed_until <= utc_now()),
     )
     if after_id is not None:
@@ -129,9 +138,16 @@ async def reconcile_lava_top_payments_once(
         await expire_lava_creation_claims(db, limit=limit)
         await db.commit()
 
-    query = select(PaymentInvoice.id, PaymentInvoice.provider_reference).where(
+    query = select(PaymentInvoice.id, PaymentInvoice.provider_reference, PaymentInvoice.buyer_email).where(
         PaymentInvoice.provider == "lava_top",
-        PaymentInvoice.provider_reference.is_not(None),
+        or_(
+            PaymentInvoice.provider_reference.is_not(None),
+            and_(
+                PaymentInvoice.status == "creation_unknown",
+                PaymentInvoice.reconciliation_snapshot["creation_correlation_id"].as_string() == PaymentInvoice.id,
+                PaymentInvoice.buyer_email.is_not(None),
+            ),
+        ),
         PaymentInvoice.credited_at.is_(None),
         PaymentInvoice.status.in_(("active", "paid_waiting_credit", "creation_unknown", "creating")),
         or_(PaymentInvoice.creation_claimed_until.is_(None), PaymentInvoice.creation_claimed_until <= utc_now()),
@@ -141,13 +157,27 @@ async def reconcile_lava_top_payments_once(
     async with session_factory() as db:
         candidates = (await db.execute(query.order_by(PaymentInvoice.id).limit(limit))).all()
 
-    for payment_id, provider_reference in candidates:
+    for payment_id, provider_reference, buyer_email in candidates:
         try:
-            invoice = await client.get_invoice(provider_reference)
-            if invoice is None or invoice.invoice_id != provider_reference:
+            if provider_reference is None:
+                invoice = await client.find_invoice_by_payment_id(payment_id, buyer_email=buyer_email)
+                if invoice is not None and invoice.correlation_id != payment_id:
+                    raise ValueError("payment_provider_id_conflict")
+            else:
+                invoice = await client.get_invoice(provider_reference)
+                if invoice is not None and invoice.invoice_id != provider_reference:
+                    raise ValueError("payment_provider_id_conflict")
+            if invoice is None:
                 continue
             async with session_factory() as db:
-                await sync_lava_provider_invoice(db, provider_invoice=invoice, payment_id=payment_id)
+                payment = await sync_lava_provider_invoice(db, provider_invoice=invoice, payment_id=payment_id)
+                if provider_reference is None:
+                    payment.reconciliation_snapshot = {
+                        **(payment.reconciliation_snapshot or {}),
+                        "provider_invoice_id": invoice.invoice_id,
+                        "recovery_source": "provider_correlation_read",
+                        "recovered_at": utc_now().isoformat(),
+                    }
                 await db.commit()
         except Exception as exc:
             logger.warning(

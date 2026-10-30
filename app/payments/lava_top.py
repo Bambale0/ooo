@@ -68,6 +68,7 @@ class LavaTopInvoice:
     payment_url: str | None
     paid_at: str | None
     buyer_email: str | None
+    correlation_id: str | None = None
 
 
 class LavaTopClient:
@@ -99,6 +100,7 @@ class LavaTopClient:
         amount_rub: int,
         buyer_email: str,
         offer_id: str | None = None,
+        payment_id: str | None = None,
     ) -> LavaTopInvoice:
         payload: dict[str, object] = {
             "email": buyer_email,
@@ -108,6 +110,10 @@ class LavaTopClient:
             "paymentProvider": "PAY2ME",
             "paymentMethod": "SBP",
         }
+        if payment_id is not None:
+            payload["clientUtm"] = {
+                "utm_source": "neironych", "utm_medium": "api_topup", "utm_content": str(UUID(payment_id)),
+            }
         for key, value in (
             ("successful_return_url", self.successful_return_url),
             ("failure_return_url", self.failure_return_url),
@@ -122,6 +128,57 @@ class LavaTopClient:
         data = await self._request("GET", f"/api/v1/invoices/{invoice_id}", allow_not_found=True)
         return None if data is None else _parse_invoice(data, created=False)
 
+    async def find_invoice_by_payment_id(self, payment_id: str, *, buyer_email: str) -> LavaTopInvoice | None:
+        """Bounded read-only search; only an exact provider-echoed merchant ID can bind.
+
+        Amount/email alone are not identity. Scan all states/pages before accepting
+        a unique match, then independently re-read its contract. Missing/truncated
+        results never prove non-creation and never authorize a replacement POST.
+        """
+        payment_id = str(UUID(payment_id))
+        max_pages = get_settings().lava_top_recovery_max_pages
+        size = 100
+        found: str | None = None
+        seen: set[str] = set()
+        for page in range(1, max_pages + 1):
+            params = [("page", str(page)), ("size", str(size)), ("buyerEmail", buyer_email)]
+            params.extend(("invoiceStatuses", state) for state in ("NEW", "IN_PROGRESS", "COMPLETED", "FAILED"))
+            data = await self._request("GET", "/api/v1/invoices", params=params)
+            if (not isinstance(data, dict) or not isinstance(data.get("items"), list)
+                or type(data.get("total")) is not int or data["total"] < 0
+                or data.get("page") != page or len(data["items"]) > size):
+                raise LavaTopError("invalid_invoice_list")
+            if data["total"] > size * max_pages:
+                raise LavaTopError("invoice_lookup_incomplete")
+            items = data["items"]
+            for item in items:
+                if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+                    raise LavaTopError("invalid_invoice_list")
+                if item["id"] in seen:
+                    raise LavaTopError("invoice_lookup_incomplete")
+                seen.add(item["id"])
+                if _correlation_id(item) != payment_id:
+                    continue
+                if found is not None:
+                    raise LavaTopError("invoice_correlation_ambiguous")
+                parsed = _parse_invoice(item, created=False)
+                if not parsed.buyer_email or parsed.buyer_email.casefold() != buyer_email.casefold():
+                    raise LavaTopError("invoice_correlation_mismatch")
+                found = parsed.invoice_id
+            if len(seen) >= data["total"]:
+                if len(seen) != data["total"]:
+                    raise LavaTopError("invoice_lookup_incomplete")
+                if found is None:
+                    return None
+                invoice = await self.get_invoice(found)
+                if (invoice is None or invoice.invoice_id != found or invoice.correlation_id != payment_id
+                    or not invoice.buyer_email or invoice.buyer_email.casefold() != buyer_email.casefold()):
+                    raise LavaTopError("invoice_correlation_mismatch")
+                return invoice
+            if not items:
+                raise LavaTopError("invoice_lookup_incomplete")
+        raise LavaTopError("invoice_lookup_incomplete")
+
     async def close(self) -> None:
         if self._owned_client is not None:
             await self._owned_client.aclose()
@@ -134,6 +191,7 @@ class LavaTopClient:
         *,
         payload: dict[str, object] | None = None,
         allow_not_found: bool = False,
+        params: list[tuple[str, str]] | None = None,
     ) -> Any:
         try:
             response = await self._client().request(
@@ -141,6 +199,7 @@ class LavaTopClient:
                 path,
                 json=payload,
                 headers={"X-Api-Key": self.api_key, "Accept": "application/json"},
+                params=params,
             )
             if allow_not_found and response.status_code == 404:
                 return None
@@ -202,6 +261,16 @@ async def close_lava_top_client() -> None:
         _client = None
 
 
+def _correlation_id(data: dict) -> str | None:
+    utm = data.get("clientUtm")
+    if not isinstance(utm, dict) or utm.get("utm_source") != "neironych" or utm.get("utm_medium") != "api_topup":
+        return None
+    try:
+        return str(UUID(utm["utm_content"]))
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return None
+
+
 def _parse_invoice(data: Any, *, created: bool) -> LavaTopInvoice:
     if not isinstance(data, dict):
         raise LavaTopError("invalid_lava_top_invoice")
@@ -240,4 +309,5 @@ def _parse_invoice(data: Any, *, created: bool) -> LavaTopInvoice:
         payment_url=str(payment_url) if payment_url else None,
         paid_at=paid_at,
         buyer_email=buyer_email,
+        correlation_id=_correlation_id(data),
     )

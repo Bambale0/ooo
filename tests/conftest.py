@@ -16,6 +16,7 @@ os.environ.setdefault("CRYPTO_PAY_API_TOKEN", "test-crypto-pay-token")
 from app.infrastructure.config import get_settings  # noqa: E402
 from app.infrastructure.database import Base, get_db_session  # noqa: E402
 from app.main import app  # noqa: E402
+from app.referrals import models as referral_models  # noqa: E402, F401 -- payment credit uses these tables
 
 
 @pytest.fixture(autouse=True)
