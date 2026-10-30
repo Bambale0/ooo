@@ -316,11 +316,12 @@ async def reconcile_invoice(payment_id: str, payload: PaymentReconcileCreate, db
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="payment_provider_id_conflict")
         if (
             payment.reconciliation_snapshot
-            and payment.reconciliation_snapshot.get("provider_invoice_id") != provider.invoice_id
+            and payment.reconciliation_snapshot.get("provider_invoice_id") not in {None, provider.invoice_id}
         ):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="already_reconciled")
-        if not payment.reconciliation_snapshot:
+        if not (payment.reconciliation_snapshot or {}).get("provider_invoice_id"):
             payment.reconciliation_snapshot = {
+                **(payment.reconciliation_snapshot or {}),
                 "provider_invoice_id": provider.invoice_id,
                 "reason": payload.reason,
                 "actor": "admin_api",
@@ -343,11 +344,12 @@ async def reconcile_invoice(payment_id: str, payload: PaymentReconcileCreate, db
         return payment
     if (
         payment.reconciliation_snapshot
-        and payment.reconciliation_snapshot["provider_invoice_id"] != provider.invoice_id
+        and payment.reconciliation_snapshot.get("provider_invoice_id") not in {None, provider.invoice_id}
     ):
         raise HTTPException(409, "already_reconciled")
-    if not payment.reconciliation_snapshot:
+    if not (payment.reconciliation_snapshot or {}).get("provider_invoice_id"):
         payment.reconciliation_snapshot = {
+            **(payment.reconciliation_snapshot or {}),
             "provider_invoice_id": provider.invoice_id,
             "reason": payload.reason,
             "actor": "admin_api",

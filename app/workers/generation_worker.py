@@ -18,6 +18,7 @@ from app.generations.service import (
     dispatch_generation_to_provider,
     poll_generation_provider,
 )
+from app.generations.submission_recovery import recover_unconfirmed_submissions_once
 from app.generations.video_recovery import active_video_poll_clause
 from app.infrastructure.config import get_settings
 from app.infrastructure.database import SessionLocal
@@ -96,6 +97,7 @@ async def process_generation_work_once(
     from app.inference.recovery import recover_native_outcomes_once
 
     await recover_native_outcomes_once(db, limit=max(100, limit))
+    await recover_unconfirmed_submissions_once(db, limit=max(100, limit))
     await release_stale_partner_reserves_once(db, limit=max(20, limit))
     dispatched = await _dispatch_queued_generations(db, limit=limit, provider=provider)
     polled = await _poll_active_generations(db, limit=limit, provider=provider)
@@ -121,6 +123,7 @@ async def process_generation_work_concurrently_once(
 
     async with session_factory() as db:
         await recover_native_outcomes_once(db, limit=max(100, limit * 5))
+        await recover_unconfirmed_submissions_once(db, limit=max(100, limit * 5))
         await db.commit()
     async with session_factory() as db:
         for recovery_provider in [provider] if provider else [PRIMARY_PROVIDER, *FALLBACK_PROVIDERS]:

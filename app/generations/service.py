@@ -406,6 +406,16 @@ async def dispatch_generation_to_provider(
             outcome="success",
             duration_seconds=monotonic_seconds() - provider_started_at,
         )
+        # A provider reply may arrive after the customer deadline sweeper. Re-read
+        # under the generation lock, preserving irreversible customer finality.
+        await db.refresh(generation, with_for_update=True)
+        if generation.billing_status in {"not_chargeable", "waived", "charged"}:
+            await db.refresh(attempt, with_for_update=True)
+            attempt.provider_task_id = result.provider_task_id
+            attempt.status = "reconciliation_required"
+            attempt.next_attempt_at = attempt.next_poll_at = None
+            await db.flush()
+            return attempt
         if attempt is None:
             attempt = ProviderAttempt(generation_id=generation.id, provider=provider)
             db.add(attempt)
@@ -424,6 +434,11 @@ async def dispatch_generation_to_provider(
         )
         generation.status = "sent_to_provider"
     except Exception as exc:
+        if attempt is not None and attempt.id is not None:
+            await db.refresh(generation, with_for_update=True)
+            if generation.billing_status in {"not_chargeable", "waived", "charged"}:
+                await db.refresh(attempt, with_for_update=True)
+                return attempt
         normalized = adapter.normalize_error(exc)
         if attempt is None:
             attempt = ProviderAttempt(generation_id=generation.id, provider=provider)

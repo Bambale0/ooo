@@ -86,6 +86,9 @@ class Settings(BaseSettings):
     lava_top_cancel_return_url: str | None = None
     payment_reconciliation_interval_seconds: float = Field(default=60.0, ge=5)
     payment_reconciliation_batch_size: int = Field(default=20, ge=1, le=100)
+    # Stop scheduled reads only for provider-confirmed expiry; late paid webhooks remain valid.
+    payment_expired_recheck_seconds: int = Field(default=3 * 86400, ge=3600, le=30 * 86400)
+    lava_top_recovery_max_pages: int = Field(default=5, ge=1, le=100)
     public_api_base_url: str = "http://localhost:8000"
     public_media_base_url: str | None = None
     media_storage_backend: str = "local"
