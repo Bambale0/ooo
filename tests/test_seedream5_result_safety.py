@@ -30,10 +30,16 @@ def png_with_invalid_pixels(width=1024, height=1024):
     return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", b"invalid zlib stream") + chunk(b"IEND", b"")
 
 
+def jpeg_with_invalid_pixels(width=1088, height=1088):
+    output = io.BytesIO()
+    Image.new("RGB", (width, height)).save(output, "JPEG")
+    return output.getvalue()[:-2]
+
+
 @pytest.mark.parametrize("kind", ["invalid_pixels", "decompression_limit"])
 async def test_seedream_unsafe_image_closes_without_charge(client, db_session, monkeypatch, kind):
     if kind == "invalid_pixels":
-        content = png_with_invalid_pixels()
+        content = jpeg_with_invalid_pixels()
         # Prove the fixture specifically passes container verification but not decode.
         with Image.open(io.BytesIO(content)) as image:
             image.verify()
