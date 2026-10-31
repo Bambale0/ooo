@@ -847,8 +847,9 @@
           "3:2",
           "2:3",
           "21:9",
-          "5:4",
-          "4:5"
+          "2:1",
+          "1:2",
+          "9:21"
         ],
         "default_aspect_ratio": "1:1",
         "edit_frame": "default",
@@ -856,77 +857,84 @@
           {
             "aspect_ratio": "1:1",
             "pixels": {
-              "1k": "1024x1024",
-              "2k": "2048x2048"
+              "1k": "1088x1088",
+              "2k": "1984x1984"
             }
           },
           {
             "aspect_ratio": "16:9",
             "pixels": {
-              "1k": "1376x768",
-              "2k": "2736x1520"
+              "1k": "1472x832",
+              "2k": "2656x1504"
             }
           },
           {
             "aspect_ratio": "9:16",
             "pixels": {
-              "1k": "768x1376",
-              "2k": "1520x2736"
+              "1k": "832x1472",
+              "2k": "1504x2656"
             }
           },
           {
             "aspect_ratio": "4:3",
             "pixels": {
-              "1k": "1184x896",
-              "2k": "2352x1776"
+              "1k": "1280x960",
+              "2k": "2304x1728"
             }
           },
           {
             "aspect_ratio": "3:4",
             "pixels": {
-              "1k": "896x1184",
-              "2k": "1776x2352"
+              "1k": "960x1280",
+              "2k": "1728x2304"
             }
           },
           {
             "aspect_ratio": "3:2",
             "pixels": {
-              "1k": "1248x832",
-              "2k": "2496x1664"
+              "1k": "1344x896",
+              "2k": "2464x1632"
             }
           },
           {
             "aspect_ratio": "2:3",
             "pixels": {
-              "1k": "832x1248",
-              "2k": "1664x2496"
+              "1k": "896x1344",
+              "2k": "1632x2464"
             }
           },
           {
             "aspect_ratio": "21:9",
             "pixels": {
-              "1k": "1568x672",
-              "2k": "3120x1344"
+              "1k": "1664x704",
+              "2k": "3040x1312"
             }
           },
           {
-            "aspect_ratio": "5:4",
+            "aspect_ratio": "2:1",
             "pixels": {
-              "1k": "1152x928",
-              "2k": "2272x1840"
+              "1k": "1536x768",
+              "2k": "2816x1408"
             }
           },
           {
-            "aspect_ratio": "4:5",
+            "aspect_ratio": "1:2",
             "pixels": {
-              "1k": "928x1152",
-              "2k": "1840x2272"
+              "1k": "768x1536",
+              "2k": "1408x2816"
+            }
+          },
+          {
+            "aspect_ratio": "9:21",
+            "pixels": {
+              "1k": "704x1664",
+              "2k": "1312x3040"
             }
           }
         ],
         "max_outputs": 1,
         "max_references": 8,
-        "max_reference_mb": 14,
+        "max_reference_mb": 48,
         "response_formats": [
           "b64_json",
           "url"
@@ -940,11 +948,11 @@
           "response_format",
           "images"
         ],
-        "output_format": "PNG"
+        "output_format": "JPEG"
       },
-      "checked_at": "2026-10-19",
+      "checked_at": "2026-10-31",
       "source": "https://argolink.io/en/models/seedream-5.0-pro",
-      "source_revision": "8aad252c5bb4e203"
+      "source_revision": "5cf5790b965e2bad"
     }
   }
 }

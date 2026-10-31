@@ -408,14 +408,14 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
     body += "<h3>Nano Banana Pro · 4K</h3>" + example("image-nano-pro")
     body += "<h3>Seedream 5.0 Pro</h3>" + example("image-seedream-pro") + example("image-seedream-pro-edit")
     body += p(
-        "Seedream 5.0 Pro: 1k или 2k (по умолчанию), только n=1; PNG. "
-        "Соотношения: 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 21:9, 5:4, 4:5. "
-        "Редактирование: до 8 референсов через JSON images или multipart image[]; суммарно до 14 MiB. "
+        "Seedream 5.0 Pro: 1k или 2k (по умолчанию), только n=1; JPEG. "
+        "Соотношения: 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 21:9, 2:1, 1:2, 9:21. "
+        "Редактирование: до 8 референсов через JSON images или multipart image[]; суммарно до 48 MiB. "
         "Размер HTTPS-референсов проверяет поставщик. Формат ответа: b64_json или url. "
         "Параметры size, quality и stream не поддерживаются. Доступность модели проверяйте в /v1/models.",
-        "Seedream 5.0 Pro: 1k or 2k (default), n=1 only; PNG. "
-        "Aspect ratios: 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 21:9, 5:4, 4:5. "
-        "Edits accept up to 8 JSON images or multipart image[] references, 14 MiB combined. "
+        "Seedream 5.0 Pro: 1k or 2k (default), n=1 only; JPEG. "
+        "Aspect ratios: 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 21:9, 2:1, 1:2, 9:21. "
+        "Edits accept up to 8 JSON images or multipart image[] references, 48 MiB combined. "
         "The provider validates the size of HTTPS references. Response format: b64_json or url. "
         "size, quality and stream are unsupported. Check /v1/models for availability.",
     )

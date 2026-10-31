@@ -1,9 +1,10 @@
 # Seedream 5.0 Pro - scoped integration (2026-10-19)
 
-Source: https://argolink.io/en/models/seedream-5.0-pro and live public catalog.
-ID: `seedream-5.0-pro`; generation and JSON/multipart edits; one returned PNG;
-1K or 2K (2K by default), ten reviewed aspect ratios; eight reference images,
-14 MiB combined. HTTPS-reference content size is enforced upstream.
+Source: https://argolink.io/en/models/seedream-5.0-pro and live public catalog,
+re-reviewed 2026-10-31 at catalog revision `5cf5790b965e2bad`.
+ID: `seedream-5.0-pro`; generation and JSON/multipart edits; one returned JPEG;
+1K or 2K (2K by default), eleven reviewed aspect ratios; eight reference images,
+48 MiB combined. HTTPS-reference content size is enforced upstream.
 Procurement is the reviewed catalog's USD 0.03 per returned image for either tier.
 No changes to existing model pricing, account balances or old generations.
 
@@ -24,11 +25,11 @@ for sale on that basis. Keep it draft until the existing launch gate is satisfie
 Use existing model and price services, in a single transaction, for this ID only.
 Create a draft image model, integration/docs flags true after code deployment,
 smoke flag false until verified. Create the two capabilities for ArgoLink.
-For each new tier derive retail price from the current Nano Banana Pro template
-with matching procurement cost (same unit and USD 0.03 procurement at review).
-Use `upsert_price` so each existing partner gets the normal new-variant snapshot
-and pricing history. Re-running registration must not overwrite an existing rate.
-At preparation, both matching source prices were RUB 3.85; re-read before write.
+For each tier, the owner-approved retail rule is current procurement converted by
+the production internal RUB/USDT valuation plus RUB 1.30 per returned image. Use
+`upsert_price` so non-custom partner snapshots receive the published rate and
+custom partner rates remain untouched. Re-running registration must not modify
+unrelated models or historic generation snapshots.
 Never run a global catalog import: unrelated upstream changes need their own review.
 
 ## Remaining launch gate
