@@ -58,7 +58,7 @@ def test_documented_seedream_options_are_preserved(protocol, resolution, ratio):
         {"n": 0},
         {"resolution": "4k"},
         {"resolution": "3k"},
-        {"aspect_ratio": "2:1"},
+        {"aspect_ratio": "5:4"},
         {"response_format": "jpeg"},
         {"size": "2048x2048"},
         {"stream": True},
