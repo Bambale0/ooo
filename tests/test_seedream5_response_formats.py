@@ -31,7 +31,7 @@ async def test_wrong_seedream_response_format_is_not_billable(
     monkeypatch.setattr(
         public_http, "public_http_client", lambda **kwargs: httpx.AsyncClient(transport=httpx.MockTransport(download))
     )
-    item = rendered() if representation == "b64_json" else {"url": "https://media.example.org/image.png"}
+    item = rendered() if representation == "b64_json" else {"url": "https://media.example.org/image.jpg"}
     if representation == "empty_b64":
         item["b64_json"] = ""
     rates = [("default", tier, "generation", Decimal("3.85"), Decimal(".03")) for tier in ("1K", "2K")]

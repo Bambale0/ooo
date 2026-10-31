@@ -16,12 +16,12 @@ from app.contracts.registry import MODELS, image_reference_limit, image_tier, va
 from app.generations.models import Generation
 
 MODEL = "seedream-5.0-pro"
-RATIOS = ("1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "21:9", "5:4", "4:5")
+RATIOS = ("1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "21:9", "2:1", "1:2", "9:21")
 
 
-def rendered(edge=2048):
+def rendered(width=1984, height=None):
     out = io.BytesIO()
-    Image.new("RGB", (edge, edge)).save(out, "PNG")
+    Image.new("RGB", (width, height or width)).save(out, "JPEG")
     return {"b64_json": base64.b64encode(out.getvalue()).decode()}
 
 
@@ -35,6 +35,9 @@ def test_reviewed_seedream_contract():
     }
     assert image_reference_limit(MODEL) == image_reference_limit(MODEL, multipart=True) == 8
     assert image_tier({"model": MODEL}) == "2K"
+    assert entry["image"]["max_reference_mb"] == 48
+    assert entry["image"]["output_format"] == "JPEG"
+    assert tuple(entry["image"]["aspect_ratios"]) == RATIOS
 
 
 @pytest.mark.parametrize("protocol", ["images/generations", "images/edits"])
@@ -55,7 +58,7 @@ def test_documented_seedream_options_are_preserved(protocol, resolution, ratio):
         {"n": 0},
         {"resolution": "4k"},
         {"resolution": "3k"},
-        {"aspect_ratio": "2:1"},
+        {"aspect_ratio": "5:4"},
         {"response_format": "jpeg"},
         {"size": "2048x2048"},
         {"stream": True},
@@ -74,7 +77,7 @@ def test_seedream_data_reference_validation():
     body = {
         "model": MODEL,
         "prompt": "Recolor",
-        "images": [{"image_url": "data:image/png;base64," + rendered()["b64_json"]}],
+        "images": [{"image_url": "data:image/jpeg;base64," + rendered()["b64_json"]}],
     }
     assert validate_request("images/edits", body) == body
     body["images"][0]["image_url"] = "data:image/png;base64,not-base64"
@@ -88,7 +91,7 @@ async def test_seedream_charge_matches_tier_and_replay_is_free(client, db_sessio
 
     def handler(request):
         calls.append(json.loads(request.content))
-        edge = 1024 if calls[-1].get("resolution", "2k").lower() == "1k" else 2048
+        edge = 1088 if calls[-1].get("resolution", "2k").lower() == "1k" else 1984
         return httpx.Response(200, json={"data": [rendered(edge)]})
 
     rates = [
@@ -155,7 +158,8 @@ async def test_seedream_multipart_edit_reference_limit(client, db_session, monke
     try:
         data = {"model": MODEL, "prompt": "Recolor", "resolution": "2k", "n": "1"}
         files = [
-            ("image[]", (str(i) + ".png", base64.b64decode(rendered()["b64_json"]), "image/png")) for i in range(count)
+            ("image[]", (str(i) + ".jpg", base64.b64decode(rendered()["b64_json"]), "image/jpeg"))
+            for i in range(count)
         ]
         response = await client.post("/v1/images/edits", headers=headers, data=data, files=files)
         assert response.status_code == status, response.text
@@ -262,7 +266,7 @@ def test_seedream_wide_1k_output_is_not_misbilled_as_2k():
     from app.inference.images import image_usage
 
     out = io.BytesIO()
-    Image.new("RGB", (1376, 768)).save(out, "PNG")
+    Image.new("RGB", (1472, 832)).save(out, "JPEG")
     item = {"b64_json": base64.b64encode(out.getvalue()).decode()}
     assert image_usage({"model": MODEL, "resolution": "1k", "aspect_ratio": "16:9"}, {"data": [item]}) == {"1K": 1}
 
@@ -271,4 +275,4 @@ def test_seedream_wrong_output_dimensions_cannot_be_billed():
     from app.inference.images import image_usage
 
     with pytest.raises(ValueError, match="image_result_invalid_dimensions"):
-        image_usage({"model": MODEL, "resolution": "2k"}, {"data": [rendered(1024)]})
+        image_usage({"model": MODEL, "resolution": "2k"}, {"data": [rendered(1088)]})
