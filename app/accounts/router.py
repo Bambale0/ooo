@@ -9,6 +9,7 @@ from app.accounts.models import (
     Partner,
     PartnerAccountStateHistory,
     PartnerApplication,
+    PartnerLavaTopSurchargeHistory,
 )
 from app.accounts.schemas import (
     ApiKeyCreate,
@@ -18,6 +19,8 @@ from app.accounts.schemas import (
     DeletePartnerCreate,
     PartnerApplicationCreate,
     PartnerApplicationRead,
+    PartnerLavaTopSurchargeExemptionRead,
+    PartnerLavaTopSurchargeExemptionUpdate,
     PartnerRead,
     PartnerStatusUpdate,
     RejectApplicationCreate,
@@ -425,3 +428,30 @@ async def change_partner_status(partner_id: str, payload: PartnerStatusUpdate, d
         partner.status = new_status
         await db.flush()
     return partner
+
+
+@router.put(
+    "/partners/{partner_id}/lava-top-surcharge-exemption",
+    response_model=PartnerLavaTopSurchargeExemptionRead,
+    dependencies=[Depends(require_admin)],
+)
+async def set_partner_lava_top_surcharge_exemption(
+    partner_id: str,
+    payload: PartnerLavaTopSurchargeExemptionUpdate,
+    db: DbSession,
+) -> PartnerLavaTopSurchargeExemptionRead:
+    """Change only future Lava.top checkout charges for one partner."""
+    partner = await db.get(Partner, partner_id, with_for_update=True)
+    if partner is None or partner.status == "deleted":
+        raise HTTPException(404, "partner_not_found")
+    if partner.lava_top_surcharge_exempt != payload.exempt:
+        db.add(PartnerLavaTopSurchargeHistory(
+            partner_id=partner.id,
+            old_exempt=partner.lava_top_surcharge_exempt,
+            new_exempt=payload.exempt,
+            actor="admin_api",
+            reason=payload.reason,
+        ))
+        partner.lava_top_surcharge_exempt = payload.exempt
+        await db.flush()
+    return PartnerLavaTopSurchargeExemptionRead(partner_id=partner.id, exempt=partner.lava_top_surcharge_exempt)

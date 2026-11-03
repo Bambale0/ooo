@@ -154,3 +154,24 @@ async def test_background_sweep_expires_only_stale_unconfirmed_lava_creations(db
     assert credited.status == "credited"
     assert crypto.status == "creating"
     assert not both_methods[0].created and not both_methods[1].created
+
+
+async def test_lava_exempt_partner_sees_exact_due_and_is_charged_no_surcharge(
+    cabinet, db_session, both_methods,
+):
+    feed, _ = cabinet
+    owner = await partner(db_session)
+    owner.lava_top_surcharge_exempt = True
+    await db_session.commit()
+    screen = (await feed(callback="topup_method:lava_top"))[-1]
+    assert "email" in screen.text.lower()
+    await feed(text="buyer@example.org")
+    preview = (await feed(text="3000"))[-1]
+    assert "Создать счёт на 3,000 ₽" in preview.text
+    assert "На баланс зачислится 3,000 ₽" in preview.text
+    action = (await db_session.scalars(select(BotAction))).one()
+    await feed(callback=f"confirm:{action.id}")
+    payment = (await db_session.scalars(select(PaymentInvoice))).one()
+    assert payment.requested_rub == Decimal("3000")
+    assert payment.amount_due_rub == Decimal("3000")
+    assert both_methods[1].created == [(3000, "buyer@example.org")]

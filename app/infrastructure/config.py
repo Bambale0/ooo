@@ -81,6 +81,7 @@ class Settings(BaseSettings):
     lava_top_offer_id: str | None = None
     lava_top_base_url: str = "https://gate.lava.top"
     lava_top_timeout_seconds: float = Field(default=10.0, gt=0)
+    lava_top_surcharge_rate: Decimal = Field(default=Decimal("0.10"), ge=0, le=1, allow_inf_nan=False)
     lava_top_successful_return_url: str | None = None
     lava_top_failure_return_url: str | None = None
     lava_top_cancel_return_url: str | None = None

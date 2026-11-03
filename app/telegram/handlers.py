@@ -373,9 +373,13 @@ async def handle_callback(event, db, dialog) -> None:
         if lava_top_enabled:
             balance_buttons.append(("Изменить email", "payment_email"))
         lava_fee_text = (
-            "Для Lava.top сумма к оплате включает 10%, на баланс зачисляется введённая сумма. "
-            if lava_top_enabled
-            else ""
+            "Для вас надбавка Lava.top отключена. "
+            if lava_top_enabled and partner.lava_top_surcharge_exempt
+            else (
+                f"Для Lava.top сумма к оплате включает {get_settings().lava_top_surcharge_rate * 100:g}%, "
+                "на баланс зачисляется введённая сумма. "
+                if lava_top_enabled else ""
+            )
         )
         await show(
             event,
@@ -1181,9 +1185,15 @@ async def handle_message(event, db, dialog) -> None:
         if get_settings().payment_provider == "lava_top":
             from app.payments.lava_top import lava_top_checkout_amount
 
+            due = lava_top_checkout_amount(amount, surcharge_exempt=partner.lava_top_surcharge_exempt)
+            explanation = (
+                "без дополнительной надбавки Lava.top."
+                if partner.lava_top_surcharge_exempt
+                else f"{get_settings().lava_top_surcharge_rate * 100:g}% включены в сумму оплаты."
+            )
             confirmation = (
-                f"Создать счёт на {lava_top_checkout_amount(amount):,.0f} ₽?\n"
-                f"На баланс зачислится {amount:,} ₽; 10% включены в сумму оплаты."
+                f"Создать счёт на {due:,.0f} ₽?\n"
+                f"На баланс зачислится {amount:,} ₽; {explanation}"
             )
         else:
             confirmation = f"Создать счёт на {amount:,} ₽?"

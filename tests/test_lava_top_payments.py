@@ -529,3 +529,82 @@ async def test_lava_top_webhook_for_unrelated_sale_is_acknowledged(client, db_se
     ).scalars().all()
     assert events[0].provider_reference == "33333333-3333-4333-8333-333333333333"
     assert events[1].event_type == "refund.success" and events[1].provider_reference is None
+
+
+async def test_lava_exemption_is_tenant_scoped_and_preserves_existing_invoices(
+    client, db_session, admin_headers, monkeypatch,
+):
+    from app.accounts.models import PartnerLavaTopSurchargeHistory
+
+    monkeypatch.setattr(get_settings(), "payment_provider", "lava_top")
+    fake = FakeLavaTopClient()
+    monkeypatch.setattr("app.payments.router.get_lava_top_client", lambda: fake)
+    first_partner, first_key = await _partner_with_api_key(db_session, telegram_id="no-lava-fee")
+    other_partner, other_key = await _partner_with_api_key(db_session, telegram_id="default-lava-fee")
+    url = f"/api/v1/accounts/partners/{first_partner.id}/lava-top-surcharge-exemption"
+
+    initial = await client.post("/api/v1/payments/invoices", headers={"Authorization": f"Bearer {first_key}"}, json={
+        "requested_rub": 1000, "idempotency_key": "before-exemption", "buyer_email": "one@example.org",
+    })
+    assert initial.status_code == 202
+    assert Decimal(initial.json()["amount_due_rub"]) == Decimal("1100.00")
+
+    denied = await client.put(url, json={"exempt": True, "reason": "Partner agreement"})
+    assert denied.status_code == 401
+    configured = await client.put(url, headers=admin_headers, json={
+        "exempt": True, "reason": "Partner agreement",
+    })
+    assert configured.status_code == 200
+    assert configured.json() == {"partner_id": first_partner.id, "exempt": True}
+    again = await client.put(url, headers=admin_headers, json={
+        "exempt": True, "reason": "Idempotent repeat",
+    })
+    assert again.status_code == 200
+
+    after = await client.post("/api/v1/payments/invoices", headers={"Authorization": f"Bearer {first_key}"}, json={
+        "requested_rub": 1000, "idempotency_key": "after-exemption",
+    })
+    assert after.status_code == 202
+    assert Decimal(after.json()["amount_due_rub"]) == Decimal("1000.00")
+    other = await client.post("/api/v1/payments/invoices", headers={"Authorization": f"Bearer {other_key}"}, json={
+        "requested_rub": 1000, "idempotency_key": "other-partner", "buyer_email": "other@example.org",
+    })
+    assert other.status_code == 202
+    assert Decimal(other.json()["amount_due_rub"]) == Decimal("1100.00")
+    replay = await client.post("/api/v1/payments/invoices", headers={"Authorization": f"Bearer {first_key}"}, json={
+        "requested_rub": 1000, "idempotency_key": "before-exemption",
+    })
+    assert replay.status_code == 202
+    assert replay.json()["id"] == initial.json()["id"]
+    assert Decimal(replay.json()["amount_due_rub"]) == Decimal("1100.00")
+    history = (await db_session.execute(select(PartnerLavaTopSurchargeHistory).where(
+        PartnerLavaTopSurchargeHistory.partner_id == first_partner.id
+    ))).scalars().all()
+    assert len(history) == 1
+    assert history[0].old_exempt is False and history[0].new_exempt is True
+    assert fake.created == [(1100, "one@example.org"), (1000, "one@example.org"), (1100, "other@example.org")]
+
+
+def test_lava_partner_exemption_schema_migration_is_additive_and_reversible():
+    path = Path(__file__).parents[1] / "alembic/versions/20261103_0042_partner_lava_top_surcharge_exemption.py"
+    spec = spec_from_file_location("lava_partner_exemption_migration", path)
+    migration = module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    engine = create_engine("sqlite://")
+    with engine.begin() as connection:
+        connection.execute(text("CREATE TABLE partners (id VARCHAR(36) PRIMARY KEY)"))
+        connection.execute(text("INSERT INTO partners(id) VALUES ('p1')"))
+        with Operations.context(MigrationContext.configure(connection)):
+            migration.upgrade()
+            assert connection.execute(
+                text("SELECT lava_top_surcharge_exempt FROM partners WHERE id='p1'")
+            ).scalar_one() == 0
+            connection.execute(text("UPDATE partners SET lava_top_surcharge_exempt=1 WHERE id='p1'"))
+            with pytest.raises(RuntimeError, match="active Lava"):
+                migration.downgrade()
+            connection.execute(text("UPDATE partners SET lava_top_surcharge_exempt=0 WHERE id='p1'"))
+            migration.downgrade()
+        assert "lava_top_surcharge_exempt" not in {
+            column["name"] for column in inspect(connection).get_columns("partners")
+        }
+    engine.dispose()

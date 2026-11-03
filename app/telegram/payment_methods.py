@@ -192,7 +192,7 @@ async def handle_message(event, db, dialog) -> bool:
     if method == "lava_top":
         from app.payments.lava_top import lava_top_checkout_amount
 
-        due = lava_top_checkout_amount(amount)
+        due = lava_top_checkout_amount(amount, surcharge_exempt=partner.lava_top_surcharge_exempt)
     else:
         due = amount
     action = await new_action(db, str(event.from_user.id), ACTION_KIND, {
