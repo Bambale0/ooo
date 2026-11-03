@@ -46,14 +46,14 @@ def safe_lava_error_details(exc: LavaTopError) -> dict[str, str | int | None]:
     }
 
 
-LAVA_TOP_SURCHARGE_RATE = Decimal("0.10")
 WHOLE_RUBLE = Decimal("1")
 
 
-def lava_top_checkout_amount(requested_rub: Decimal | int) -> Decimal:
-    """Return the immutable Lava checkout gross for an API-balance top-up."""
+def lava_top_checkout_amount(requested_rub: Decimal | int, *, surcharge_exempt: bool = False) -> Decimal:
+    """Calculate Lava checkout; only new invoices read the partner exemption."""
     requested = Decimal(requested_rub)
-    return (requested * (Decimal(1) + LAVA_TOP_SURCHARGE_RATE)).quantize(
+    rate = Decimal("0") if surcharge_exempt else get_settings().lava_top_surcharge_rate
+    return (requested * (Decimal(1) + rate)).quantize(
         WHOLE_RUBLE,
         rounding=ROUND_HALF_UP,
     )

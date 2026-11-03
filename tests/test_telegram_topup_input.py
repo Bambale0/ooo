@@ -64,7 +64,7 @@ async def test_topup_internal_value_error_is_not_reported_as_bad_input(cabinet, 
     monkeypatch.setattr(get_settings(), "payment_provider", "lava_top")
     await feed(callback="topup")
 
-    def broken_checkout(amount):
+    def broken_checkout(amount, *, surcharge_exempt=False):
         raise ValueError("synthetic-secret private-buyer@example.org")
 
     monkeypatch.setattr("app.payments.lava_top.lava_top_checkout_amount", broken_checkout)

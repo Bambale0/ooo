@@ -206,7 +206,9 @@ async def create_or_resume_lava_invoice(
         _mark_expired_if_needed(payment)
         return payment
 
-    provider_amount_rub = lava_top_checkout_amount(requested_rub)
+    provider_amount_rub = lava_top_checkout_amount(
+        requested_rub, surcharge_exempt=partner.lava_top_surcharge_exempt
+    )
     payment = PaymentInvoice(
         partner_id=partner.id,
         provider="lava_top",

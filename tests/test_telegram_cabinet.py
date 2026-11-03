@@ -449,3 +449,33 @@ async def test_admin_can_switch_fx_between_manual_and_automatic(cabinet, db_sess
     ).scalars().first()
     assert automatic.automatic_enabled is True
     assert automatic.rate == Decimal("97.500000")
+
+
+async def test_legacy_lava_topup_exemption_hides_ten_percent_from_balance_and_confirmation(
+    cabinet, db_session, monkeypatch,
+):
+    from tests.test_lava_top_payments import FakeLavaTopClient
+
+    feed, _ = cabinet
+    owner = await partner(db_session)
+    owner.payment_email = "buyer@example.org"
+    owner.lava_top_surcharge_exempt = True
+    await db_session.commit()
+    monkeypatch.setattr(get_settings(), "payment_provider", "lava_top")
+    fake = FakeLavaTopClient()
+    monkeypatch.setattr("app.payments.service.get_lava_top_client", lambda: fake)
+
+    balance = (await feed(callback="balance"))[-1]
+    assert "надбавка Lava.top отключена" in balance.text
+    assert "10%" not in balance.text
+    await feed(callback="topup")
+    preview = (await feed(text="3000"))[-1]
+    assert "Создать счёт на 3,000 ₽" in preview.text
+    assert "без дополнительной надбавки Lava.top" in preview.text
+    action = (
+        await db_session.execute(
+            select(BotAction).where(BotAction.kind == "invoice_create", BotAction.status == "pending")
+        )
+    ).scalar_one()
+    await feed(callback=f"confirm:{action.id}")
+    assert fake.created == [(3000, "buyer@example.org")]

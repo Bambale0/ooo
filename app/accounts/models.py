@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.infrastructure.database import Base
@@ -50,6 +50,9 @@ class Partner(Base):
     company_name: Mapped[str] = mapped_column(String(255), nullable=False)
     project_name: Mapped[str] = mapped_column(String(255), nullable=False)
     payment_email: Mapped[str | None] = mapped_column(String(320))
+    lava_top_surcharge_exempt: Mapped[bool] = mapped_column(
+        default=False, nullable=False, server_default="false"
+    )
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
     balance_rub: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=Decimal("0.00"))
     credit_limit_rub: Mapped[Decimal] = mapped_column(
@@ -79,6 +82,20 @@ class PartnerCreditLimitHistory(Base):
     partner_id: Mapped[str] = mapped_column(ForeignKey("partners.id"), nullable=False, index=True)
     old_limit_rub: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     new_limit_rub: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    actor: Mapped[str] = mapped_column(String(80), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[object] = utc_created_at()
+
+
+class PartnerLavaTopSurchargeHistory(Base):
+    """Immutable audit of changes to a partner Lava checkout exception."""
+
+    __tablename__ = "partner_lava_top_surcharge_history"
+
+    id: Mapped[str] = uuid_pk()
+    partner_id: Mapped[str] = mapped_column(ForeignKey("partners.id"), nullable=False, index=True)
+    old_exempt: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    new_exempt: Mapped[bool] = mapped_column(Boolean, nullable=False)
     actor: Mapped[str] = mapped_column(String(80), nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[object] = utc_created_at()
