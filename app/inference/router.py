@@ -542,6 +542,19 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
             data = json.loads(b"".join(chunks))
             if not isinstance(data, dict):
                 raise ValueError("provider_response_invalid")
+            if (
+                protocol in {"images/generations", "images/edits"}
+                and isinstance(data.get("error"), dict)
+                and data["error"].get("code") == "content_policy_violation"
+            ):
+                # Some image providers send a policy refusal with HTTP 200.
+                # It is a terminal customer rejection, not a missing image.
+                # Provider computation may already be billed: keep its cost hold.
+                trace.failed(attempt, ValueError("content_policy_violation"), phase="provider_policy_rejection")
+                trace.rejected(error_code="content_policy_violation", http_status=422)
+                return await fail(
+                    db, generation, attempt, "content_policy_violation", definitive=False, public_status=422
+                )
             if protocol in TEXT_PROTOCOLS:
                 # A parsed error envelope or missing result is not a successful delivery.
                 result_ready = not data.get("error") and bool(

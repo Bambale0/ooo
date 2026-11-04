@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 # Only static codes raised by our response validators are safe to persist.
 # Never log arbitrary exception text: it can contain signed URLs or credentials.
 IMAGE_RESPONSE_FAILURE_REASONS = frozenset({
+    "content_policy_violation",
     "invalid_image_count",
     "image_result_missing_bytes",
     "image_result_too_large",
