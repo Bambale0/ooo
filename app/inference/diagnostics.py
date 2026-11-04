@@ -16,6 +16,22 @@ from app.providers.models import ProviderAttempt
 
 logger = logging.getLogger(__name__)
 
+# Only static codes raised by our response validators are safe to persist.
+# Never log arbitrary exception text: it can contain signed URLs or credentials.
+IMAGE_RESPONSE_FAILURE_REASONS = frozenset({
+    "invalid_image_count",
+    "image_result_missing_bytes",
+    "image_result_too_large",
+    "image_result_invalid_format",
+    "image_result_invalid_dimensions",
+    "image_dimensions_unavailable",
+    "unsupported_response_format",
+    "image_result_format_mismatch",
+    "provider_response_invalid",
+    "response_too_large",
+})
+
+
 
 def log_rejection(
     *,
@@ -140,6 +156,13 @@ class NativeRequestTrace:
 
     def failed(self, attempt: ProviderAttempt, error: Exception, *, phase: str) -> None:
         event = {**self._event(phase), "exception_class": type(error).__name__}
+        if (
+            type(error) is ValueError
+            and len(error.args) == 1
+            and isinstance(error.args[0], str)
+            and error.args[0] in IMAGE_RESPONSE_FAILURE_REASONS
+        ):
+            event["validation_reason"] = error.args[0]
         attempt.raw_error = json.dumps(event, separators=(",", ":"))
         # No exception string or exc_info: they may contain signed URLs or keys.
         logger.warning("native_inference_transport_or_decode_failed", extra=event)
