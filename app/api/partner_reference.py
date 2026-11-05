@@ -82,6 +82,29 @@ EXAMPLES = {
             "response_format": "b64_json",
         },
     ),
+    "image-gpt-26": (
+        "images/generations",
+        {
+            "model": "gpt-image-2.6-flare",
+            "prompt": "A ceramic cup on a plain blue background",
+            "size": "2048x1152",
+            "quality": "max",
+            "n": 1,
+            "response_format": "b64_json",
+        },
+    ),
+    "image-gpt-26-edit": (
+        "images/edits",
+        {
+            "model": "gpt-image-2.6-sunburst",
+            "prompt": "Change the cup color to green",
+            "images": [{"image_url": "https://media.example.com/cup.png"}],
+            "size": "1440x1440",
+            "quality": "xhigh",
+            "n": 1,
+            "response_format": "b64_json",
+        },
+    ),
     "video-reference": (
         "videos/generations",
         {
@@ -420,6 +443,19 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
         "size, quality and stream are unsupported. Check /v1/models for availability.",
     )
     body += "<h3>GPT Image 2.5 Sunburst · 4K</h3>" + example("image-sunburst")
+    body += "<h3>GPT Image 2.6 Flare / Sunburst</h3>" + example("image-gpt-26") + example("image-gpt-26-edit")
+    body += p(
+        "Обе версии поддерживают 1K и 2K: size=auto либо ширинаxвысота с максимальной стороной 2048. "
+        "quality: auto, low, medium, high, xhigh, max; n от 1 до 7. "
+        "Редактирование: до 16 референсов через JSON images или multipart image[]. "
+        "Формат ответа: b64_json или url. Параметры resolution, aspect_ratio и 4K не поддерживаются. "
+        "Оплата за каждое фактически возвращённое изображение; доступность проверяйте в /v1/models.",
+        "Both variants support 1K and 2K: size=auto or widthxheight, with a longest edge of 2048. "
+        "quality: auto, low, medium, high, xhigh, max; n from 1 to 7. "
+        "Edits accept up to 16 references via JSON images or multipart image[]. "
+        "Response format: b64_json or url. resolution, aspect_ratio and 4K are unsupported. "
+        "Each returned image is billed; check /v1/models for availability.",
+    )
     body += p(
         "В multipart передавайте model, prompt, n как поля формы; файлы — повторяющимся image[] "
         "(также принимаются image, images, images[]). Лимиты файлов: GPT 16, Nano Banana Pro 14, "
