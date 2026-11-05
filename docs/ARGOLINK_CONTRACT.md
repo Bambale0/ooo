@@ -1,5 +1,8 @@
 # ArgoLink contracts and resale API
 
+GPT Image 2.6 Flare/Sunburst were reviewed on 2026-11-05. See the
+[scoped rollout and 35% pricing rule](EXECUTION/GPT_IMAGE_26_20261105.md).
+
 Checked against [official documentation](https://argolink.io/en/docs#/) and the
 [public catalog](https://argolink.io/api/catalog/v1/models?page_size=100), revision
 `5ce662ba88c3d07f`, on 2026-09-23, with the reviewed Self-Developed NSFW additions

@@ -26,17 +26,21 @@ def image_usage(body: dict, data: dict) -> dict[str, int]:
             try:
                 with Image.open(io.BytesIO(content)) as image:
                     if (
-                        image.format != profile["output_format"]
+                        (profile.get("output_format") and image.format != profile["output_format"])
                         or image.width * image.height > get_settings().media_image_max_pixels
                     ):
                         raise ValueError("image_result_invalid_format")
-                    resolution = image_resolution(body).lower()
-                    ratio = body.get("aspect_ratio", profile["default_aspect_ratio"])
-                    dimensions = next(
-                        row["pixels"][resolution] for row in profile["output_sizes"] if row["aspect_ratio"] == ratio
-                    )
-                    if image.size != tuple(int(side) for side in dimensions.split("x")):
-                        raise ValueError("image_result_invalid_dimensions")
+                    if profile["frame"] == "size":
+                        if max(image.size) > profile["max_size_edge"]:
+                            raise ValueError("image_result_invalid_dimensions")
+                    else:
+                        resolution = image_resolution(body).lower()
+                        ratio = body.get("aspect_ratio", profile["default_aspect_ratio"])
+                        dimensions = next(
+                            row["pixels"][resolution] for row in profile["output_sizes"] if row["aspect_ratio"] == ratio
+                        )
+                        if image.size != tuple(int(side) for side in dimensions.split("x")):
+                            raise ValueError("image_result_invalid_dimensions")
                     image.verify()
                 # verify() checks structure, not pixels. Reopen only after the
                 # configured byte/pixel limits and exact dimensions are checked.
