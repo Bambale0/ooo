@@ -57,6 +57,7 @@ contract does not expose a safe cancellation endpoint.
 | Seedance 2.5 Self-Developed NSFW | 4–30 | 720p, 1080p | 30 / 10 / 10 / 50 |
 | Wan 3 | 2–30 | 480p, 720p, 1080p | 10 / 5 / 5 / 20 |
 | Grok Video 1.5 | 1–15 | 480p, 720p, 1080p | up to 7 image references; no video/audio references |
+| Kling 4.0 | 3–30 | 720p, 1080p | 10 / 5 / 0 / 15 |
 | MiniMax H3 | 4–15 | 768p (default), 2k | 9 / 3 / 3 / 15 |
 
 Seedance accepts first/last frames, reference combinations, documented aliases,
@@ -128,6 +129,24 @@ tickets are supported. For MiniMax `size`, the documented 1366x768 mapping is
 recognized; other pixel dimensions require explicit `resolution` because the
 current docs do not specify the 2k short-side boundary consistently. This is a
 billing validation constraint, not a silent choice of a different output tier.
+
+Kling 4.0 uses exact model ID `kling-4.0`. Every request requires a prompt and
+creates one 3–30 second video at 720p or 1080p. Text requests accept 21:9, 16:9,
+1:1 or 9:16; reference requests additionally accept `adaptive`. Up to 10 HTTPS
+JPEG/PNG images and 5 HTTPS MP4/MOV videos may be combined, 15 assets total.
+Reference audio and first/last frames are rejected. Video references must each
+be 3–30 seconds and at most 30 seconds in total. `generate_audio` defaults to
+true and accepts false for a silent result; seed and `watermark: true` are
+rejected. The reviewed procurement schedule is USD 0.1256/0.188 per billed
+second for 720p/1080p without input video and USD 0.0754/0.113 with input video.
+The two input classes have separate partner-price rows. Final billing uses the
+provider-confirmed `usage.billed_seconds`; admission conservatively covers the
+documented reference-video maximum. Source: https://argolink.io/ru/models/kling-4.0.
+
+Kling is registered as a draft through `python -m app.catalog.kling_4 --apply`.
+That scoped operation creates no partner price, does not claim a smoke, and does
+not enable the model. Production enablement still requires all four price rows,
+the normal documentation/integration gates and a successful live smoke.
 
 The catalogue changed during verification: revision `5ce662ba88c3d07f` added H3
 and three Seedance 480p tiers. Procurement uses the current live catalog (H3

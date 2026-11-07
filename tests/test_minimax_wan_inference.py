@@ -17,8 +17,15 @@ from app.providers.argolink import ArgoLinkAdapter
 from app.providers.base import ProviderGenerationRequest
 from app.providers.video_contract import video_request_body
 
-CASES = [(slug, tier["label"], tier["price"])
-         for slug in sorted(REVIEWED_VIDEO_MODELS) for tier in MODELS[slug]["procurement"]["tiers"]]
+CASES = [
+    (
+        slug,
+        tier["label"],
+        MODELS[slug]["procurement"].get("video_input_tiers", {}).get(tier["label"], tier["price"]),
+    )
+    for slug in sorted(REVIEWED_VIDEO_MODELS)
+    for tier in MODELS[slug]["procurement"]["tiers"]
+]
 
 
 @pytest.mark.parametrize("slug,tier,cost", CASES)
@@ -42,9 +49,18 @@ async def test_native_video_reference_accounting_and_idempotency(
     monkeypatch.setattr(get_settings(), "rub_per_usdt", Decimal("84.50"))
     retail = ({"768p": Decimal("4.88"), "2k": Decimal("6.99")}[tier]
               if slug == "minimax-h3" else Decimal("25"))
+    rates = [("default", tier, "second", retail, cost)]
+    if slug == "kling-4.0":
+        default_cost = next(
+            item["price"] for item in MODELS[slug]["procurement"]["tiers"] if item["label"] == tier
+        )
+        rates = [
+            ("default", tier, "second", retail, default_cost),
+            ("video_input", tier, "second", retail, cost),
+        ]
     partner, headers, upstream = await setup(
         db_session, monkeypatch, handler, model=slug, category="video",
-        rates=[("default", tier, "second", retail, cost)],
+        rates=rates,
     )
     monkeypatch.setattr("app.generations.service.get_partner_provider_adapter",
                         AsyncMock(return_value=ArgoLinkAdapter(api_key="upstream", client=upstream)))

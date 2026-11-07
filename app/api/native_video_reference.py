@@ -3,8 +3,16 @@
 import json
 from html import escape
 
-REVIEWED_VIDEO_MODELS = {"minimax-h3", "wan-3", "wan-3-prime"}
+REVIEWED_VIDEO_MODELS = {"kling-4.0", "minimax-h3", "wan-3", "wan-3-prime"}
 EXAMPLES = {
+    "kling-4.0": [
+        {"model": "kling-4.0", "prompt": "A slow aerial shot over a foggy pine forest at sunrise",
+         "duration": 5, "resolution": "720p", "aspect_ratio": "16:9", "generate_audio": True},
+        {"model": "kling-4.0", "prompt": "Let @Image 1 follow the motion from @Video 1",
+         "duration": 5, "resolution": "1080p", "aspect_ratio": "adaptive", "generate_audio": False,
+         "reference_images": [{"url": "https://media.example.com/subject.png"}],
+         "reference_videos": [{"url": "https://media.example.com/motion.mp4"}]},
+    ],
     "minimax-h3": [
         {"model": "minimax-h3", "prompt": "A slow camera move around a ceramic cup", "duration": 5,
          "resolution": "768p", "aspect_ratio": "16:9"},
@@ -29,6 +37,20 @@ EXAMPLES = {
 }
 
 LIMITS = {
+    "kling-4.0": (
+        "3–30 сек; 720p / 1080p; до 10 изображений и 5 видео, всего 15; reference_audios не "
+        "поддерживается. Промпт обязателен: до 26 000 английских или 11 000 других символов. "
+        "Пропорции: 21:9, 16:9, 1:1, 9:16; с референсами также adaptive. Видеореференсы: "
+        "3–30 сек каждый, до 30 сек суммарно. Кадры, seed и watermark не поддерживаются. "
+        "generate_audio по умолчанию true; false создаёт видео без звука. Видеореференс выбирает отдельный "
+        "тариф video_input; итоговое списание идёт по подтверждённому usage.billed_seconds.",
+        "3–30 seconds; 720p / 1080p; up to 10 images and 5 videos, 15 total; reference_audios is "
+        "unsupported. A prompt is required: up to 26,000 English or 11,000 other characters. Ratios: "
+        "21:9, 16:9, 1:1, 9:16; reference requests also support adaptive. Reference videos: 3–30 "
+        "seconds each, 30 seconds total. Frames, seed and watermark are unsupported. generate_audio "
+        "defaults to true; false creates a silent result. A video reference selects the separate video_input "
+        "rate; confirmed usage.billed_seconds determines the final charge.",
+    ),
     "minimax-h3": (
         "4–15 сек; 768p / 2k; до 9 изображений, 3 видео, 3 аудио, всего 12. "
         "Промпт обязателен, до 7000 символов. Входные видео и аудио: 2–15 сек, суммарно до 15 сек на тип. "
@@ -69,16 +91,26 @@ def render_native_video_reference(lang: str, enabled_models: set[str]) -> str:
         for example in EXAMPLES[model]:
             parts.append("<pre><code>POST /v1/videos/generations\n" +
                          escape(json.dumps(example, ensure_ascii=False, indent=2)) + "</code></pre>")
+        media_billing_ru = (
+            "Изображения отдельно не оплачиваются; аудиореференсы не поддерживаются."
+            if model == "kling-4.0"
+            else "Изображения и аудио отдельно не оплачиваются."
+        )
+        media_billing_en = (
+            "Images have no extra fee; audio references are unsupported."
+            if model == "kling-4.0"
+            else "Images and audio have no extra fee."
+        )
         ru = (
             "Референсы передаются как HTTPS URL. Предварительного удержания с партнёрского баланса нет. "
             "Списание выполняется после успешной генерации по подтверждённым usage.billed_seconds. "
-            "Изображения и аудио отдельно не оплачиваются. Один запрос — одно видео. "
+            f"{media_billing_ru} Один запрос — одно видео. "
             "Сохраняйте request_id из HTTP 202, опрашивайте GET /v1/videos/{request_id}; "
             "при done скачайте /v1/videos/{request_id}/content. Не повторяйте POST с новым ключом при задержке."
         )
         en = (
             "References are HTTPS URLs. No upfront hold is placed on partner funds. "
-            "Confirmed usage.billed_seconds determines the final charge. Images and audio have no extra fee. "
+            f"Confirmed usage.billed_seconds determines the final charge. {media_billing_en} "
             "One request produces one video. Save request_id from HTTP 202, poll GET /v1/videos/{request_id}; "
             "on done download /v1/videos/{request_id}/content. Do not replay a slow POST with a new key."
         )

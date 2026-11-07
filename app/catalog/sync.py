@@ -60,6 +60,10 @@ def variants(entry):
                 "second" if entry["category"] == "video" else "generation",
                 Decimal(str(tier["price"])),
             )
+        video_input_mode = entry.get("video_input_mode")
+        if entry["category"] == "video" and isinstance(video_input_mode, str):
+            for resolution, cost in price.get("video_input_tiers", {}).items():
+                yield video_input_mode, resolution, "second", Decimal(str(cost))
 
 
 async def import_reviewed_catalog(db):

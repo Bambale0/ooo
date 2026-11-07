@@ -9,6 +9,7 @@ from typing import Protocol
 
 from fastapi import HTTPException
 
+from app.contracts.registry import MODELS
 from app.infrastructure.config import get_settings
 
 EDIT_MODEL = "seedance-2.5"
@@ -58,6 +59,9 @@ def edit_markup(model: str) -> Decimal | None:
 
 
 def video_pricing_mode(body: dict) -> str:
+    video_input_mode = MODELS.get(body.get("model"), {}).get("video_input_mode")
+    if isinstance(video_input_mode, str) and body.get("reference_videos"):
+        return video_input_mode
     if (
         body.get("model") == EDIT_MODEL
         and edit_markup(body.get("model")) is not None

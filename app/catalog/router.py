@@ -433,7 +433,10 @@ async def ensure_model_can_be_enabled(db: DbSession, model: Model | ModelCreate)
             for p in prices
         ):
             raise HTTPException(409, "economic_gate_missing")
-        if model.modality in {"llm", "image"}:
+        requires_complete_schedule = model.modality in {"llm", "image"} or isinstance(
+            MODELS[model.slug].get("video_input_mode"), str
+        )
+        if requires_complete_schedule:
             from app.catalog.sync import variants
 
             required = {(m, r, u) for m, r, u, _ in variants(MODELS[model.slug])}
