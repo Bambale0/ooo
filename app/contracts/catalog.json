@@ -289,6 +289,33 @@
         ]
       }
     },
+    "kling-4.0": {
+      "category": "video",
+      "endpoint": "/v1/videos/generations",
+      "procurement": {
+        "currency": "USD",
+        "billing_mode": "video",
+        "unit": "second",
+        "generation_per_unit": 0.1256,
+        "tiers": [
+          {
+            "label": "720p",
+            "price": 0.1256
+          },
+          {
+            "label": "1080p",
+            "price": 0.188
+          }
+        ],
+        "video_input_tiers": {
+          "720p": 0.0754,
+          "1080p": 0.113
+        }
+      },
+      "video_input_mode": "video_input",
+      "checked_at": "2026-11-07",
+      "source": "https://argolink.io/ru/models/kling-4.0"
+    },
     "claude-opus-4-8": {
       "category": "chat",
       "endpoint": "/v1/chat/completions",

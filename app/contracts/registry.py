@@ -23,6 +23,7 @@ SEEDANCE = {name for name in MODELS if name.startswith("seedance-")}
 # family membership so a newly contracted variant cannot silently inherit the 2.0
 # limits (15s, 9 references, audio-needs-visual) that differ from the provider card.
 SEEDANCE_25_FAMILY = {"seedance-2.5", "seedance-2.5-self-developed-nsfw"}
+KLING_MODELS = {"kling-4.0"}
 
 
 def contract(model: str, protocol: str) -> dict[str, Any]:
@@ -235,10 +236,11 @@ def validate_video(original: dict[str, Any]) -> None:
     body = normalized_video(original)
     model = body["model"]
     seedance = model in SEEDANCE
+    kling = model in KLING_MODELS
     minimax = model == "minimax-h3"
     wan = model in {"wan-3", "wan-3-prime"}
     prime = model == "wan-3-prime"
-    url_video = seedance or minimax or wan
+    url_video = seedance or kling or minimax or wan
     draft_task = body.get("draft_task")
     if "draft_task" in body:
         if (
@@ -260,8 +262,8 @@ def validate_video(original: dict[str, Any]) -> None:
         or body.get("resolution", "480p") != "480p"
     ):
         raise ValueError("invalid_draft_request")
-    maximum = 30 if model in SEEDANCE_25_FAMILY or wan else 15
-    minimum = 2 if model == "wan-3" else 4 if url_video else 1
+    maximum = 30 if model in SEEDANCE_25_FAMILY or kling or wan else 15
+    minimum = 2 if model == "wan-3" else 3 if kling else 4 if url_video else 1
     edit = task_type == "edit"
     extend = task_type == "extend"
     if edit and model == "wan-3":
@@ -295,6 +297,8 @@ def validate_video(original: dict[str, Any]) -> None:
         if minimax
         else (9, 3, 3, 12)
         if seedance
+        else (10, 5, 0, 15)
+        if kling
         else (10, 5, 5, 20)
         if wan
         else (7, 0, 0, 7)
@@ -317,6 +321,8 @@ def validate_video(original: dict[str, Any]) -> None:
         raise ValueError("audio_requires_visual_reference")
     start = body.get("start_image", body.get("image"))
     end = body.get("end_image")
+    if kling and (start or end):
+        raise ValueError("frames_not_supported")
     if (start and refs) or (end and not start) or ((edit or extend) and (start or not counts[1])):
         raise ValueError("conflicting_media_inputs")
     if prime and (start or end):
@@ -327,6 +333,8 @@ def validate_video(original: dict[str, Any]) -> None:
         raise ValueError("reference_resolution_not_supported")
     ratios = {"1:1", "16:9", "9:16", "4:3", "3:4"}
     ratios |= {"21:9"} if url_video else set() if wan else {"3:2", "2:3"}
+    if kling:
+        ratios = {"21:9", "16:9", "1:1", "9:16"} | ({"adaptive"} if refs else set())
     if seedance and start:
         ratios = {"adaptive"} if model in SEEDANCE_25_FAMILY else ratios | {"adaptive"}
     if edit:
@@ -340,7 +348,11 @@ def validate_video(original: dict[str, Any]) -> None:
     prompt = body.get("prompt", "")
     if (not prompt.strip() and not (refs or start)) or ((edit or extend or wan or minimax) and not prompt.strip()):
         raise ValueError("prompt_required")
+    if kling and not prompt.strip():
+        raise ValueError("prompt_required")
     if (seedance and len(prompt.encode()) > 40000) or (wan and len(prompt) > 20000) or (minimax and len(prompt) > 7000):
+        raise ValueError("prompt_too_long")
+    if kling and len(prompt) > (26000 if prompt.isascii() else 11000):
         raise ValueError("prompt_too_long")
     if url_video:
         if len(json.dumps(original, ensure_ascii=False, separators=(",", ":")).encode()) >= 1024 * 1024:
@@ -352,6 +364,11 @@ def validate_video(original: dict[str, Any]) -> None:
             if "generate_audio" in body and not isinstance(body["generate_audio"], bool):
                 raise ValueError("invalid_generate_audio")
             if body.get("watermark") is True:
+                raise ValueError("unsupported_generation_control")
+        elif kling:
+            if "generate_audio" in body and not isinstance(body["generate_audio"], bool):
+                raise ValueError("invalid_generate_audio")
+            if "seed" in body or body.get("watermark") is True:
                 raise ValueError("unsupported_generation_control")
         else:
             # Seedance 2.5 supports a silent result. Reject boolean lookalikes.
@@ -384,7 +401,7 @@ def video_reserve_seconds(original: dict[str, Any]) -> int:
     )
     # Provider validates actual media lengths. Reserve the documented upper bound,
     # never trust a client-supplied duration for billable input media.
-    ref_bound = 30 if model in SEEDANCE_25_FAMILY else 15
+    ref_bound = 30 if model in SEEDANCE_25_FAMILY or model in KLING_MODELS else 15
     if model in {"wan-3", "wan-3-prime"} and refs:
         return min(30, output + ref_bound)
     return output + (ref_bound if refs else 0)

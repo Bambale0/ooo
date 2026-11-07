@@ -502,10 +502,10 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
                 "prompt",
                 "string",
                 t(
-                    "Обязателен без входных медиа; всегда обязателен для edit, Wan и MiniMax. "
+                    "Обязателен без входных медиа; всегда обязателен для edit, Kling, Wan и MiniMax. "
                     "Seedance: до 40 000 байт UTF-8; Wan: до 4500 символов. Ссылки на референсы: @Image "
                     "1, @Video 1, @Audio 1.",
-                    "Required without input media; always required for edit, Wan and MiniMax. "
+                    "Required without input media; always required for edit, Kling, Wan and MiniMax. "
                     "Seedance: up to 40,000 UTF-8 bytes; Wan: up to 4,500 characters. Refer to inputs as "
                     "@Image 1, @Video 1, @Audio 1.",
                 ),
@@ -514,9 +514,11 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
                 "duration",
                 "integer",
                 t(
-                    "Задавайте явно в диапазоне своей модели, см. таблицу. Для Seedance/MiniMax/Wan при пропуске — 5; "
+                    "Задавайте явно в диапазоне своей модели, см. таблицу. "
+                    "Для Seedance/Kling/MiniMax/Wan при пропуске — 5; "
                     "у Grok задавайте обязательно для предсказуемой длины. Для Seedance 2.5 edit — -1 или пропустить.",
-                    "Set explicitly within the model range below. Seedance/MiniMax/Wan default to 5 when omitted; "
+                    "Set explicitly within the model range below. "
+                    "Seedance/Kling/MiniMax/Wan default to 5 when omitted; "
                     "always set it for Grok to make length predictable. Seedance 2.5 edit: -1 or omit.",
                 ),
             ),
@@ -589,9 +591,10 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
                 "generate_audio",
                 "boolean · optional",
                 t(
-                    "Seedance 2.5: true создаёт звук, false — видео без звука; только boolean, не строка. "
+                    "Seedance 2.5 и Kling 4.0: true создаёт звук, false — видео без звука; только boolean, не строка. "
                     "Wan также поддерживает переключатель. Контракты остальных моделей не меняются.",
-                    "Seedance 2.5: true generates audio, false returns a silent video; use a boolean, not a string. "
+                    "Seedance 2.5 and Kling 4.0: true generates audio, false returns a silent video; "
+                    "use a boolean, not a string. "
                     "Wan also supports an audio toggle. Other model contracts are unchanged.",
                 ),
             ),
@@ -599,9 +602,11 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
                 "seed / watermark",
                 "model-dependent",
                 t(
-                    "Seedance/MiniMax: seed запрещён; watermark=true запрещён. Отсутствие ошибки формата для других "
+                    "Seedance/Kling/MiniMax: seed запрещён; watermark=true запрещён. "
+                    "Отсутствие ошибки формата для других "
                     "моделей не подтверждает поддержку такой настройки.",
-                    "Seedance/MiniMax: seed is unsupported; watermark=true is rejected. Passing format validation for "
+                    "Seedance/Kling/MiniMax: seed is unsupported; watermark=true is rejected. "
+                    "Passing format validation for "
                     "another model does not establish support for an option.",
                 ),
             ),
