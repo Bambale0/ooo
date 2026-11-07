@@ -33,6 +33,12 @@ IMAGE_RESPONSE_FAILURE_REASONS = frozenset({
 })
 
 
+TOKEN_USAGE_FAILURE_REASONS = frozenset({
+    "missing_usage",
+    "invalid_usage",
+    "invalid_cache_creation_usage",
+})
+
 
 def log_rejection(
     *,
@@ -120,15 +126,20 @@ class NativeRequestTrace:
         ray = response.headers.get("cf-ray", "")
         if re.fullmatch(r"[a-fA-F0-9]{16,32}-[A-Z]{3}", ray):
             self.response_context["cf_ray"] = ray
-        request_id = response.headers.get("x-request-id", "")
-        if len(request_id) == 36:
+        # ArgoLink exposes its support correlation ID in X-Client-Request-ID.
+        # Retain the legacy fallback, but never relax UUID-only log validation:
+        # provider headers can contain arbitrary text, URLs or credentials.
+        for header in ("x-client-request-id", "x-request-id"):
+            request_id = response.headers.get(header, "")
+            if len(request_id) != 36:
+                continue
             try:
                 parsed = UUID(request_id)
             except ValueError:
-                pass
-            else:
-                if str(parsed) == request_id.lower():
-                    self.response_context["upstream_request_id"] = str(parsed)
+                continue
+            if str(parsed) == request_id.lower():
+                self.response_context["upstream_request_id"] = str(parsed)
+                break
         event = self._event("response_headers")
         if not response.is_success:
             attempt.raw_error = json.dumps(event, separators=(",", ":"))
@@ -161,7 +172,7 @@ class NativeRequestTrace:
             type(error) is ValueError
             and len(error.args) == 1
             and isinstance(error.args[0], str)
-            and error.args[0] in IMAGE_RESPONSE_FAILURE_REASONS
+            and error.args[0] in IMAGE_RESPONSE_FAILURE_REASONS | TOKEN_USAGE_FAILURE_REASONS
         ):
             event["validation_reason"] = error.args[0]
         attempt.raw_error = json.dumps(event, separators=(",", ":"))

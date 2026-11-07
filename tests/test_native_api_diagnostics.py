@@ -355,3 +355,102 @@ async def test_provider_rejection_logs_provider_stage_without_body_or_secret(
     assert sensitive not in caplog.text
     assert "partner-native-key" not in caplog.text
     await upstream.aclose()
+
+
+@pytest.mark.parametrize(
+    "provider_headers, expected_id",
+    [
+        ({"X-Client-Request-ID": "53A2E4C2-3D2F-4AB0-B36C-34DED9ECB803"},
+         "53a2e4c2-3d2f-4ab0-b36c-34ded9ecb803"),
+        ({"X-Client-Request-ID": "53a2e4c2-3d2f-4ab0-b36c-34ded9ecb803",
+          "X-Request-ID": "b47efc91-a661-4618-a321-9b856bc2bc26"},
+         "53a2e4c2-3d2f-4ab0-b36c-34ded9ecb803"),
+        ({"X-Client-Request-ID": "PRIVATE_DONT_LOG_PROVIDER_SECRET",
+          "X-Request-ID": "b47efc91-a661-4618-a321-9b856bc2bc26"},
+         "b47efc91-a661-4618-a321-9b856bc2bc26"),
+    ],
+)
+async def test_provider_client_request_id_is_safe_internal_correlation(
+    client, db_session, monkeypatch, caplog, provider_headers, expected_id,
+):
+    def handler(request):
+        return httpx.Response(503, headers=provider_headers)
+
+    partner, headers, upstream = await nano_setup(db_session, monkeypatch, handler)
+    response = await client.post("/v1/images/edits", headers=headers, json=nano_body())
+    attempt = (await db_session.execute(select(ProviderAttempt))).scalar_one()
+    assert json.loads(attempt.raw_error)["upstream_request_id"] == expected_id
+    assert any(getattr(record, "upstream_request_id", None) == expected_id for record in caplog.records)
+    assert response.json()["request_id"] == attempt.generation_id
+    assert expected_id not in response.text and attempt.provider_task_id is None
+    assert "PRIVATE_DONT_LOG_PROVIDER_SECRET" not in attempt.raw_error
+    await upstream.aclose()
+
+
+@pytest.mark.parametrize("header", ["X-Client-Request-ID", "X-Request-ID"])
+@pytest.mark.parametrize("value", [
+    "PRIVATE_DONT_LOG_PROVIDER_SECRET",
+    "Bearer secret-token",
+    "https://example.com/private?token=secret",
+    "53a2e4c23d2f4ab0b36c34ded9ecb803",
+    "{53a2e4c2-3d2f-4ab0-b36c-34ded9ecb803}",
+    "53a2e4c2-3d2f-4ab0-b36c-34ded9ecb803,other",
+    "x" * 1000,
+])
+def test_trace_rejects_arbitrary_request_id_header_values(header, value, caplog):
+    from app.inference.diagnostics import NativeRequestTrace
+
+    trace = NativeRequestTrace(context={})
+    attempt = ProviderAttempt()
+    trace.received_headers(attempt, httpx.Response(503, headers={header: value}))
+    assert "upstream_request_id" not in json.loads(attempt.raw_error)
+    assert value not in attempt.raw_error
+    assert all(value not in str(record.__dict__) for record in caplog.records)
+
+
+@pytest.mark.parametrize("reason", ["missing_usage", "invalid_usage", "invalid_cache_creation_usage"])
+def test_trace_preserves_allowlisted_token_usage_failure_reason(reason, caplog):
+    from app.inference.diagnostics import NativeRequestTrace
+
+    trace = NativeRequestTrace(context={})
+    attempt = ProviderAttempt()
+    trace.failed(attempt, ValueError(reason), phase="response_body_or_usage")
+    assert json.loads(attempt.raw_error)["validation_reason"] == reason
+    assert caplog.records[-1].validation_reason == reason
+
+
+@pytest.mark.parametrize("error", [
+    ValueError("PRIVATE_USAGE_ERROR_WITH_SECRET"),
+    ValueError("missing_usage", "PRIVATE_USAGE_ERROR_WITH_SECRET"),
+    RuntimeError("missing_usage"),
+])
+def test_trace_never_copies_arbitrary_usage_exception_text(error, caplog):
+    from app.inference.diagnostics import NativeRequestTrace
+
+    trace = NativeRequestTrace(context={})
+    attempt = ProviderAttempt()
+    trace.failed(attempt, error, phase="response_body_or_usage")
+    assert "validation_reason" not in json.loads(attempt.raw_error)
+    assert "PRIVATE_USAGE_ERROR_WITH_SECRET" not in attempt.raw_error
+    assert all("PRIVATE_USAGE_ERROR_WITH_SECRET" not in str(record.__dict__) for record in caplog.records)
+
+
+def test_client_request_id_survives_success_headers_then_body_failure(caplog):
+    import logging
+
+    from app.inference.diagnostics import NativeRequestTrace
+
+    request_id = "53a2e4c2-3d2f-4ab0-b36c-34ded9ecb803"
+    caplog.set_level(logging.INFO, logger="app.inference.diagnostics")
+    trace = NativeRequestTrace(context={})
+    attempt = ProviderAttempt()
+    trace.received_headers(attempt, httpx.Response(200, headers={"X-Client-Request-ID": request_id}))
+    assert attempt.raw_error is None
+    assert caplog.records[-1].upstream_request_id == request_id
+    trace.failed(attempt, httpx.ReadError("PRIVATE_BODY_ERROR"), phase="response_body_or_usage")
+    diagnostics = json.loads(attempt.raw_error)
+    assert diagnostics["upstream_request_id"] == request_id
+    assert diagnostics["upstream_status"] == 200
+    assert diagnostics["phase"] == "response_body_or_usage"
+    assert "PRIVATE_BODY_ERROR" not in attempt.raw_error
+    assert all("PRIVATE_BODY_ERROR" not in str(record.__dict__) for record in caplog.records)

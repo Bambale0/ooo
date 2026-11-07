@@ -12,7 +12,14 @@ from starlette.datastructures import UploadFile
 
 from app.api.dependencies import DbSession, PartnerAuth, get_partner_auth
 from app.catalog.models import Model
-from app.contracts.registry import MODELS, PROTOCOLS, TEXT_PROTOCOLS, image_reference_limit, validate_request
+from app.contracts.registry import (
+    MODELS,
+    PROTOCOLS,
+    TEXT_PROTOCOLS,
+    image_reference_limit,
+    request_warnings,
+    validate_request,
+)
 from app.contracts.validation_errors import validation_reason
 from app.generations.models import Generation
 from app.inference.accounting import settle_actual, token_usage
@@ -24,7 +31,7 @@ from app.inference.images import image_usage, inspect_url_images
 from app.inference.outcomes import finalize_native_failure, preserve_unbilled_result
 from app.inference.replay import replay_response, save_response
 from app.inference.service import InferenceAdmissionError, reserve
-from app.inference.streams import SSEDecoder, UsageCollector, event_data
+from app.inference.streams import SSE_DONE, SSEDecoder, UsageCollector, event_data
 from app.infrastructure.config import get_settings
 from app.media.models import MediaAsset
 from app.media.router import read_media_content
@@ -321,6 +328,8 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
             "invalid_request_contract",
             headers=validation_headers,
         ) from exc
+    warnings = request_warnings(body)
+    warning_headers = {"X-Model-Warning": ", ".join(warnings)} if warnings else {}
     idem = request.headers.get("idempotency-key", "")
     if not 8 <= len(idem) <= 160:
         log_rejection(
@@ -411,6 +420,8 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
     if attempt is None:
         recovered = await replay_response(db, generation)
         if recovered is not None:
+            if recovered.status_code < 400:
+                recovered.headers.update(warning_headers)
             return recovered
         log_rejection(
             trace_id=generation.id,
@@ -528,7 +539,10 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
         return StreamingResponse(
             stream_result(db, generation, attempt, response, protocol, deadline=deadline),
             media_type="text/event-stream",
-            headers={"X-Request-Id": generation.id, "Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            headers={
+                "X-Request-Id": generation.id, "Cache-Control": "no-cache", "X-Accel-Buffering": "no",
+                **warning_headers,
+            },
         )
     result_ready = False
     try:
@@ -581,14 +595,16 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
                     result_ready = True
                 units = image_usage(body, inspected)
                 result_ready = True
-        public = JSONResponse(scrub(data, generation.id), headers={"X-Request-Id": generation.id})
+        public = JSONResponse(scrub(data, generation.id), headers={"X-Request-Id": generation.id, **warning_headers})
         if not await finish(db, generation, attempt, units, response=public):
             return public_error(generation.public_error_code or "request_failed", generation_id=generation.id)
         return public
     except (ValueError, TypeError, KeyError, OSError, httpx.HTTPError) as exc:
         trace.failed(attempt, exc, phase="response_body_or_usage")
         if result_ready:
-            public = JSONResponse(scrub(data, generation.id), headers={"X-Request-Id": generation.id})
+            public = JSONResponse(
+                scrub(data, generation.id), headers={"X-Request-Id": generation.id, **warning_headers}
+            )
             if await preserve_unbilled_result(db, generation, attempt, public):
                 return public
         return await fail(db, generation, attempt, "provider_response_invalid", definitive=False)
@@ -646,6 +662,7 @@ async def fail(db, generation, attempt, code, *, definitive, public_status=503, 
 async def stream_result(db, generation, attempt, response, protocol, *, deadline=None):
     decoder, usage = SSEDecoder(), UsageCollector(protocol)
     output = []
+    terminal_pending = False
     size = 0
     deadline = deadline or asyncio.get_running_loop().time() + get_settings().native_request_timeout_seconds
 
@@ -669,35 +686,45 @@ async def stream_result(db, generation, attempt, response, protocol, *, deadline
                     raise ValueError("stream_frame_too_large")
                 for event in decoder.feed(chunk):
                     value = event_data(event)
-                    if value is None:
+                    usage.accept(value)
+                    if value is None or value is SSE_DONE:
                         frame = event + "\n\n"
                     else:
                         if not isinstance(value, dict):
                             raise ValueError("invalid_stream_event")
-                        usage.accept(value)
                         candidate = value.get("response", value.get("message", value))
                         if isinstance(candidate, dict) and isinstance(candidate.get("id"), str):
                             attempt.provider_task_id = candidate["id"][:255]
                         prefix = "".join(line + "\n" for line in event.split("\n") if line.startswith("event:"))
                         frame = prefix + "data: " + json.dumps(scrub(value, generation.id), ensure_ascii=False) + "\n\n"
-                    append(frame)
                     if usage.failed:
                         raise ValueError("stream_failed")
+                    if usage.complete and protocol == "chat/completions" and not usage.result_ready:
+                        raise ValueError("stream_missing_result")
+                    append(frame)
                     if usage.complete:
-                        if protocol == "chat/completions":
-                            append("data: [DONE]\n\n")
-                            frame += "data: [DONE]\n\n"
+                        terminal_pending = True
                         # Persist before sending the final event: a disconnect
                         # after this commit can recover the identical stream.
-                        if not await finish(
-                            db, generation, attempt, token_usage(protocol, usage.usage), response=saved_stream()
-                        ):
+                        try:
+                            units = token_usage(protocol, usage.usage)
+                        except ValueError:
+                            # Only Chat has validated result evidence for unbilled preservation.
+                            if protocol != "chat/completions":
+                                raise
+                            completed = await preserve_unbilled_result(db, generation, attempt, saved_stream())
+                        else:
+                            completed = await finish(db, generation, attempt, units, response=saved_stream())
+                        if not completed:
                             raise ValueError("stream_closed")
                         yield frame
                         return
                     yield frame
         raise ValueError("stream_incomplete")
     except (ValueError, TypeError, httpx.HTTPError, TimeoutError):
+        if terminal_pending:
+            # A terminal event withheld from the client must not enter failure replay.
+            size -= len(output.pop().encode("utf-8"))
         frame = 'data: {"error":{"type":"stream_interrupted","message":"stream_interrupted"}}\n\n'
         # Reserve room for the terminal error without exceeding replay bounds.
         if size + len(frame) <= get_settings().native_response_max_bytes:

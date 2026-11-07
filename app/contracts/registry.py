@@ -23,6 +23,22 @@ SEEDANCE = {name for name in MODELS if name.startswith("seedance-")}
 # family membership so a newly contracted variant cannot silently inherit the 2.0
 # limits (15s, 9 references, audio-needs-visual) that differ from the provider card.
 SEEDANCE_25_FAMILY = {"seedance-2.5", "seedance-2.5-self-developed-nsfw"}
+# Reviewed model-specific limit; do not impose it on unrelated text models.
+TEXT_OUTPUT_LIMITS = {"qwen3.8-max": 131_072}
+
+
+def request_warnings(body: dict[str, Any]) -> tuple[str, ...]:
+    """Static compatibility notices; never echo client values or rewrite controls."""
+    if body.get("model") != "qwen3.8-max":
+        return ()
+    warnings = []
+    if any(key in body for key in ("enable_thinking", "thinking_budget", "reasoning_effort", "thinking")) or (
+        isinstance(body.get("reasoning"), dict) and "effort" in body["reasoning"]
+    ):
+        warnings.append("thinking_controls_ignored")
+    if "service_tier" in body:
+        warnings.append("service_tier_unsupported")
+    return tuple(warnings)
 
 
 def contract(model: str, protocol: str) -> dict[str, Any]:
@@ -85,7 +101,7 @@ def validate_request(protocol: str, original: dict[str, Any], *, multipart: bool
             raise ValueError("video_input_unavailable")
         for key in ("max_tokens", "max_completion_tokens", "max_output_tokens"):
             if key in body:
-                integer(body[key], key, 1, 10_000_000)
+                integer(body[key], key, 1, TEXT_OUTPUT_LIMITS.get(model, 10_000_000))
         if protocol == "messages" and "max_tokens" not in body:
             raise ValueError("max_tokens_required")
         if "stream" in body and not isinstance(body["stream"], bool):

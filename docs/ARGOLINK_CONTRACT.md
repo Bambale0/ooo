@@ -12,6 +12,44 @@ retail prices and model availability are configured by the operator in the datab
 
 ## Native routes
 
+### Qwen3.8-Max compatibility review (2026-11-07)
+
+Rechecked the [model reference](https://argolink.io/en/models/qwen3.8-max) and
+[API overview](https://argolink.io/en/docs). Explicit `max_tokens`,
+`max_completion_tokens` and `max_output_tokens` values above 131072 now fail
+locally with HTTP 422 and the existing `invalid_<field>` validation reason,
+before admission or a provider call. Valid limits and omitted limits are never
+rewritten. This limit applies only to `qwen3.8-max`; prices and availability are
+unchanged.
+
+Thinking is always enabled and consumes the output budget; a small cap may run
+out before an answer. The documented `enable_thinking`, `thinking_budget` and
+`reasoning_effort` controls do not change it. Equivalent `thinking` and
+`reasoning.effort` controls cannot disable it either; `service_tier` is unsupported.
+To retain client compatibility these fields still pass through, but successful
+JSON/SSE responses and replays include the static `X-Model-Warning` codes
+`thinking_controls_ignored` and/or `service_tier_unsupported`. No client values
+are echoed; supported tools, images and ordinary controls remain unchanged.
+
+Chat Completions streams complete only at `data: [DONE]`, not at a usage chunk.
+Usage before the terminal marker does not settle early. Chat usage snapshots
+replace earlier ones; later output invalidates stale counts until refreshed.
+Messages retains its separate input/output delta accumulation. EOF or an error
+before the terminal marker remains an incomplete, uncharged result. A bare
+`[DONE]` without a valid choice result is not success. A complete Chat result
+without valid final usage is retained for replay and bounded usage reconciliation
+under the existing finality policy, without estimating a charge. Responses and
+Messages retain their existing failure behavior when terminal usage is invalid.
+Settlement or unbilled-result persistence precedes terminal-event delivery.
+
+Internal native error diagnostics now prefer a canonical UUID from
+`X-Client-Request-ID`, falling back to a canonical UUID from `X-Request-ID`.
+Other ID shapes remain excluded until reviewed; the documentation names the
+header but does not specify its format. These IDs never replace public IDs.
+Token-accounting failures record only allowlisted static reasons, not exception
+text, prompts, URLs or credentials. These offline fixes do **not** establish the
+cause of previously observed production errors.
+
 | Route | Behavior |
 | --- | --- |
 | `GET /v1/models` | Enabled resale models only |
