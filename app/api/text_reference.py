@@ -993,6 +993,26 @@ def render_text_reference(lang: str) -> str:
     for example in EXAMPLES[8:11]:
         result += "<h4>" + escape(example["protocol"]) + " — vision</h4>" + _code(example["body"])
 
+    result += '<h3 id="text-qwen-controls">Qwen3.8-Max: limits / thinking</h3>'
+    result += paragraph(
+        "Для Qwen3.8-Max max_completion_tokens, max_tokens и max_output_tokens ограничены 131072. "
+        "Превышение возвращает HTTP 422 invalid_request_contract с X-Validation-Error: invalid_имя_поля "
+        "до создания задачи. Thinking всегда включён и учитывается в output tokens: маленький лимит "
+        "может закончиться до появления ответа. enable_thinking, thinking_budget, reasoning_effort, "
+        "thinking и reasoning.effort не отключают и не настраивают его; опустите их. service_tier "
+        "не поддерживается. Для совместимости поля сохраняются без изменений; успешный ответ "
+        "содержит X-Model-Warning: thinking_controls_ignored и/или service_tier_unsupported. "
+        "Предупреждение есть и при повторном получении результата. Лимит не увеличивается автоматически; "
+        "если он не указан, Нейроныч не подставляет его в запрос.",
+        "For Qwen3.8-Max, max_completion_tokens, max_tokens and max_output_tokens are capped at 131072. "
+        "Exceeding it returns HTTP 422 invalid_request_contract with X-Validation-Error: invalid_field_name "
+        "before task creation. Thinking is always enabled and counts as output tokens: a small cap can "
+        "run out before any answer. enable_thinking, thinking_budget, reasoning_effort, thinking and "
+        "reasoning.effort do not disable or tune it; omit them. service_tier is unsupported. For "
+        "compatibility, fields pass through unchanged; successful responses include X-Model-Warning: "
+        "thinking_controls_ignored and/or service_tier_unsupported, including result replays. "
+        "The cap is never raised automatically or inserted when omitted.",
+    )
     result += '<h3 id="text-qwen-video">' + choose("Видео в Qwen3.8-Max", "Video input in Qwen3.8-Max") + "</h3>"
     result += paragraph(
         "Оригинальная модель Qwen3.8-Max понимает видео, но текущий маршрут Нейроныча "
