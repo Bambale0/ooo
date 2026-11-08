@@ -23,6 +23,7 @@ def test_kling_4_pricing_workflow_only_registers_hidden_prices():
 
     assert "python -m app.catalog.kling_4 --apply" in text
     assert 'r["status"]=="draft"' in text
+    assert 'Decimal(r["retail_markup_percent"])==Decimal("20")' in text
     assert 'r["successful_smoke_claimed"] is False' in text
     assert 'len(r["prices"])==4' in text
     assert "/enable" not in text

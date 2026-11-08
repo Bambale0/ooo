@@ -82,7 +82,7 @@ jobs:
           result="$("${compose[@]}" exec -T app python -m app.catalog.kling_4 --apply </dev/null)"
           printf '%s\n' "$result"
           printf '%s' "$result" | "${compose[@]}" exec -T app python -c \
-            'import json,sys; r=json.load(sys.stdin); assert r["model"]=="kling-4.0"; assert r["applied"] is True; assert r["status"]=="draft"; assert r["retail_markup_percent"]=="20"; assert r["successful_smoke_claimed"] is False; assert len(r["prices"])==4; assert {(p["mode"],p["resolution"]) for p in r["prices"]}=={("default","720p"),("default","1080p"),("video_input","720p"),("video_input","1080p")}'
+            'import json,sys; from decimal import Decimal; r=json.load(sys.stdin); assert r["model"]=="kling-4.0"; assert r["applied"] is True; assert r["status"]=="draft"; assert Decimal(r["retail_markup_percent"])==Decimal("20"); assert r["successful_smoke_claimed"] is False; assert len(r["prices"])==4; assert {(p["mode"],p["resolution"]) for p in r["prices"]}=={("default","720p"),("default","1080p"),("video_input","720p"),("video_input","1080p")}'
           SSH
 
       - name: Remove temporary SSH identity
