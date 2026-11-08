@@ -10,8 +10,8 @@ from test_native_inference import setup
 
 from app.api.native_video_reference import EXAMPLES, LIMITS, REVIEWED_VIDEO_MODELS, render_native_video_reference
 from app.billing.models import LedgerEntry
-from app.catalog.models import PartnerPrice
-from app.catalog.sync import variants
+from app.catalog.models import Model, PartnerPrice, PartnerPriceHistory
+from app.catalog.sync import effective_procurement, variants
 from app.catalog.video_edit_pricing import video_pricing_mode
 from app.contracts.registry import MODELS, validate_request
 from app.generations.models import Generation
@@ -35,8 +35,8 @@ def test_kling_4_reviewed_contract_and_text_request():
         "1080p": Decimal("0.188"),
     }
     assert entry["procurement"]["video_input_tiers"] == {
-        "720p": Decimal("0.0754"),
-        "1080p": Decimal("0.113"),
+        "720p": Decimal("0.07536"),
+        "1080p": Decimal("0.1128"),
     }
 
     body = {
@@ -53,9 +53,30 @@ def test_kling_4_catalog_has_separate_text_and_video_input_prices():
     assert set(variants(MODELS[MODEL])) == {
         ("default", "720p", "second", Decimal("0.1256")),
         ("default", "1080p", "second", Decimal("0.188")),
-        ("video_input", "720p", "second", Decimal("0.0754")),
-        ("video_input", "1080p", "second", Decimal("0.113")),
+        ("video_input", "720p", "second", Decimal("0.07536")),
+        ("video_input", "1080p", "second", Decimal("0.1128")),
     }
+
+
+def test_kling_4_live_api_multiplier_is_normalized_to_exact_video_input_prices():
+    current = {
+        "id": MODEL,
+        "pricing": {
+            "effective": {
+                "currency": "USD",
+                "billing_mode": "video",
+                "unit": "second",
+                "generation_per_unit": Decimal("0.1256"),
+                "tiers": [
+                    {"label": "720p", "price": Decimal("0.1256")},
+                    {"label": "1080p", "price": Decimal("0.188")},
+                ],
+                "reference_video_multiplier": Decimal("0.6"),
+            }
+        },
+    }
+
+    assert effective_procurement(current) == MODELS[MODEL]["procurement"]
 
 
 def test_kling_4_video_reference_selects_its_own_partner_and_procurement_rate():
@@ -69,7 +90,7 @@ def test_kling_4_video_reference_selects_its_own_partner_and_procurement_rate():
         )
         for mode, retail, cost in (
             ("default", Decimal("20"), Decimal("0.1256")),
-            ("video_input", Decimal("15"), Decimal("0.0754")),
+            ("video_input", Decimal("15"), Decimal("0.07536")),
         )
     ]
     text = {"model": MODEL, "prompt": "A forest", "duration": 5, "resolution": "720p"}
@@ -85,7 +106,7 @@ def test_kling_4_video_reference_selects_its_own_partner_and_procurement_rate():
         "cost": "0.1256",
     }
     rates, units, resolution = quote(PROTOCOL, reference, prices, fx=Decimal("100"))
-    assert rates["seconds"] == {"retail": "15", "cost": "0.0754"}
+    assert rates["seconds"] == {"retail": "15", "cost": "0.07536"}
     assert units == {"seconds": 35}
     assert resolution == "720p"
 
@@ -250,8 +271,8 @@ async def test_kling_4_cannot_be_enabled_with_an_incomplete_price_schedule(clien
 
     for mode, resolution, retail, cost in (
         ("default", "1080p", "25.00", "0.188"),
-        ("video_input", "720p", "15.00", "0.0754"),
-        ("video_input", "1080p", "20.00", "0.113"),
+        ("video_input", "720p", "15.00", "0.07536"),
+        ("video_input", "1080p", "20.00", "0.1128"),
     ):
         price = await client.put(
             "/api/v1/catalog/pricing",
@@ -272,8 +293,35 @@ async def test_kling_4_cannot_be_enabled_with_an_incomplete_price_schedule(clien
     assert enabled.json()["status"] == "production"
 
 
-async def test_kling_4_scoped_registration_is_repeatable_and_leaves_money_and_enablement_to_admin(db_session):
+async def test_kling_4_price_preview_is_read_only_and_adds_20_percent(db_session, monkeypatch):
+    from app.catalog.kling_4 import price_plan
+
+    async def fx(db):
+        return {"rate": Decimal("100")}
+
+    monkeypatch.setattr("app.catalog.kling_4.current_fx", fx)
+    plan = await price_plan(db_session)
+
+    assert {
+        (row.mode, row.resolution): (row.provider_cost_usdt, row.price_rub)
+        for row in plan
+    } == {
+        ("default", "720p"): (Decimal("0.1256"), Decimal("15.07")),
+        ("default", "1080p"): (Decimal("0.188"), Decimal("22.56")),
+        ("video_input", "720p"): (Decimal("0.07536"), Decimal("9.04")),
+        ("video_input", "1080p"): (Decimal("0.1128"), Decimal("13.54")),
+    }
+    assert await db_session.scalar(select(Model)) is None
+    assert await db_session.scalar(select(PartnerPrice)) is None
+
+
+async def test_kling_4_scoped_registration_is_repeatable_and_preserves_enablement_gate(db_session, monkeypatch):
     from app.catalog.kling_4 import register_kling_4
+
+    async def fx(db):
+        return {"rate": Decimal("100")}
+
+    monkeypatch.setattr("app.catalog.kling_4.current_fx", fx)
 
     model = await register_kling_4(db_session)
     await db_session.flush()
@@ -284,7 +332,16 @@ async def test_kling_4_scoped_registration_is_repeatable_and_leaves_money_and_en
     assert model.has_provider_integration is True
     assert model.has_public_docs is True
     assert model.has_successful_smoke is False
-    assert list(await db_session.scalars(select(PartnerPrice).where(PartnerPrice.model_id == model.id))) == []
+    prices = list(await db_session.scalars(select(PartnerPrice).where(PartnerPrice.model_id == model.id)))
+    assert {
+        (row.mode, row.resolution): (row.provider_cost_usdt, row.price_rub)
+        for row in prices
+    } == {
+        ("default", "720p"): (Decimal("0.1256"), Decimal("15.07")),
+        ("default", "1080p"): (Decimal("0.188"), Decimal("22.56")),
+        ("video_input", "720p"): (Decimal("0.07536"), Decimal("9.04")),
+        ("video_input", "1080p"): (Decimal("0.1128"), Decimal("13.54")),
+    }
     capabilities = list(
         await db_session.scalars(
             select(ProviderModelCapability).where(ProviderModelCapability.model_id == model.id)
@@ -300,6 +357,14 @@ async def test_kling_4_scoped_registration_is_repeatable_and_leaves_money_and_en
     repeated = await register_kling_4(db_session)
     await db_session.flush()
     assert repeated.id == model.id
+    assert len(list(await db_session.scalars(select(PartnerPrice).where(PartnerPrice.model_id == model.id)))) == 4
+    assert len(
+        list(
+            await db_session.scalars(
+                select(PartnerPriceHistory).where(PartnerPriceHistory.model_id == model.id)
+            )
+        )
+    ) == 4
     assert len(
         list(
             await db_session.scalars(

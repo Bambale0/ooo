@@ -13,6 +13,7 @@ from pathlib import Path
 
 import httpx
 
+from app.catalog.sync import effective_procurement
 from app.contracts.registry import CATALOG, MODELS, validate_request
 
 
@@ -41,7 +42,7 @@ def catalog_matches(data, models):
         saved, current = MODELS[slug], live.get(slug)
         if current is None or any(saved[field] != current[field] for field in ("category", "endpoint")):
             return False
-        effective = {key: value for key, value in current["pricing"]["effective"].items() if value is not None}
+        effective = effective_procurement(current)
         if effective != saved["procurement"]:
             return False
     return True

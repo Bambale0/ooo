@@ -1,0 +1,90 @@
+name: Apply Kling 4 Pricing
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact deployed main commit containing the reviewed prices
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+    env:
+      RELEASE_SHA: ${{ inputs.release_sha }}
+      DEPLOY_ROOT: ${{ vars.DEPLOY_ROOT || '/opt/neironych' }}
+      DEPLOY_SSH_USER: ${{ vars.DEPLOY_SSH_USER || 'deploy' }}
+      DEPLOY_SSH_PORT: ${{ vars.DEPLOY_SSH_PORT || '22' }}
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+
+    steps:
+      - name: Validate exact current main release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$DEPLOY_ROOT" =~ ^/[a-zA-Z0-9_./-]+$ && "$DEPLOY_ROOT" != / && "$DEPLOY_ROOT" != *..* ]]
+          [[ "$DEPLOY_SSH_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          [[ "$DEPLOY_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]]
+          [[ "$DEPLOY_SSH_PORT" =~ ^[0-9]{1,5}$ ]]
+          (( 10#$DEPLOY_SSH_PORT > 0 && 10#$DEPLOY_SSH_PORT < 65536 ))
+          current="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq .object.sha)"
+          [[ "$current" == "$RELEASE_SHA" ]] || {
+            echo 'release_sha must be the exact current main revision' >&2
+            exit 1
+          }
+
+      - name: Install pinned SSH identity
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_SSH_KEY"
+          test -n "$DEPLOY_KNOWN_HOSTS"
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/deploy_key ~/.ssh/known_hosts
+
+      - name: Apply reviewed hidden-model prices
+        run: |
+          set -euo pipefail
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
+            -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+            -p "$DEPLOY_SSH_PORT" -i ~/.ssh/deploy_key "$DEPLOY_SSH_USER@$DEPLOY_HOST" \
+            "RELEASE_SHA='${RELEASE_SHA}' DEPLOY_ROOT='${DEPLOY_ROOT}' bash -s" <<'SSH'
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          root="$DEPLOY_ROOT"
+          test -f "$root/.env"
+          test -f "$root/docker-compose.prod.yml"
+          test -f "$root/compose.host.yml"
+          [[ "$(tr -d '\n' < "$root/REVISION")" == "$RELEASE_SHA" ]] || {
+            echo 'live production revision does not match release_sha' >&2
+            exit 1
+          }
+          compose=(docker compose --project-directory "$root" --env-file "$root/.env"
+            -f "$root/docker-compose.prod.yml" -f "$root/compose.host.yml" --profile telegram)
+          "${compose[@]}" exec -T app python -c \
+            'import json,sys,urllib.request; r=json.load(urllib.request.urlopen("http://localhost:8000/api/v1/readiness",timeout=5)); sys.exit(0 if r.get("status")=="ready" and r.get("revision")==sys.argv[1] else "live production revision does not match release_sha")' \
+            "$RELEASE_SHA" </dev/null
+          result="$("${compose[@]}" exec -T app python -m app.catalog.kling_4 --apply </dev/null)"
+          printf '%s\n' "$result"
+          printf '%s' "$result" | "${compose[@]}" exec -T app python -c \
+            'import json,sys; r=json.load(sys.stdin); assert r["model"]=="kling-4.0"; assert r["applied"] is True; assert r["status"]=="draft"; assert r["retail_markup_percent"]=="20"; assert r["successful_smoke_claimed"] is False; assert len(r["prices"])==4; assert {(p["mode"],p["resolution"]) for p in r["prices"]}=={("default","720p"),("default","1080p"),("video_input","720p"),("video_input","1080p")}'
+          SSH
+
+      - name: Remove temporary SSH identity
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
