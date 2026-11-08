@@ -11,6 +11,22 @@ from app.providers.http_client import get_provider_http_client
 from app.providers.models import ProviderModelCapability
 
 
+def effective_procurement(entry: dict) -> dict:
+    """Normalize live catalog pricing into the reviewed procurement contract."""
+    effective = {
+        key: value
+        for key, value in entry["pricing"]["effective"].items()
+        if value is not None
+    }
+    if entry.get("id") == "kling-4.0":
+        multiplier = Decimal(str(effective.pop("reference_video_multiplier")))
+        effective["video_input_tiers"] = {
+            tier["label"]: Decimal(str(tier["price"])) * multiplier
+            for tier in effective["tiers"]
+        }
+    return effective
+
+
 async def check_catalog_drift():
     response = await get_provider_http_client("argolink").get("/api/catalog/v1/models?page_size=100")
     response.raise_for_status()
@@ -23,7 +39,7 @@ async def check_catalog_drift():
         if slug not in live:
             continue
         current = live[slug]
-        effective = {k: v for k, v in current["pricing"]["effective"].items() if v is not None}
+        effective = effective_procurement(current)
         if (
             saved["category"] != current["category"]
             or saved["endpoint"] != current["endpoint"]

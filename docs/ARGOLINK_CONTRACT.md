@@ -138,15 +138,20 @@ Reference audio and first/last frames are rejected. Video references must each
 be 3–30 seconds and at most 30 seconds in total. `generate_audio` defaults to
 true and accepts false for a silent result; seed and `watermark: true` are
 rejected. The reviewed procurement schedule is USD 0.1256/0.188 per billed
-second for 720p/1080p without input video and USD 0.0754/0.113 with input video.
-The two input classes have separate partner-price rows. Final billing uses the
+second for 720p/1080p without input video. The live catalog's 0.6 reference-video
+multiplier produces exact input-video procurement of USD 0.07536/0.1128. The two
+input classes have separate partner-price rows. Final billing uses the
 provider-confirmed `usage.billed_seconds`; admission conservatively covers the
-documented reference-video maximum. Source: https://argolink.io/ru/models/kling-4.0.
+documented reference-video maximum. Source: the public catalog endpoint
+https://argolink.io/api/catalog/v1/models?page_size=100, revision
+`8b23c784088bce6f`, checked 2026-11-08.
 
 Kling is registered as a draft through `python -m app.catalog.kling_4 --apply`.
-That scoped operation creates no partner price, does not claim a smoke, and does
-not enable the model. Production enablement still requires all four price rows,
-the normal documentation/integration gates and a successful live smoke.
+The operator-approved retail formula is procurement multiplied by the current
+persisted RUB/USDT rate and 1.20, rounded half-up to 0.01 RUB. The scoped command
+creates or updates all four reviewed rows through the normal audited pricing
+path, but does not claim a smoke or enable the model. Production enablement still
+requires the normal documentation/integration gates and a successful live smoke.
 
 The catalogue changed during verification: revision `5ce662ba88c3d07f` added H3
 and three Seedance 480p tiers. Procurement uses the current live catalog (H3

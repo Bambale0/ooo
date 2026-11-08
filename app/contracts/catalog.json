@@ -308,13 +308,15 @@
           }
         ],
         "video_input_tiers": {
-          "720p": 0.0754,
-          "1080p": 0.113
+          "720p": 0.07536,
+          "1080p": 0.1128
         }
       },
       "video_input_mode": "video_input",
-      "checked_at": "2026-11-07",
-      "source": "https://argolink.io/ru/models/kling-4.0"
+      "retail_markup_percent": 20,
+      "checked_at": "2026-11-08",
+      "source": "https://argolink.io/api/catalog/v1/models?page_size=100",
+      "source_revision": "8b23c784088bce6f"
     },
     "claude-opus-4-8": {
       "category": "chat",
