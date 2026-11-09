@@ -55,3 +55,4 @@ ignore = ["B008"]
 "app.contracts" = ["*.json"]
 
 "app.api" = ["static/*.css", "static/*.js", "static/*.svg", "static/*.webp"]
+"app.cabinet" = ["static/*.css", "static/*.js"]

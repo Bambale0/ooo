@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 from app.accounts import models as account_models  # noqa: F401
 from app.billing import models as billing_models  # noqa: F401
+from app.cabinet import models as cabinet_models  # noqa: F401
 from app.catalog import models as catalog_models  # noqa: F401
 from app.generations import models as generation_models  # noqa: F401
 from app.infrastructure.config import get_settings

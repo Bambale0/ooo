@@ -361,3 +361,10 @@ Branch: `fix/persistent-partner-pricing-20261010`.
   publications on old revisions after the migration. Schema downgrade refuses
   while any custom rate exists.
 - Verification status: pending PR CI / migration / production release.
+
+
+## 2026-11-09 — Partner web cabinet foundation
+
+Baseline main 0f69d2a99a50aa94498afa74c95b96f03ce93e47; branch feat/partner-web-cabinet-20261109. Full task analysis, auth design, schema changes, limitations and acceptance plan: [WEB_CABINET_20261109.md](../EXECUTION/WEB_CABINET_20261109.md).
+
+Existing API, Telegram partner account, RUB ledger, model catalog and invoices are reused. New browser surface has Telegram-verified session login, 8 read-only partner pages, partner-scoped live DB summaries, secret-safe views, responsive UI, migration and initial regression tests. Existing administrative and money operations are not silently reimplemented. Source lint/CI, staging login and production verification are pending and must be recorded before merge. No live funds or credentials used.
