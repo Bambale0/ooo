@@ -80,7 +80,7 @@ def render_login(bot_username: str | None) -> str:
             '<div class="widget-holder" id="telegram-widget">'
             '<script async src="https://telegram.org/js/telegram-widget.js?22" '
             f'data-telegram-login="{_e(username)}" data-size="large" '
-            'data-radius="8" data-request-access="write" '
+            'data-radius="8" '
             'data-onauth="onTelegramAuth(user)"></script></div>'
         )
         subtitle = "Войдите через Telegram, который привязан к вашему партнёрскому аккаунту."
