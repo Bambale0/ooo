@@ -104,7 +104,8 @@ def render_login(bot_username: str | None) -> str:
 {widget}
 <p class="login-feedback" id="login-feedback" role="status" aria-live="polite"></p>
 <div class="login-rule"></div>
-<p class="login-help">Нет аккаунта? <a href="{TG_LINK}?start=apply" target="_blank" rel="noopener noreferrer">Подайте заявку в Telegram ↗</a></p>
+<p class="login-help">Нет аккаунта? 
+<a href="{TG_LINK}?start=apply" target="_blank" rel="noopener noreferrer">Подайте заявку в Telegram ↗</a></p>
 </section><footer class="login-foot"><span>Нейроныч · API</span>
 <a href="/guide">Документация</a><span>Безопасный вход</span></footer></main>
 </body></html>"""
@@ -137,10 +138,12 @@ def _shell(partner: Partner, active: str, content: str) -> str:
 </aside><div class="content-area">
 <header class="topbar"><div class="breadcrumb">Личный кабинет <span>/</span> {_e(title)}</div>
 <div class="topbar-right"><span class="top-status"><i></i> Партнёрский аккаунт</span>
-<form action="/cabinet/logout" method="post"><button type="submit" class="text-button">Выйти ↗</button></form></div></header>
+<form action="/cabinet/logout" method="post">
+<button type="submit" class="text-button">Выйти ↗</button></form></div></header>
 <main id="content" tabindex="-1" class="page-body">{content}</main>
 <footer class="page-footer"><span>© Нейроныч API</span>
-<span><a href="/guide">Документация</a> · <a href="/price">Цены</a> · <a href="{TG_LINK}" target="_blank" rel="noopener noreferrer">Поддержка ↗</a></span>
+<span><a href="/guide">Документация</a> · <a href="/price">Цены</a> · 
+<a href="{TG_LINK}" target="_blank" rel="noopener noreferrer">Поддержка ↗</a></span>
 </footer></div></div></body></html>"""
 
 
@@ -152,7 +155,10 @@ def _heading(eyebrow: str, title: str, description: str, action: str = "") -> st
 
 
 def _action(label: str, href: str, *, secondary: bool = False) -> str:
-    return f'<a class="action {"action-secondary" if secondary else ""}" href="{_e(href)}">{_e(label)} <span>↗</span></a>'
+    return (
+        f'<a class="action {"action-secondary" if secondary else ""}" href="{_e(href)}'
+        f'">{_e(label)} <span>↗</span></a>'
+    )
 
 
 async def _overview(db: AsyncSession, partner: Partner) -> str:
@@ -198,23 +204,15 @@ async def _overview(db: AsyncSession, partner: Partner) -> str:
         for offset in reversed(range(14))
     ]
     maximum = max([chart_values[day] for day in series] + [Decimal("0")])
-    bars = ""
-    for day in series:
-        amount = chart_values[day]
-        percentage = int(amount / maximum * 100) if maximum > 0 else 0
-        bars += (
-            f'<div class="chart-column" title="{_e(day)}: {_e(_rub(amount))}">'
-            f'<div class="chart-track"><span class="chart-fill" style="height:{percentage}%"></span></div>'
-            f'<span>{day[-2:]}</span></div>'
-        )
-    # Chart bars require inline heights, but the cabinet CSP does not permit inline styles.
-    # Use semantic SVG instead, where height is an allowed presentational attribute.
     svg_bars = ""
     for idx, day in enumerate(series):
         value = chart_values[day]
         height = int(value / maximum * 144) if maximum > 0 else 0
         x = idx * 33 + 9
-        svg_bars += f'<rect x="{x}" y="{150-height}" width="18" height="{height}" rx="4"><title>{_e(day)}: {_e(_rub(value))}</title></rect>'
+        svg_bars += (
+            f'<rect x="{x}" y="{150-height}" width="18" height="{height}" rx="4"><title>'
+            f'{_e(day)}: {_e(_rub(value))}</title></rect>'
+        )
     ticks = "".join(
         f'<text x="{idx * 33 + 18}" y="169" text-anchor="middle">{day[-2:]}</text>'
         for idx, day in enumerate(series)
@@ -238,20 +236,29 @@ async def _overview(db: AsyncSession, partner: Partner) -> str:
         _heading("ПАНЕЛЬ УПРАВЛЕНИЯ", f"Здравствуйте, {partner.project_name}.",
                  "Всё важное по вашему API в одном месте.", _action("Документация", "/guide", secondary=True))
         + '<div class="metrics-grid">'
-        + f'<article class="metric metric-primary"><span>Текущий баланс</span><strong>{_e(_rub(partner.balance_rub))}</strong><small>Доступно с кредитным лимитом: {_e(_rub(partner.available_balance_rub))}</small></article>'
-        + f'<article class="metric"><span>Расходы за 30 дней</span><strong>{_e(_rub(-Decimal(month_debits)))}</strong><small>Только финализированные списания</small></article>'
-        + f'<article class="metric"><span>Запросов за 30 дней</span><strong>{count:,}</strong><small>Все статусы</small></article>'
-        + f'<article class="metric"><span>Успешных запросов</span><strong>{conversion}%</strong><small>{succeeded} из {count} за 30 дней</small></article></div>'
+        + f'<article class="metric metric-primary"><span>Текущий баланс</span><strong>'
+          f'{_e(_rub(partner.balance_rub))}</strong><small>Доступно с кредитным лимито'
+          f'м: {_e(_rub(partner.available_balance_rub))}</small></article>'
+        + f'<article class="metric"><span>Расходы за 30 дней</span><strong>{_e(_rub(-Decimal(month_debits)))}'
+          f'</strong><small>Только финализированные списания</small></article>'
+        + f'<article class="metric"><span>Запросов за 30 дней</span><strong>{count:,}<'
+          f'/strong><small>Все статусы</small></article>'
+        + f'<article class="metric"><span>Успешных запросов</span><strong>{conversion}'
+          f'%</strong><small>{succeeded} из {count} за 30 дней</small></article></div>'
         + '<div class="dashboard-grid"><section class="panel chart-panel">'
         + '<div class="panel-head"><div><h2>Динамика расходов</h2><p>14 дней · рубли</p></div></div>'
         + chart
         + '</section><section class="panel quick-panel"><div class="panel-head"><h2>Быстрые действия</h2></div>'
         + '<div class="quick-links">'
-        + '<a href="/cabinet/keys"><span>⌘</span><span>Мои API-ключи<small>Управление доступами</small></span><b>↗</b></a>'
-        + '<a href="/cabinet/payments"><span>▧</span><span>Баланс и счета<small>Пополнение и оплаты</small></span><b>↗</b></a>'
-        + '<a href="/cabinet/integration"><span>⌁</span><span>Подключить API<small>Примеры и документация</small></span><b>↗</b></a>'
+        + '<a href="/cabinet/keys"><span>⌘</span><span>Мои API-ключи<small>Управление'
+          ' доступами</small></span><b>↗</b></a>'
+        + '<a href="/cabinet/payments"><span>▧</span><span>Баланс и счета<small>Попол'
+          'нение и оплаты</small></span><b>↗</b></a>'
+        + '<a href="/cabinet/integration"><span>⌁</span><span>Подключить API<small>Пр'
+          'имеры и документация</small></span><b>↗</b></a>'
         + '</div></section></div>'
-        + '<section class="panel recent-panel"><div class="panel-head"><div><h2>Последние генерации</h2><p>Недавняя активность вашего проекта</p></div>'
+        + '<section class="panel recent-panel"><div class="panel-head"><div><h2>После'
+          'дние генерации</h2><p>Недавняя активность вашего проекта</p></div>'
         + '<a class="panel-link" href="/cabinet/generations">Все запросы →</a></div>'
         + latest + '</section>'
     )
@@ -276,7 +283,8 @@ async def _generations(db: AsyncSession, partner: Partner) -> str:
                    _e(_rub(g.actual_charge_rub)) if g.status == "completed" else "—"]
                   for g in rows],
                  "Вы ещё не отправляли запросы.")
-        + '</section><p class="context-note">Сумма показывается только для успешных запросов с известной фактической оплатой. '
+        + '</section><p class="context-note">Сумма показывается только для успешных з'
+          'апросов с известной фактической оплатой. '
         'Незавершённые резервирования не считаются итоговым расходом.</p>'
     )
 
@@ -296,7 +304,8 @@ async def _transactions(db: AsyncSession, partner: Partner) -> str:
                  [[_e(_when(t.created_at)), _e(labels.get(t.operation_type, t.operation_type)),
                    _e(t.model_slug or "—"), _e(_rub(t.amount_rub))] for t in rows],
                  "Финансовых операций пока нет.")
-        + '</section><p class="context-note">Показаны последние 8 операций. Полную историю можно получить в Telegram-кабинете.</p>'
+        + '</section><p class="context-note">Показаны последние 8 операций. Полную ис'
+          'торию можно получить в Telegram-кабинете.</p>'
     )
 
 
@@ -343,7 +352,8 @@ async def _keys(db: AsyncSession, partner: Partner) -> str:
                    _e(_when(k.created_at)), _pill("active" if k.is_active else "revoked")]
                   for k in keys],
                  "Активных или отозванных ключей пока нет.")
-        + '</section><p class="context-note">Полные секреты не хранятся в открытом виде и недоступны для повторного просмотра.</p>'
+        + '</section><p class="context-note">Полные секреты не хранятся в открытом ви'
+          'де и недоступны для повторного просмотра.</p>'
     )
 
 
@@ -359,7 +369,8 @@ async def _models(db: AsyncSession, partner: Partner) -> str:
                  [[_e(m.name), f'<code>{_e(m.slug)}</code>', _e(m.modality), _pill("active")]
                   for m in models],
                  "Публичные модели ещё не настроены.")
-        + '</section><p class="context-note">Индивидуальные тарифы и закрытые модели могут отличаться от публичного каталога. '
+        + '</section><p class="context-note">Индивидуальные тарифы и закрытые модели '
+          'могут отличаться от публичного каталога. '
         'Фактическая цена фиксируется при принятии запроса.</p>'
     )
 
@@ -374,14 +385,17 @@ def _integration() -> str:
                  "Единый API для текста, изображений и видео. Истина по параметрам — актуальная документация.",
                  _action("API Reference", "/guide"))
         + '<section class="panel integration-panel"><div class="step-num">01</div>'
-        + '<div><h2>Получите API-ключ</h2><p>Откройте раздел «API-ключи», создайте ключ в Telegram и сохраните секрет.</p></div></section>'
+        + '<div><h2>Получите API-ключ</h2><p>Откройте раздел «API-ключи», создайте кл'
+          'юч в Telegram и сохраните секрет.</p></div></section>'
         + '<section class="panel integration-panel"><div class="step-num">02</div>'
         + '<div><h2>Выберите модель</h2><p>Проверьте доступность, режим и стоимость в каталоге.</p>'
         + '<a class="panel-link" href="/price">Актуальный прайс →</a></div></section>'
         + '<section class="panel integration-panel"><div class="step-num">03</div>'
-        + '<div><h2>Отправьте первый запрос</h2><p>Используйте Bearer авторизацию и корректный endpoint из документации.</p>'
+        + '<div><h2>Отправьте первый запрос</h2><p>Используйте Bearer авторизацию и к'
+          'орректный endpoint из документации.</p>'
         + f'<pre><code>{_e(example)}</code></pre></div></section>'
-        + '<p class="context-note">Пример иллюстративный: перед интеграцией проверьте endpoint и поддерживаемые параметры '
+        + '<p class="context-note">Пример иллюстративный: перед интеграцией проверьте'
+          ' endpoint и поддерживаемые параметры '
         'в API Reference. Не передавайте секреты в браузерный код или публичные репозитории.</p>'
     )
 
@@ -392,9 +406,11 @@ def _settings(partner: Partner) -> str:
         + '<section class="panel account-panel">'
         + f'<div class="detail-row"><span>Компания</span><strong>{_e(partner.company_name)}</strong></div>'
         + f'<div class="detail-row"><span>Проект</span><strong>{_e(partner.project_name)}</strong></div>'
-        + f'<div class="detail-row"><span>Telegram ID</span><strong><code>{_e(partner.telegram_id)}</code></strong></div>'
+        + f'<div class="detail-row"><span>Telegram ID</span><strong><code>{_e(partner.telegram_id)}'
+          f'</code></strong></div>'
         + f'<div class="detail-row"><span>Статус</span><strong>{_pill(partner.status)}</strong></div>'
-        + f'<div class="detail-row"><span>Почта для чеков</span><strong>{_e(partner.payment_email or "Не указана")}</strong></div>'
+        + f'<div class="detail-row"><span>Почта для чеков</span><strong>{_e(partner.payment_email or "Не указана")}'
+          f'</strong></div>'
         + '</section><div class="panel help-panel"><div><h2>Нужна помощь?</h2>'
         + '<p>Вопросы по доступам, оплатам, лимитам и переносу аккаунта решаются через Telegram-поддержку.</p></div>'
         + _action("Написать", TG_LINK) + '</div>'
