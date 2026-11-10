@@ -3,7 +3,6 @@
 from decimal import Decimal
 
 import pytest
-
 from test_tenant_isolation import _create_partner_with_key
 
 
