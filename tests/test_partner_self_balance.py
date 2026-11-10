@@ -2,6 +2,7 @@
 
 from decimal import Decimal
 
+import pytest
 from test_tenant_isolation import _create_partner_with_key
 
 
@@ -62,3 +63,18 @@ async def test_balance_endpoint_rejects_missing_revoked_and_inactive_partner_key
     await db_session.commit()
     disabled = await client.get(endpoint, headers={"Authorization": "Bearer nrn_balance_revoked_secret"})
     assert disabled.status_code == 401
+
+
+@pytest.mark.parametrize("scheme", ["Bearer", "bearer", "BEARER", "bEaReR"])
+async def test_partner_balance_accepts_bearer_scheme_case_insensitively(client, db_session, scheme):
+    partner, _ = await _create_partner_with_key(
+        db_session, telegram_id="balance-case-insensitive", token="nrn_case_insensitive_token",
+    )
+    await db_session.commit()
+
+    response = await client.get(
+        "/v1/balance",
+        headers={"Authorization": f"{scheme} nrn_case_insensitive_token"},
+    )
+    assert response.status_code == 200
+    assert response.json()["partner_id"] == partner.id

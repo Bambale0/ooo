@@ -34,9 +34,12 @@ async def get_partner_auth(
 ) -> PartnerAuth:
     if authorization is None and x_api_key:
         authorization = "Bearer " + x_api_key
-    if authorization is None or not authorization.startswith("Bearer "):
+    if authorization is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="api_key_required")
-    token_hash = hash_secret(authorization.removeprefix("Bearer ").strip())
+    scheme, separator, token = authorization.partition(" ")
+    if not separator or scheme.casefold() != "bearer" or not token.strip():
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="api_key_required")
+    token_hash = hash_secret(token.strip())
     result = await db.execute(
         select(ApiKey, Partner)
         .join(Partner, ApiKey.partner_id == Partner.id)
