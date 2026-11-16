@@ -71,6 +71,27 @@ EXAMPLES = {
             "n": 1,
         },
     ),
+    "image-seedream-55": (
+        "images/generations",
+        {
+            "model": "seedream-5.5",
+            "prompt": "A glass vase on an oak table",
+            "aspect_ratio": "4:3",
+            "resolution": "2k",
+            "n": 1,
+            "response_format": "b64_json",
+        },
+    ),
+    "image-seedream-55-edit": (
+        "images/edits",
+        {
+            "model": "seedream-5.5",
+            "prompt": "Change the vase to blue glass",
+            "images": [{"image_url": "https://media.example.com/vase.png"}],
+            "resolution": "1k",
+            "n": 1,
+        },
+    ),
     "image-sunburst": (
         "images/generations",
         {
@@ -103,6 +124,16 @@ EXAMPLES = {
             "quality": "xhigh",
             "n": 1,
             "response_format": "b64_json",
+        },
+    ),
+    "video-flash": (
+        "videos/generations",
+        {
+            "model": "seedance-2.5-flash",
+            "prompt": "Slow dolly shot of a sunlit forest",
+            "duration": 5,
+            "resolution": "720p",
+            "generate_audio": False,
         },
     ),
     "video-reference": (
@@ -172,6 +203,7 @@ EXAMPLES = {
 # Public contract limits, deliberately independent of procurement/pricing metadata.
 VIDEO_LIMITS = (
     ("seedance-2.5", "4–30", "480p, 720p, 1080p", "30 / 10 / 10 / 50"),
+    ("seedance-2.5-flash", "4–30", "480p, 720p", "10 / 5 / 5 / 20"),
     ("seedance-2.5-self-developed-nsfw", "4–30", "720p, 1080p", "30 / 10 / 10 / 50"),
     ("seedance-2.0", "4–15", "480p, 720p, 1080p, 4k", "9 / 3 / 3 / 12"),
     ("seedance-2.0-self-developed-nsfw", "4–15", "720p, 1080p, 4k", "9 / 3 / 3 / 12"),
