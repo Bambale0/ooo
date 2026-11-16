@@ -266,7 +266,7 @@ def validate_video(original: dict[str, Any]) -> None:
     minimum = 2 if model == "wan-3" else 3 if kling else 4 if url_video else 1
     edit = task_type == "edit"
     extend = task_type == "extend"
-    if edit and model == "wan-3":
+    if edit and model in {"wan-3", "seedance-2.5-flash"}:
         if any(key in body for key in ("duration", "aspect_ratio", "size")):
             raise ValueError("invalid_edit_request")
     elif edit and (
@@ -314,7 +314,9 @@ def validate_video(original: dict[str, Any]) -> None:
         refs.extend(items)
     if sum(counts) > limits[3]:
         raise ValueError("reference_limit_exceeded")
-    if edit and model in {"seedance-2.5", "seedance-2.5-flash"} and (counts[1] != 1 or counts[2] or "size" in original):
+    if edit and model in {"seedance-2.5", "seedance-2.5-flash"} and (
+        counts[1] != 1 or (model == "seedance-2.5" and counts[2]) or "size" in original
+    ):
         raise ValueError("edit_requires_single_video")
     if extend and not counts[1]:
         raise ValueError("extend_requires_video")
