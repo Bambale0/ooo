@@ -7,7 +7,7 @@ from app.contracts.registry import MODELS, image_resolution
 from app.infrastructure.config import get_settings
 
 
-def image_usage(body: dict, data: dict) -> dict[str, int]:
+def image_usage(body: dict, data: dict, *, reference_image_count: int = 0) -> dict[str, int]:
     images = data.get("data")
     if not isinstance(images, list) or not images or len(images) > body.get("n", 1):
         raise ValueError("invalid_image_count")
@@ -59,6 +59,10 @@ def image_usage(body: dict, data: dict) -> dict[str, int]:
         else:
             tier = image_resolution(body)
         units[tier] = units.get(tier, 0) + 1
+    if body["model"] == "seedream-5.5":
+        references = len(body.get("images") or []) + reference_image_count
+        if references:
+            units["reference_images"] = references
     return units
 
 

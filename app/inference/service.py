@@ -100,6 +100,7 @@ async def reserve(
     idempotency_key: str,
     *,
     files_digest="",
+    reference_image_count: int = 0,
     trial_telegram_id=None,
     client_request_id: str | None = None,
 ):
@@ -195,6 +196,7 @@ async def reserve(
             prices,
             fx=fx_data["rate"],
             trial=trial_telegram_id is not None,
+            reference_image_count=reference_image_count,
             video_seconds=(
                 prepared["billable_seconds"]
                 if prepared
@@ -212,8 +214,12 @@ async def reserve(
     for key in rates:
         if key == "input_reserve":
             continue
-        mode = key if protocol in TEXT_PROTOCOLS else "default"
-        tier = "default" if protocol in TEXT_PROTOCOLS else key if protocol.startswith("images/") else resolution
+        if protocol in TEXT_PROTOCOLS:
+            mode, tier = key, "default"
+        elif key == "reference_images":
+            mode, tier = "reference", "reference"
+        else:
+            mode, tier = "default", key if protocol.startswith("images/") else resolution
         if not await has_provider_capability(db, model.id, mode, tier):
             raise InferenceAdmissionError(409, "capability_mismatch", failure_stage="capability")
     divisor = MILLION if protocol in TEXT_PROTOCOLS else Decimal(1)
@@ -296,6 +302,8 @@ async def reserve(
     }
     if client_request_id is not None:
         snapshot["client_request_id"] = client_request_id
+    if protocol.startswith("images/") and body["model"] == "seedream-5.5":
+        snapshot["reference_image_count"] = reference_image_count
     if video:
         snapshot["native_body"] = body
         if prepared:
@@ -435,7 +443,7 @@ async def _existing_generation(db, partner_id, idempotency_key, request_hash, cl
     return existing
 
 
-def quote(protocol, body, prices, *, fx=None, trial=False, video_seconds=None):
+def quote(protocol, body, prices, *, fx=None, trial=False, video_seconds=None, reference_image_count=0):
     fx = fx if fx is not None else get_settings().rub_per_usdt
     rates = {}
 
@@ -512,7 +520,13 @@ def quote(protocol, body, prices, *, fx=None, trial=False, video_seconds=None):
             if body["model"].startswith("gpt-image")
             else image_tier(body)
         )
-        return rates, {tier: body.get("n", 1)}, tier
+        units = {tier: body.get("n", 1)}
+        if body["model"] == "seedream-5.5":
+            references = len(body.get("images") or []) + reference_image_count
+            if references:
+                add("reference_images", "reference", "reference", "generation")
+                units["reference_images"] = references
+        return rates, units, tier
     video = normalized_video(body)
     resolution = (
         "1080p"
