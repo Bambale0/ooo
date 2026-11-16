@@ -8,17 +8,17 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from fastapi import HTTPException
 from PIL import Image
+from fastapi import HTTPException
 from sqlalchemy import select
 from test_native_inference import setup
 
 from app.catalog.sync import effective_procurement, variants
 from app.contracts.registry import MODELS, validate_request, video_reserve_seconds
+from app.generations.models import Generation
 from app.inference.accounting import charges
 from app.inference.images import image_usage
 from app.inference.service import quote
-from app.generations.models import Generation
 
 
 def price(mode, resolution, unit, retail, cost):
