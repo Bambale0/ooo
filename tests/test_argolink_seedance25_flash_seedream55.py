@@ -7,9 +7,10 @@ from types import SimpleNamespace
 
 import pytest
 from PIL import Image
+from sqlalchemy import select
 
-from app.catalog.seed_models_2026 import register_seed_models
 from app.catalog.models import Model
+from app.catalog.seed_models_2026 import register_seed_models
 from app.catalog.sync import variants
 from app.catalog.video_edit_pricing import video_input_cost, video_pricing_mode
 from app.contracts.registry import MODELS, validate_request, video_reserve_seconds
@@ -17,7 +18,6 @@ from app.inference.accounting import charges
 from app.inference.images import image_usage
 from app.inference.service import quote
 from app.providers.models import ProviderModelCapability
-from sqlalchemy import select
 
 FLASH = "seedance-2.5-flash"
 DREAM = "seedream-5.5"
@@ -140,6 +140,7 @@ def test_seedance_flash_rejects_unsupported_inputs(patch):
             "videos/generations", {"model": FLASH, "prompt": "Ocean", "duration": 5, **patch},
         )
 
+
 async def test_scoped_registration_remains_draft_and_is_idempotent(db_session):
     plan = await register_seed_models(db_session)
     await register_seed_models(db_session)
@@ -161,3 +162,42 @@ async def test_scoped_registration_remains_draft_and_is_idempotent(db_session):
             select(ProviderModelCapability).where(ProviderModelCapability.model_id == flash_model.id)
         )).scalars()
     } == {("default", "480p"), ("default", "720p"), ("video_input", "480p"), ("video_input", "720p")}
+
+
+def test_seedance_flash_edit_omits_duration_and_can_take_audio_reference():
+    edit = {
+        "model": FLASH,
+        "prompt": "Warm colors and softer audio",
+        "omni_reference_task_type": "edit",
+        "reference_videos": [{"url": "https://example.org/scene.mp4"}],
+        "reference_audios": [{"url": "https://example.org/music.mp3"}],
+        "resolution": "480p",
+    }
+    assert validate_request("videos/generations", edit) == edit
+    assert video_reserve_seconds(edit) == 60
+    with pytest.raises(ValueError):
+        validate_request("videos/generations", {**edit, "duration": -1})
+    with pytest.raises(ValueError):
+        validate_request("videos/generations", {**edit, "duration": 5})
+
+
+def test_seedance_flash_extend_bills_reference_video():
+    request = {
+        "model": FLASH,
+        "prompt": "Continue the view along the coast",
+        "omni_reference_task_type": "extend",
+        "duration": 10,
+        "reference_videos": [{"url": "https://example.org/scene.mp4"}],
+        "resolution": "720p",
+    }
+    assert validate_request("videos/generations", request) == request
+    assert video_pricing_mode(request) == "video_input"
+    assert video_input_cost(FLASH, request, "720p") == Decimal("0.0792")
+    assert video_reserve_seconds(request) == 40
+
+
+def test_seedance_flash_rejects_unpriced_1080_and_draft_controls():
+    with pytest.raises(ValueError):
+        validate_request("videos/generations", {"model": FLASH, "prompt": "Sunrise", "resolution": "1080p"})
+    with pytest.raises(ValueError):
+        validate_request("videos/generations", {"model": FLASH, "prompt": "Sunrise", "draft": True})
