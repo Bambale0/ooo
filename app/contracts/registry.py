@@ -374,7 +374,11 @@ def validate_video(original: dict[str, Any]) -> None:
                 raise ValueError("unsupported_generation_control")
         else:
             # Seedance 2.5 supports a silent result. Reject boolean lookalikes.
-            if model in {"seedance-2.5", "seedance-2.5-flash"} and "generate_audio" in body and not isinstance(body["generate_audio"], bool):
+            if (
+                model in {"seedance-2.5", "seedance-2.5-flash"}
+                and "generate_audio" in body
+                and not isinstance(body["generate_audio"], bool)
+            ):
                 raise ValueError("invalid_generate_audio")
             if (
                 "seed" in body
