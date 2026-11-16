@@ -10,6 +10,7 @@ import httpx
 import pytest
 from PIL import Image
 from sqlalchemy import select
+from test_native_inference import setup
 
 from app.catalog.models import Model
 from app.catalog.seed_models_2026 import register_seed_models
@@ -21,7 +22,6 @@ from app.inference.accounting import charges
 from app.inference.images import image_usage
 from app.inference.service import quote
 from app.providers.models import ProviderModelCapability
-from test_native_inference import setup
 
 FLASH = "seedance-2.5-flash"
 DREAM = "seedream-5.5"
