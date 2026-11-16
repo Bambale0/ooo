@@ -100,6 +100,7 @@ async def reserve(
     idempotency_key: str,
     *,
     files_digest="",
+    reference_count: int | None = None,
     trial_telegram_id=None,
     client_request_id: str | None = None,
 ):
@@ -195,6 +196,7 @@ async def reserve(
             prices,
             fx=fx_data["rate"],
             trial=trial_telegram_id is not None,
+            reference_count=reference_count,
             video_seconds=(
                 prepared["billable_seconds"]
                 if prepared
@@ -212,8 +214,8 @@ async def reserve(
     for key in rates:
         if key == "input_reserve":
             continue
-        mode = key if protocol in TEXT_PROTOCOLS else "default"
-        tier = "default" if protocol in TEXT_PROTOCOLS else key if protocol.startswith("images/") else resolution
+        mode = key if protocol in TEXT_PROTOCOLS else "reference_image" if key == "reference_images" else "default"
+        tier = "default" if protocol in TEXT_PROTOCOLS or key == "reference_images" else key if protocol.startswith("images/") else resolution
         if not await has_provider_capability(db, model.id, mode, tier):
             raise InferenceAdmissionError(409, "capability_mismatch", failure_stage="capability")
     divisor = MILLION if protocol in TEXT_PROTOCOLS else Decimal(1)
@@ -435,7 +437,7 @@ async def _existing_generation(db, partner_id, idempotency_key, request_hash, cl
     return existing
 
 
-def quote(protocol, body, prices, *, fx=None, trial=False, video_seconds=None):
+def quote(protocol, body, prices, *, fx=None, trial=False, video_seconds=None, reference_count=None):
     fx = fx if fx is not None else get_settings().rub_per_usdt
     rates = {}
 
@@ -512,7 +514,13 @@ def quote(protocol, body, prices, *, fx=None, trial=False, video_seconds=None):
             if body["model"].startswith("gpt-image")
             else image_tier(body)
         )
-        return rates, {tier: body.get("n", 1)}, tier
+        units = {tier: body.get("n", 1)}
+        if MODELS[body["model"]]["procurement"].get("reference_image_price") is not None:
+            count = len(body.get("images", [])) if reference_count is None else reference_count
+            if count:
+                add("reference_images", "reference_image", "default", "image_reference")
+                units["reference_images"] = count
+        return rates, units, tier
     video = normalized_video(body)
     resolution = (
         "1080p"
