@@ -349,7 +349,7 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
             body,
             idem,
             files_digest=digest,
-            reference_image_count=sum(name in {"image", "image[]", "images", "images[]"} for name, _ in files),
+            reference_image_count=sum(name in {"image", "image[]", "images", "images[]"} for name, _ in (files or [])),
             client_request_id=client_request_id,
         )
     except HTTPException as exc:
