@@ -2,9 +2,11 @@
 
 import base64
 import io
+import json
 from decimal import Decimal
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from PIL import Image
 from sqlalchemy import select
@@ -14,10 +16,12 @@ from app.catalog.seed_models_2026 import register_seed_models
 from app.catalog.sync import variants
 from app.catalog.video_edit_pricing import video_input_cost, video_pricing_mode
 from app.contracts.registry import MODELS, validate_request, video_reserve_seconds
+from app.generations.models import Generation
 from app.inference.accounting import charges
 from app.inference.images import image_usage
 from app.inference.service import quote
 from app.providers.models import ProviderModelCapability
+from test_native_inference import setup
 
 FLASH = "seedance-2.5-flash"
 DREAM = "seedream-5.5"
@@ -201,3 +205,67 @@ def test_seedance_flash_rejects_unpriced_1080_and_draft_controls():
         validate_request("videos/generations", {"model": FLASH, "prompt": "Sunrise", "resolution": "1080p"})
     with pytest.raises(ValueError):
         validate_request("videos/generations", {"model": FLASH, "prompt": "Sunrise", "draft": True})
+
+
+async def test_seedream_native_edit_settles_output_and_two_references_once(client, db_session, monkeypatch):
+    submitted = []
+
+    def provider(request):
+        submitted.append(json.loads(request.content))
+        return httpx.Response(200, json={"data": [_png(1984, 1984)]})
+
+    rates = [
+        ("default", "1K", "generation", Decimal("3"), Decimal("0.02")),
+        ("default", "2K", "generation", Decimal("5"), Decimal("0.035")),
+        ("reference", "reference", "generation", Decimal("1"), Decimal("0.008")),
+    ]
+    partner, headers, upstream = await setup(
+        db_session, monkeypatch, provider, model=DREAM, category="image", rates=rates,
+    )
+    body = {
+        "model": DREAM,
+        "prompt": "Turn the photo into an illustration",
+        "resolution": "2k",
+        "images": [
+            {"image_url": "https://example.org/ref1.png"},
+            {"image_url": "https://example.org/ref2.png"},
+        ],
+    }
+    try:
+        response = await client.post("/v1/images/edits", json=body, headers=headers)
+        assert response.status_code == 200, response.text
+        replay = await client.post("/v1/images/edits", json=body, headers=headers)
+        assert replay.status_code == 200 and replay.content == response.content
+        assert submitted == [body]
+        generation = await db_session.scalar(select(Generation).where(Generation.partner_id == partner.id))
+        assert generation.usage_snapshot == {"2K": 1, "reference_images": 2}
+        assert generation.actual_charge_rub == Decimal("7.00")
+        assert generation.actual_provider_cost_usdt == Decimal("0.051")
+        await db_session.refresh(partner)
+        assert partner.balance_rub == Decimal("999993.00")
+    finally:
+        await upstream.aclose()
+
+
+async def test_seedream_native_failure_does_not_charge_references(client, db_session, monkeypatch):
+    rates = [
+        ("default", "1K", "generation", Decimal("3"), Decimal("0.02")),
+        ("default", "2K", "generation", Decimal("5"), Decimal("0.035")),
+        ("reference", "reference", "generation", Decimal("1"), Decimal("0.008")),
+    ]
+    partner, headers, upstream = await setup(
+        db_session, monkeypatch,
+        lambda request: httpx.Response(502, json={"error": "unavailable"}),
+        model=DREAM, category="image", rates=rates,
+    )
+    try:
+        response = await client.post("/v1/images/edits", headers=headers, json={
+            "model": DREAM,
+            "prompt": "Edit",
+            "images": [{"image_url": "https://example.org/ref.png"}],
+        })
+        assert response.status_code >= 400
+        await db_session.refresh(partner)
+        assert partner.balance_rub == Decimal("1000000")
+    finally:
+        await upstream.aclose()
