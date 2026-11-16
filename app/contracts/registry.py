@@ -22,7 +22,7 @@ SEEDANCE = {name for name in MODELS if name.startswith("seedance-")}
 # Limit profile shared by Seedance 2.5 and its self-developed variants. Compared by
 # family membership so a newly contracted variant cannot silently inherit the 2.0
 # limits (15s, 9 references, audio-needs-visual) that differ from the provider card.
-SEEDANCE_25_FAMILY = {"seedance-2.5", "seedance-2.5-self-developed-nsfw"}
+SEEDANCE_25_FAMILY = {"seedance-2.5", "seedance-2.5-self-developed-nsfw", "seedance-2.5-flash"}
 KLING_MODELS = {"kling-4.0"}
 
 
@@ -291,7 +291,9 @@ def validate_video(original: dict[str, Any]) -> None:
     ref_fields = ("reference_images", "reference_videos", "reference_audios")
     counts = []
     limits = (
-        (30, 10, 10, 50)
+        (10, 5, 5, 20)
+        if model == "seedance-2.5-flash"
+        else (30, 10, 10, 50)
         if model in SEEDANCE_25_FAMILY
         else (9, 3, 3, 12)
         if minimax
@@ -312,7 +314,7 @@ def validate_video(original: dict[str, Any]) -> None:
         refs.extend(items)
     if sum(counts) > limits[3]:
         raise ValueError("reference_limit_exceeded")
-    if edit and model == "seedance-2.5" and (counts[1] != 1 or counts[2] or "size" in original):
+    if edit and model in {"seedance-2.5", "seedance-2.5-flash"} and (counts[1] != 1 or counts[2] or "size" in original):
         raise ValueError("edit_requires_single_video")
     if extend and not counts[1]:
         raise ValueError("extend_requires_video")
@@ -372,12 +374,12 @@ def validate_video(original: dict[str, Any]) -> None:
                 raise ValueError("unsupported_generation_control")
         else:
             # Seedance 2.5 supports a silent result. Reject boolean lookalikes.
-            if model == "seedance-2.5" and "generate_audio" in body and not isinstance(body["generate_audio"], bool):
+            if model in {"seedance-2.5", "seedance-2.5-flash"} and "generate_audio" in body and not isinstance(body["generate_audio"], bool):
                 raise ValueError("invalid_generate_audio")
             if (
                 "seed" in body
                 or body.get("watermark") is True
-                or (body.get("generate_audio") is False and model != "seedance-2.5")
+                or (body.get("generate_audio") is False and model not in {"seedance-2.5", "seedance-2.5-flash"})
             ):
                 raise ValueError("unsupported_generation_control")
         if task_type not in {"auto", "reference", "edit", "extend"}:
