@@ -6,6 +6,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 from PIL import Image
 
 from app.catalog.sync import effective_procurement, variants
@@ -130,8 +131,11 @@ def test_seedream55_reference_surcharge_is_reserved_and_settled():
 def test_seedream55_multipart_reference_count_and_fail_closed_pricing():
     body = {"model": "seedream-5.5", "prompt": "Edit", "resolution": "1k"}
     assert validate_request("images/edits", body, multipart=True) == body
-    prices = [price("default", "1K", "generation", "3.00", "0.02")]
-    with pytest.raises(Exception):
+    prices = [
+        price("default", "1K", "generation", "3.00", "0.02"),
+        price("default", "2K", "generation", "5.00", "0.035"),
+    ]
+    with pytest.raises(HTTPException, match="provider_temporarily_unavailable"):
         quote("images/edits", body, prices, fx=Decimal("90"), reference_count=3)
     prices.append(price("reference_image", "default", "image_reference", "1.00", "0.008"))
     rates, units, tier = quote("images/edits", body, prices, fx=Decimal("90"), reference_count=3)
