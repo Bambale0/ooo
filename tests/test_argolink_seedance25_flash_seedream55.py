@@ -5,6 +5,7 @@ import io
 import json
 from decimal import Decimal
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -21,6 +22,7 @@ from app.generations.models import Generation
 from app.inference.accounting import charges
 from app.inference.images import image_usage
 from app.inference.service import quote
+from app.providers.argolink import ArgoLinkAdapter
 from app.providers.models import ProviderModelCapability
 
 FLASH = "seedance-2.5-flash"
@@ -305,5 +307,62 @@ async def test_seedream_native_multipart_ref_cost_uses_file_count(client, db_ses
         assert generation.actual_provider_cost_usdt == Decimal("0.044")
         await db_session.refresh(partner)
         assert partner.balance_rub == Decimal("999994.00")
+    finally:
+        await upstream.aclose()
+
+
+async def test_seedance_flash_native_reference_video_bills_reported_seconds(client, db_session, monkeypatch):
+    from app.generations.service import dispatch_generation_to_provider, poll_generation_provider
+
+    submitted = []
+
+    def provider(request):
+        if request.method == "POST":
+            submitted.append(json.loads(request.content))
+            return httpx.Response(202, json={"request_id": "flash-upstream-job"})
+        return httpx.Response(
+            200,
+            json={
+                "status": "done",
+                "model": FLASH,
+                "video": {"url": "https://argolink.io/v1/videos/flash-upstream-job/content"},
+                "usage": {"output_seconds": 5, "reference_video_seconds": 5, "billed_seconds": 10},
+            },
+        )
+
+    rates = [
+        ("default", "480p", "second", Decimal("8"), Decimal("0.0572")),
+        ("default", "720p", "second", Decimal("16"), Decimal("0.129")),
+        ("video_input", "480p", "second", Decimal("5"), Decimal("0.0351")),
+        ("video_input", "720p", "second", Decimal("10"), Decimal("0.0792")),
+    ]
+    partner, headers, upstream = await setup(
+        db_session, monkeypatch, provider, model=FLASH, category="video", rates=rates,
+    )
+    monkeypatch.setattr(
+        "app.generations.service.get_partner_provider_adapter",
+        AsyncMock(return_value=ArgoLinkAdapter(api_key="upstream", client=upstream)),
+    )
+    body = {
+        "model": FLASH,
+        "prompt": "Continue the camera movement",
+        "duration": 5,
+        "resolution": "720p",
+        "reference_videos": [{"url": "https://example.org/reference.mp4"}],
+        "reference_audios": [{"url": "https://example.org/sound.mp3"}],
+    }
+    try:
+        response = await client.post("/v1/videos/generations", json=body, headers=headers)
+        assert response.status_code == 202, response.text
+        generation = await db_session.get(Generation, response.json()["request_id"])
+        assert generation.partner_price_rub == Decimal("350")
+        await dispatch_generation_to_provider(db_session, generation)
+        await db_session.commit()
+        await poll_generation_provider(db_session, generation)
+        assert submitted == [body] and generation.status == "completed"
+        assert generation.actual_charge_rub == Decimal("100")
+        assert generation.actual_provider_cost_usdt == Decimal("0.792")
+        await db_session.refresh(partner)
+        assert partner.balance_rub == Decimal("999900")
     finally:
         await upstream.aclose()
