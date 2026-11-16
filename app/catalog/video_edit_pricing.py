@@ -32,6 +32,8 @@ DRAFT_FULL_USD_PER_SECOND = Decimal("0.5682")
 
 
 def video_input_cost(model: str, body: dict, resolution: str) -> Decimal | None:
+    if model == "seedance-2.5-flash" and body.get("reference_videos"):
+        return Decimal(str(MODELS[model]["procurement"]["video_input_tiers"][resolution]))
     if model != EDIT_MODEL:
         return None
     if "draft_task" in body:
