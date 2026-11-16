@@ -24,6 +24,16 @@ def effective_procurement(entry: dict) -> dict:
             tier["label"]: Decimal(str(tier["price"])) * multiplier
             for tier in effective["tiers"]
         }
+    if entry.get("id") == "seedance-2.5-flash":
+        from decimal import ROUND_HALF_UP
+
+        multiplier = Decimal(str(effective.pop("reference_video_multiplier")))
+        effective["video_input_tiers"] = {
+            tier["label"]: (Decimal(str(tier["price"])) * multiplier).quantize(
+                Decimal("0.0001"), rounding=ROUND_HALF_UP
+            )
+            for tier in effective["tiers"]
+        }
     return effective
 
 
@@ -76,6 +86,8 @@ def variants(entry):
                 "second" if entry["category"] == "video" else "generation",
                 Decimal(str(tier["price"])),
             )
+        if entry["category"] == "image" and "reference_image_price" in price:
+            yield "reference", "reference", "generation", Decimal(str(price["reference_image_price"]))
         video_input_mode = entry.get("video_input_mode")
         if entry["category"] == "video" and isinstance(video_input_mode, str):
             for resolution, cost in price.get("video_input_tiers", {}).items():
