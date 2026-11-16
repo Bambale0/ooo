@@ -474,6 +474,17 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
         "The provider validates the size of HTTPS references. Response format: b64_json or url. "
         "size, quality and stream are unsupported. Check /v1/models for availability.",
     )
+    body += "<h3>Seedream 5.5</h3>" + example("image-seedream-55") + example("image-seedream-55-edit")
+    body += p(
+        "Seedream 5.5: генерация и редактирование PNG в 1k или 2k (по умолчанию), n=1. "
+        "До 8 референсов через JSON images или multipart image[]. Каждый референс оплачивается "
+        "по отдельному клиентскому тарифу; точную цену в рублях см. в /price. "
+        "Проверяйте доступность модели через /v1/models.",
+        "Seedream 5.5: PNG generation and editing at 1k or 2k (default), n=1. "
+        "Up to 8 references using JSON images or multipart image[]. Each reference has "
+        "a separate partner price; see /price for RUB rates. "
+        "Check model availability via /v1/models.",
+    )
     body += "<h3>GPT Image 2.5 Sunburst · 4K</h3>" + example("image-sunburst")
     body += "<h3>GPT Image 2.6 Flare / Sunburst</h3>" + example("image-gpt-26") + example("image-gpt-26-edit")
     body += p(
@@ -684,6 +695,17 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
         "Wan: omit aspect_ratio with input frames. Total reference_videos duration is at most 15 seconds, "
         "and output plus input videos must not exceed 30 seconds. For example, 15 seconds of reference video "
         "leaves at most 15 seconds for output. Request format validation does not replace media validation.",
+    )
+    body += "<h3>Seedance 2.5 Flash</h3>" + example("video-flash")
+    body += p(
+        "Seedance 2.5 Flash: видео 4–30 секунд в 480p или 720p, до 10 изображений, "
+        "5 видео и 5 аудио референсов, всего до 20. Поддерживаются edit и extend, "
+        "но не draft и 1080p. Для входного видео действует отдельный клиентский тариф. "
+        "Доступность проверяйте через /v1/models.",
+        "Seedance 2.5 Flash: 4–30 second videos at 480p or 720p; up to 10 image, "
+        "5 video and 5 audio references, 20 total. Edit and extend are supported, "
+        "but not draft or 1080p. Video input uses a separate partner price tier. "
+        "Check availability via /v1/models.",
     )
     body += "<h3>Seedance 2.5 · " + t("референс", "reference") + "</h3>" + example("video-reference")
     body += p(
