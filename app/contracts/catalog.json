@@ -1246,8 +1246,7 @@
       },
       "video_input_mode": "video_input",
       "checked_at": "2026-11-16",
-      "source": "https://argolink.io/en/models/seedance-2.5-flash",
-      "source_revision": "58436d31cd897732"
+      "source": "https://argolink.io/en/models/seedance-2.5-flash"
     },
     "seedream-5.5": {
       "category": "image",
@@ -1388,8 +1387,7 @@
         "output_format": "PNG"
       },
       "checked_at": "2026-11-16",
-      "source": "https://argolink.io/en/models/seedream-5.5",
-      "source_revision": "58436d31cd897732"
+      "source": "https://argolink.io/en/models/seedream-5.5"
     }
   }
 }
