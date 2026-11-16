@@ -349,7 +349,10 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
             body,
             idem,
             files_digest=digest,
-            reference_count=sum(name in {"image", "image[]", "images", "images[]"} for name, _ in files) if files else None,
+            reference_count=(
+                sum(name in {"image", "image[]", "images", "images[]"} for name, _ in files)
+                if files else None
+            ),
             client_request_id=client_request_id,
         )
     except HTTPException as exc:
@@ -582,7 +585,10 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
                     result_ready = True
                 units = image_usage(
                     body, inspected,
-                    reference_count=sum(name in {"image", "image[]", "images", "images[]"} for name, _ in files) if files else None,
+                    reference_count=(
+                        sum(name in {"image", "image[]", "images", "images[]"} for name, _ in files)
+                        if files else None
+                    ),
                 )
                 result_ready = True
         public = JSONResponse(scrub(data, generation.id), headers={"X-Request-Id": generation.id})
