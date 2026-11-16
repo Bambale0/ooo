@@ -269,3 +269,41 @@ async def test_seedream_native_failure_does_not_charge_references(client, db_ses
         assert partner.balance_rub == Decimal("1000000")
     finally:
         await upstream.aclose()
+
+
+async def test_seedream_native_multipart_ref_cost_uses_file_count(client, db_session, monkeypatch):
+    count = 3
+    submitted = []
+
+    def provider(request):
+        submitted.append(request)
+        assert request.headers["content-type"].startswith("multipart/form-data; boundary=")
+        assert request.content.count(b'name="image[]"') == count
+        return httpx.Response(200, json={"data": [_png()]})
+
+    rates = [
+        ("default", "1K", "generation", Decimal("3"), Decimal("0.02")),
+        ("default", "2K", "generation", Decimal("5"), Decimal("0.035")),
+        ("reference", "reference", "generation", Decimal("1"), Decimal("0.008")),
+    ]
+    partner, headers, upstream = await setup(
+        db_session, monkeypatch, provider, model=DREAM, category="image", rates=rates,
+    )
+    reference = base64.b64decode(_png()["b64_json"])
+    try:
+        response = await client.post(
+            "/v1/images/edits",
+            headers=headers,
+            data={"model": DREAM, "prompt": "Change the style", "resolution": "1k"},
+            files=[("image[]", (f"ref-{i}.png", reference, "image/png")) for i in range(count)],
+        )
+        assert response.status_code == 200, response.text
+        assert len(submitted) == 1
+        generation = await db_session.scalar(select(Generation).where(Generation.partner_id == partner.id))
+        assert generation.usage_snapshot == {"1K": 1, "reference_images": count}
+        assert generation.actual_charge_rub == Decimal("6.00")
+        assert generation.actual_provider_cost_usdt == Decimal("0.044")
+        await db_session.refresh(partner)
+        assert partner.balance_rub == Decimal("999994.00")
+    finally:
+        await upstream.aclose()
