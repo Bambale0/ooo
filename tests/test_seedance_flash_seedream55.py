@@ -2,18 +2,23 @@
 
 import base64
 import io
+import json
 from decimal import Decimal
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from fastapi import HTTPException
 from PIL import Image
+from sqlalchemy import select
+from test_native_inference import setup
 
 from app.catalog.sync import effective_procurement, variants
 from app.contracts.registry import MODELS, validate_request, video_reserve_seconds
 from app.inference.accounting import charges
 from app.inference.images import image_usage
 from app.inference.service import quote
+from app.generations.models import Generation
 
 
 def price(mode, resolution, unit, retail, cost):
@@ -141,3 +146,84 @@ def test_seedream55_multipart_reference_count_and_fail_closed_pricing():
     rates, units, tier = quote("images/edits", body, prices, fx=Decimal("90"), reference_count=3)
     assert units == {"1K": 1, "reference_images": 3}
     assert rates["reference_images"]["cost"] == "0.008"
+
+
+@pytest.mark.parametrize("references", [1, 3])
+async def test_seedream55_json_edit_idempotency_and_real_settlement(
+    client, db_session, monkeypatch, references
+):
+    """The public endpoint and the ledger must agree on the paid reference count."""
+    calls = []
+
+    def handler(request):
+        calls.append(json.loads(request.content))
+        out = io.BytesIO()
+        Image.new("RGB", (1088, 1088), "green").save(out, format="PNG")
+        return httpx.Response(200, json={"data": [{"b64_json": base64.b64encode(out.getvalue()).decode()}]})
+
+    rates = [
+        ("default", "1K", "generation", Decimal("3.00"), Decimal("0.02")),
+        ("default", "2K", "generation", Decimal("5.00"), Decimal("0.035")),
+        ("reference_image", "default", "image_reference", Decimal("1.00"), Decimal("0.008")),
+    ]
+    partner, headers, upstream = await setup(
+        db_session, monkeypatch, handler, model="seedream-5.5", category="image", rates=rates
+    )
+    body = {"model": "seedream-5.5", "prompt": "Change background", "resolution": "1k",
+            "images": [{"image_url": f"https://example.org/{index}.png"} for index in range(references)]}
+    try:
+        response = await client.post("/v1/images/edits", headers=headers, json=body)
+        assert response.status_code == 200, response.text
+        repeated = await client.post("/v1/images/edits", headers=headers, json=body)
+        assert repeated.status_code == 200 and repeated.content == response.content
+        generation = await db_session.scalar(select(Generation))
+        assert generation.usage_snapshot == {"1K": 1, "reference_images": references}
+        assert generation.actual_provider_cost_usdt == Decimal("0.02") + Decimal("0.008") * references
+        expected = Decimal("3.00") + references * Decimal("1.00")
+        assert generation.actual_charge_rub == expected
+        assert partner.balance_rub == Decimal("1000000") - expected
+        assert calls == [body]
+    finally:
+        await upstream.aclose()
+
+
+async def test_seedream55_multipart_edits_count_all_image_files(
+    client, db_session, monkeypatch
+):
+    seen = []
+
+    def handler(request):
+        seen.append(request.content.count(b'name="image[]"'))
+        out = io.BytesIO()
+        Image.new("RGB", (1088, 1088), "blue").save(out, format="PNG")
+        return httpx.Response(200, json={"data": [{"b64_json": base64.b64encode(out.getvalue()).decode()}]})
+
+    rates = [
+        ("default", "1K", "generation", Decimal("3.00"), Decimal("0.02")),
+        ("default", "2K", "generation", Decimal("5.00"), Decimal("0.035")),
+        ("reference_image", "default", "image_reference", Decimal("1.00"), Decimal("0.008")),
+    ]
+    partner, headers, upstream = await setup(
+        db_session, monkeypatch, handler, model="seedream-5.5", category="image", rates=rates
+    )
+    file_bytes = io.BytesIO()
+    Image.new("RGB", (16, 16), "red").save(file_bytes, format="PNG")
+    try:
+        response = await client.post(
+            "/v1/images/edits",
+            headers=headers,
+            data={"model": "seedream-5.5", "prompt": "Change color", "resolution": "1k"},
+            files=[
+                ("image[]", (f"{i}.png", file_bytes.getvalue(), "image/png"))
+                for i in range(2)
+            ],
+        )
+        assert response.status_code == 200, response.text
+        generation = await db_session.scalar(select(Generation))
+        assert generation.usage_snapshot == {"1K": 1, "reference_images": 2}
+        assert generation.actual_provider_cost_usdt == Decimal("0.036")
+        assert generation.actual_charge_rub == Decimal("5.00")
+        assert partner.balance_rub == Decimal("999995.00")
+        assert seen == [2]
+    finally:
+        await upstream.aclose()
