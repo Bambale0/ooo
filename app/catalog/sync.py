@@ -1,6 +1,6 @@
 """Import reviewed procurement contracts without inventing retail prices."""
 
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
 
 from fastapi import HTTPException
 from sqlalchemy import select
