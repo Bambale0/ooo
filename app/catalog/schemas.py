@@ -35,7 +35,7 @@ class PartnerPriceUpsert(BaseModel):
     resolution: str = "default"
     price_rub: Decimal = Field(ge=0, allow_inf_nan=False)
     provider_cost_usdt: Decimal = Field(ge=0, allow_inf_nan=False)
-    billing_unit: str = Field(default="generation", pattern="^(generation|second|million_tokens)$")
+    billing_unit: str = Field(default="generation", pattern="^(generation|image_reference|second|million_tokens)$")
 
     @model_validator(mode="after")
     def require_reviewed_zero_rate(self) -> "PartnerPriceUpsert":
