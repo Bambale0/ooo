@@ -8,8 +8,8 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from PIL import Image
 from fastapi import HTTPException
+from PIL import Image
 from sqlalchemy import select
 from test_native_inference import setup
 
