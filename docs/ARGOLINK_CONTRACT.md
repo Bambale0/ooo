@@ -1,5 +1,12 @@
 # ArgoLink contracts and resale API
 
+The 2026-11-16 **draft-only candidate** adds `seedance-2.5-flash` and
+`seedream-5.5` to the reviewed ArgoLink contract registry. See
+[Seedance 2.5 Flash / Seedream 5.5 integration and release gates](EXECUTION/SEEDANCE25_FLASH_SEEDREAM55_20261116.md).
+Neither model is publicly enabled by this code change, and no owner-approved
+RUB partner price or successful paid smoke has been recorded.
+
+
 GPT Image 2.6 Flare/Sunburst were reviewed on 2026-11-05. See the
 [scoped rollout and 35% pricing rule](EXECUTION/GPT_IMAGE_26_20261105.md).
 
@@ -54,6 +61,7 @@ contract does not expose a safe cancellation endpoint.
 | Seedance 2.0 Self-Developed NSFW | 4–15 | 720p, 1080p, 4k | 9 / 3 / 3 / 12 |
 | Seedance 2.0 Mini, Fast | 4–15 | 480p, 720p | 9 / 3 / 3 / 12 |
 | Seedance 2.5 | 4–30 | 480p, 720p, 1080p | 30 / 10 / 10 / 50 |
+| Seedance 2.5 Flash | 4–30 | 480p, 720p | 10 / 5 / 5 / 20 |
 | Seedance 2.5 Self-Developed NSFW | 4–30 | 720p, 1080p | 30 / 10 / 10 / 50 |
 | Wan 3 | 2–30 | 480p, 720p, 1080p | 10 / 5 / 5 / 20 |
 | Grok Video 1.5 | 1–15 | 480p, 720p, 1080p | up to 7 image references; no video/audio references |
