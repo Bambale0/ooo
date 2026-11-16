@@ -83,8 +83,7 @@ jobs:
           # Seedream source revision verified from argolink.io/api/catalog/v1/models on 2026-10-31.
           # GPT Image 2.6 source revision verified from the same public API on 2026-11-05.
           # Kling 4 source revision verified from the same public API on 2026-11-08.
-          # Flash and Seedream 5.5 public catalog revision verified on 2026-11-16.
-          detect-secrets scan app ops .github Dockerfile docker-compose.yml .env.example --exclude-secrets '^(5ce662ba88c3d07f|5cf5790b965e2bad|61d65a9a72ed9a1f|8b23c784088bce6f|58436d31cd897732)$' --exclude-files 'ops/load/README\\.md' > /tmp/secrets.json
+          detect-secrets scan app ops .github Dockerfile docker-compose.yml .env.example --exclude-secrets '^(5ce662ba88c3d07f|5cf5790b965e2bad|61d65a9a72ed9a1f|8b23c784088bce6f)$' --exclude-files 'ops/load/README\\.md' > /tmp/secrets.json
           python - <<'PY'
           import json
           import sys
