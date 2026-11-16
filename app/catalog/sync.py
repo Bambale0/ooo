@@ -1,6 +1,6 @@
 """Import reviewed procurement contracts without inventing retail prices."""
 
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -18,6 +18,16 @@ def effective_procurement(entry: dict) -> dict:
         for key, value in entry["pricing"]["effective"].items()
         if value is not None
     }
+    if entry.get("id") == "seedance-2.5-flash":
+        # The public catalog advertises a multiplier; the provider card
+        # publishes four-decimal video-input rates.
+        multiplier = Decimal(str(effective.pop("reference_video_multiplier")))
+        effective["video_input_tiers"] = {
+            tier["label"]: (Decimal(str(tier["price"])) * multiplier).quantize(
+                Decimal("0.0001"), rounding=ROUND_HALF_UP
+            )
+            for tier in effective["tiers"]
+        }
     if entry.get("id") == "kling-4.0":
         multiplier = Decimal(str(effective.pop("reference_video_multiplier")))
         effective["video_input_tiers"] = {
@@ -76,6 +86,9 @@ def variants(entry):
                 "second" if entry["category"] == "video" else "generation",
                 Decimal(str(tier["price"])),
             )
+        reference_image_price = price.get("reference_image_price")
+        if entry["category"] == "image" and reference_image_price is not None:
+            yield "reference_image", "default", "image_reference", Decimal(str(reference_image_price))
         video_input_mode = entry.get("video_input_mode")
         if entry["category"] == "video" and isinstance(video_input_mode, str):
             for resolution, cost in price.get("video_input_tiers", {}).items():
