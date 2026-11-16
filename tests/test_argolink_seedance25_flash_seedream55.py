@@ -356,7 +356,8 @@ async def test_seedance_flash_native_reference_video_bills_reported_seconds(clie
         assert response.status_code == 202, response.text
         generation = await db_session.get(Generation, response.json()["request_id"])
         assert generation.partner_price_rub == Decimal("350")
-        await dispatch_generation_to_provider(db_session, generation)
+        attempt = await dispatch_generation_to_provider(db_session, generation)
+        attempt.next_poll_at = None
         await db_session.commit()
         await poll_generation_provider(db_session, generation)
         assert submitted == [body] and generation.status == "completed"
