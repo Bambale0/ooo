@@ -8,14 +8,16 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
+from app.catalog.seed_models_2026 import register_seed_models
+from app.catalog.models import Model
 from app.catalog.sync import variants
 from app.catalog.video_edit_pricing import video_input_cost, video_pricing_mode
 from app.contracts.registry import MODELS, validate_request, video_reserve_seconds
 from app.inference.accounting import charges
 from app.inference.images import image_usage
 from app.inference.service import quote
-from app.providers.base import ProviderGenerationRequest
-from app.providers.video_contract import video_request_body
+from app.providers.models import ProviderModelCapability
+from sqlalchemy import select
 
 FLASH = "seedance-2.5-flash"
 DREAM = "seedream-5.5"
@@ -137,3 +139,25 @@ def test_seedance_flash_rejects_unsupported_inputs(patch):
         validate_request(
             "videos/generations", {"model": FLASH, "prompt": "Ocean", "duration": 5, **patch},
         )
+
+async def test_scoped_registration_remains_draft_and_is_idempotent(db_session):
+    plan = await register_seed_models(db_session)
+    await register_seed_models(db_session)
+    for slug in (FLASH, DREAM):
+        model = await db_session.scalar(select(Model).where(Model.slug == slug))
+        assert model is not None and model.status == "draft"
+        assert model.has_provider_integration is True
+        assert model.has_successful_smoke is False
+        capabilities = (await db_session.execute(
+            select(ProviderModelCapability).where(
+                ProviderModelCapability.model_id == model.id,
+                ProviderModelCapability.provider == "argolink",
+            )
+        )).scalars().all()
+        assert len(capabilities) == len(plan[slug]["required_prices"])
+    flash_model = await db_session.scalar(select(Model).where(Model.slug == FLASH))
+    assert {
+        (c.mode, c.resolution) for c in (await db_session.execute(
+            select(ProviderModelCapability).where(ProviderModelCapability.model_id == flash_model.id)
+        )).scalars()
+    } == {("default", "480p"), ("default", "720p"), ("video_input", "480p"), ("video_input", "720p")}
