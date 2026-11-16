@@ -215,7 +215,13 @@ async def reserve(
         if key == "input_reserve":
             continue
         mode = key if protocol in TEXT_PROTOCOLS else "reference_image" if key == "reference_images" else "default"
-        tier = "default" if protocol in TEXT_PROTOCOLS or key == "reference_images" else key if protocol.startswith("images/") else resolution
+        tier = (
+            "default"
+            if protocol in TEXT_PROTOCOLS or key == "reference_images"
+            else key
+            if protocol.startswith("images/")
+            else resolution
+        )
         if not await has_provider_capability(db, model.id, mode, tier):
             raise InferenceAdmissionError(409, "capability_mismatch", failure_stage="capability")
     divisor = MILLION if protocol in TEXT_PROTOCOLS else Decimal(1)
