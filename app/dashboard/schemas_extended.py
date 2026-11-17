@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from decimal import Decimal
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -64,7 +64,7 @@ class ApiKeyWebhookUpdate(BaseModel):
 # ==================== Generations History ====================
 
 
-class GenerationStatus(str, Enum):
+class GenerationStatus(StrEnum):
     """Generation status values."""
 
     PENDING = "pending"
@@ -157,7 +157,7 @@ class AnalyticsQueryParams(BaseModel):
 # ==================== Payments & Invoices ====================
 
 
-class InvoiceStatus(str, Enum):
+class InvoiceStatus(StrEnum):
     """Payment invoice status."""
 
     PENDING = "pending"
