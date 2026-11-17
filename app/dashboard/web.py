@@ -11,7 +11,7 @@ from html import escape
 from urllib.parse import urlsplit
 
 import redis.asyncio as redis
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 from redis.exceptions import RedisError
