@@ -100,7 +100,7 @@ def render_catalog(rows: list[tuple[Model, PartnerPrice]], fx: Decimal) -> str:
         )
         exact_price = f"{rate:.2f}"
         endpoint_html = (
-            f'<code class="catalog-endpoint">{_escape("/v1/" + endpoint.lstrip("/"))}</code>'
+            f'<code class="catalog-endpoint">{_escape(endpoint)}</code>'
             if endpoint else '<span class="muted">Уточняйте в документации</span>'
         )
         model_html = (
