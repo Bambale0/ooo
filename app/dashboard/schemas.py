@@ -10,7 +10,7 @@ Following API design best practices:
 import re
 from datetime import datetime
 from decimal import Decimal
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -73,7 +73,7 @@ class BalanceDetailRead(BaseModel):
     currency: str = Field(default="RUB", description="Currency code")
 
 
-class LedgerEntryType(str, Enum):
+class LedgerEntryType(StrEnum):
     """Ledger entry operation types."""
 
     TOP_UP = "payment_received"
