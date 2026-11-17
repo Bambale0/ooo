@@ -124,7 +124,7 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, land
         '<meta name="theme-color" content="#05070b">'
         f'<meta name="description" content="{escape(description, quote=True)}"><title>{escape(title)}</title>'
         '<link rel="icon" href="/ui/logo-mark.svg" type="image/svg+xml">'
-        '<link rel="stylesheet" href="/ui/brand.css?v=2"><script src="/ui/brand.js?v=1" defer></script>'
+        '<link rel="stylesheet" href="/ui/brand.css?v=3"><script src="/ui/brand.js?v=2" defer></script>'
         f'</head><body class="{"pricing-page" if pricing else "reference-page" if landing else "docs-page"}">'
         f'<a class="skip-link" href="#main">{t("К содержимому", "Skip to content")}</a>'
         '<header class="site-header"><div class="header-inner">'
@@ -135,7 +135,7 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, land
         f'<a href="/" {"aria-current=page" if landing else ""}>{t("Обзор", "Overview")}</a>'
         f'<a href="{docs_url}" {"aria-current=page" if not pricing and not landing else ""}>'
         f"{t('Документация', 'Documentation')}</a>"
-        f'<a href="{price_url}" {"aria-current=page" if pricing else ""}>{t("Цены", "Pricing")}</a>'
+        f'<a href="{price_url}" {"aria-current=page" if pricing else ""}>{t("Модели и цены", "Models & pricing")}</a>'
         f'{cabinet_nav_link}</nav>'
         f'<a class="telegram-link" href="{TELEGRAM_APPLICATION_URL}" target="_blank" rel="noopener noreferrer" '
         f'aria-label="{t("Подать заявку через Telegram", "Apply via Telegram")}">{_telegram_icon()}'
