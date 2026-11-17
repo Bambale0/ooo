@@ -15,14 +15,12 @@ from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 from redis.exceptions import RedisError
-from sqlalchemy import func, select
+from sqlalchemy import select
 
-from app.accounts.models import ApiKey, Partner
+from app.accounts.models import Partner
 from app.api.dependencies import DbSession
-from app.billing.models import LedgerEntry
-from app.generations.models import Generation
+from app.dashboard.portal import router as portal_router
 from app.infrastructure.config import get_settings
-from app.payments.models import PaymentInvoice
 
 router = APIRouter(tags=["Partner web cabinet"])
 _SESSION_COOKIE = "__Host-neironych_session"
@@ -216,103 +214,9 @@ async def cabinet(request: Request, db: DbSession) -> HTMLResponse:
         )
         return response
 
-    keys = (
-        (await db.execute(select(ApiKey).where(ApiKey.partner_id == partner.id).order_by(ApiKey.created_at.desc())))
-        .scalars()
-        .all()
-    )
-    generations = (
-        (await db.execute(
-            select(Generation).where(Generation.partner_id == partner.id)
-            .order_by(Generation.created_at.desc()).limit(20)
-        )).scalars().all()
-    )
-    ledger = (
-        (await db.execute(
-            select(LedgerEntry).where(LedgerEntry.partner_id == partner.id)
-            .order_by(LedgerEntry.created_at.desc()).limit(20)
-        )).scalars().all()
-    )
-    invoices = (
-        (await db.execute(
-            select(PaymentInvoice).where(PaymentInvoice.partner_id == partner.id)
-            .order_by(PaymentInvoice.created_at.desc()).limit(15)
-        )).scalars().all()
-    )
-    count = (
-        await db.execute(select(func.count()).select_from(Generation).where(Generation.partner_id == partner.id))
-    ).scalar_one()
+    from app.dashboard.portal import render_portal
 
-    key_rows = [
-        (
-            _safe(key.name),
-            f"<code>{_safe(key.key_prefix)}••••</code>",
-            '<span class="status ok">Активен</span>' if key.is_active else '<span class="status">Отключён</span>',
-            _safe(_date(key.created_at)),
-        )
-        for key in keys
-    ]
-    generation_rows = [
-        (
-            f"<code>{_safe(gen.id[:8])}</code>",
-            _safe(gen.model_slug),
-            _safe(_STATUS.get(gen.status, gen.status)),
-            _safe(_money(gen.actual_charge_rub)) if gen.actual_charge_rub is not None else "—",
-            _safe(_date(gen.created_at)),
-        )
-        for gen in generations
-    ]
-    ledger_rows = [
-        (_safe(_date(item.created_at)), _safe(item.operation_type), _safe(_money(item.amount_rub)),
-         _safe(_money(item.balance_after_rub)))
-        for item in ledger
-    ]
-    invoice_rows = [
-        (
-            _safe(_date(inv.created_at)),
-            _safe(_money(inv.requested_rub)),
-            _safe(_STATUS.get(inv.status, inv.status)),
-        )
-        for inv in invoices
-    ]
-    csrf = _csrf_for_session(session_id, get_settings().telegram_bot_token or "")
-    bot = get_settings().telegram_bot_username or "apineurobrobot"
-    body = (
-        '<section class="welcome"><div><p class="eyebrow">Ваш кабинет</p>'
-        f'<h1>{_safe(partner.project_name)}</h1><p>{_safe(partner.company_name)}</p></div>'
-        f'<form action="/cabinet/logout" method="post"><input type="hidden" name="csrf" value="{csrf}">'
-        '<button class="outline" type="submit">Выйти</button></form></section>'
-        '<nav class="section-nav" aria-label="Разделы кабинета">'
-        '<a href="#overview">Обзор</a><a href="#keys">API-ключи</a>'
-        '<a href="#generations">Генерации</a><a href="#transactions">Операции</a>'
-        '<a href="#invoices">Счета</a></nav>'
-        '<section id="overview"><div class="stats">'
-        f'<article class="stat"><span>Баланс</span><strong>{_safe(_money(partner.balance_rub))}</strong></article>'
-        '<article class="stat"><span>Доступно с лимитом</span>'
-        f'<strong>{_safe(_money(partner.available_balance_rub))}</strong></article>'
-        f'<article class="stat"><span>Всего генераций</span><strong>{count}</strong></article>'
-        '<article class="stat"><span>Активных ключей</span>'
-        f'<strong>{sum(key.is_active for key in keys)}</strong></article>'
-        '</div><div class="help-banner"><p>Пополнение баланса, управление ключами и поддержка '
-        'доступны в Telegram-боте.</p>'
-        f'<a class="primary" href="https://t.me/{escape(bot, quote=True)}" '
-        'target="_blank" rel="noopener noreferrer">Открыть Telegram →</a></div></section>'
-        '<section id="keys"><div class="section-heading"><h2>API-ключи</h2>'
-        '<p>Секреты не отображаются повторно. Для создания и отзыва ключей откройте бота.</p></div>'
-        + _table(("Название", "Префикс", "Статус", "Создан"), key_rows, "Пока нет API-ключей.")
-        + '</section><section id="generations"><div class="section-heading"><h2>Генерации</h2>'
-        '<p>Последние 20 задач и фактические списания.</p></div>'
-        + _table(("ID", "Модель", "Статус", "Списано", "Создана"), generation_rows, "Пока нет генераций.")
-        + '</section><section id="transactions"><div class="section-heading"><h2>История баланса</h2>'
-        '<p>Последние 20 операций по вашему счёту.</p></div>'
-        + _table(("Дата", "Операция", "Сумма", "Баланс после"), ledger_rows, "Пока нет операций.")
-        + '</section><section id="invoices"><div class="section-heading"><h2>Счета</h2>'
-        '<p>Последние 15 запросов на пополнение.</p></div>'
-        + _table(("Дата", "Сумма", "Статус"), invoice_rows, "Пока нет счетов.")
-        + '</section>'
-    )
-    return _document("Личный кабинет", body)
-
+    return await render_portal(request, db, partner, session_id)
 
 @router.post("/cabinet/telegram", include_in_schema=False)
 async def telegram_login(request: Request, payload: TelegramLogin, db: DbSession) -> JSONResponse:
@@ -361,3 +265,7 @@ async def logout(request: Request, db: DbSession, csrf: str = Form(...)) -> Redi
     response = RedirectResponse("/cabinet", status_code=303, headers=_HEADERS)
     response.delete_cookie(_SESSION_COOKIE, secure=True, httponly=True, samesite="strict", path="/")
     return response
+
+
+# Keep the Telegram session router as the single mounted entrypoint.
+router.include_router(portal_router)
