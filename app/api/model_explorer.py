@@ -54,6 +54,19 @@ def render_catalog(rows: list[tuple[Model, PartnerPrice]], fx: Decimal) -> str:
             '<a class="button" href="/docs">Открыть документацию</a></div>'
         )
 
+    special_rule = ""
+    if any(model.slug == EDIT_MODEL and rate.mode == EDIT_MODE for model, rate in rows):
+        special_rule = (
+            '<aside class="catalog-rule" aria-label="Особенности тарификации Seedance 2.5">'
+            '<strong>Seedance 2.5 · видеореференсы</strong>'
+            '<p>При наличии входного видео (reference_videos) применяется тариф '
+            'режима edit — даже если задача отправлена как reference. '
+            'Без входного видео действует обычный тариф default. '
+            'Оплачиваемые секунды включают длительность результата и всех входных '
+            'видеореференсов по итоговому usage. '
+            'Цена edit определяется по действующему курсу на момент запроса.</p>'
+            '</aside>'
+        )
     counts = Counter(_modality(model.modality)[0] for model, _ in rows)
     model_count = len({model.slug for model, _ in rows})
     controls = (
@@ -139,4 +152,4 @@ def render_catalog(rows: list[tuple[Model, PartnerPrice]], fx: Decimal) -> str:
         'смотрите в кабинете. '
         'Внешний прайс не является историей фактических списаний.</p>'
     )
-    return title + controls + table
+    return title + special_rule + controls + table
