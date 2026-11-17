@@ -155,7 +155,13 @@ async def render_portal(request: Request, db: DbSession, partner: Partner, sessi
                 .where(ApiKey.partner_id == partner.id, ApiKey.is_active.is_(True))
             )
         ).scalar_one()
-        body = overview_view(partner, usage, recent, active_keys)
+        recent_keys = (
+            await db.execute(
+                select(ApiKey).where(ApiKey.partner_id == partner.id)
+                .order_by(ApiKey.created_at.desc()).limit(5)
+            )
+        ).scalars().all()
+        body = overview_view(partner, usage, recent, active_keys, recent_keys)
     elif section == "activity":
         usage = await _usage(db, partner.id, period)
         body = activity_view(usage)
