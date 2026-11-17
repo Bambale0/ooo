@@ -115,6 +115,15 @@ def _nav(active: str) -> str:
             f' {"aria-current=page" if name == active else ""}>'
             f'<span class="nav-symbol" aria-hidden="true">{symbol}</span>{_e(label)}</a>'
         )
+    items.append('<div class="nav-caption">Разработчикам</div>')
+    items.append(
+        '<a href="/guide?lang=ru" class="nav-item">'
+        '<span class="nav-symbol" aria-hidden="true">⌗</span>Документация ↗</a>'
+    )
+    items.append(
+        '<a href="/prices" class="nav-item">'
+        '<span class="nav-symbol" aria-hidden="true">▦</span>Каталог моделей ↗</a>'
+    )
     return "".join(items)
 
 
@@ -165,6 +174,8 @@ def page_html(
         '<span class="breadcrumb-root">Партнёрский кабинет</span>'
         f'<span class="breadcrumb-divider">/</span><span class="breadcrumb-active">{_e(title)}</span></div>'
         '<div class="topbar-actions">'
+        '<a class="button button-secondary topbar-docs" href="/guide?lang=ru">'
+        'Документация ↗</a>'
         '<span class="topbar-balance"><span>Баланс</span>'
         f'<strong>{_e(_rub(partner.balance_rub))}</strong></span>'
         '<a class="button button-primary topup-button" href="/cabinet?section=credits">+ Пополнить</a>'
@@ -399,6 +410,8 @@ async def models_view(db, tariff_rows: list, search: str) -> str:
     title = _heading(
         "КАТАЛОГ / MODELS", "Модели и тарифы",
         "Только модели, доступные вашему аккаунту. Все тарифы показаны в рублях.",
+        '<a class="button button-secondary" href="/guide?lang=ru#models">'
+        'Документация API ↗</a>',
     )
     filters = (
         '<form class="filterbar" action="/cabinet" method="get">'
