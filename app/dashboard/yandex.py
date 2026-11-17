@@ -39,8 +39,11 @@ def configuration_errors(settings=None) -> list[str]:
         return []
     if not all(values) or not s.yandex_client_secret.get_secret_value():
         return ["YANDEX_CLIENT_ID, YANDEX_CLIENT_SECRET and YANDEX_CALLBACK_URL must be set together"]
-    callback = urlsplit(s.yandex_callback_url)
-    public = urlsplit(s.public_api_base_url)
+    try:
+        callback = urlsplit(s.yandex_callback_url)
+        public = urlsplit(s.public_api_base_url)
+    except ValueError:
+        return ["YANDEX_CALLBACK_URL and PUBLIC_API_BASE_URL must be valid HTTPS URLs"]
     if (
         callback.scheme != "https"
         or not callback.hostname

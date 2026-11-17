@@ -3,6 +3,7 @@ from decimal import Decimal
 import pytest
 
 from app.catalog.models import Model, PartnerPrice
+from app.infrastructure.config import get_settings
 
 
 async def test_root_is_a_working_public_entry(client):
@@ -16,11 +17,14 @@ async def test_root_is_a_working_public_entry(client):
     assert (await client.get("/price")).text == (await client.get("/prices")).text
 
 
-async def test_public_entry_links_application_ctas_to_the_live_telegram_bot(client):
+async def test_public_entry_links_ctas_to_the_configured_telegram_bot(client, monkeypatch):
+    monkeypatch.setattr(get_settings(), "telegram_bot_username", "apineurobrobot")
     root = await client.get("/")
-    deep_link = "https://t.me/apineurobrobot?start=apply"
+    deep_link = "https://t.me/apineurobrobot"
     assert root.text.count(f'href="{deep_link}"') == 2
-    assert "Подать заявку" in root.text
+    assert "Telegram-бот" in root.text
+    assert "Подать заявку" not in root.text
+    assert "?start=apply" not in root.text
     assert 'class="button primary telegram-button"' in root.text
     assert 'class="telegram-link"' in root.text
     assert 'target="_blank" rel="noopener noreferrer"' in root.text
