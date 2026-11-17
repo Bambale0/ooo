@@ -8,7 +8,7 @@ import pytest
 
 from app.api.native_video_reference import LIMITS, render_native_video_reference
 from app.api.partner_reference import EXAMPLES, VIDEO_LIMITS
-from app.api.public_ui import TELEGRAM_APPLICATION_URL
+from app.api.public_ui import telegram_bot_url
 from app.api.text_reference import EXAMPLES as TEXT_EXAMPLES
 from app.api.text_reference import PUBLIC_TEXT_MODELS
 from app.catalog.models import Model
@@ -99,7 +99,7 @@ async def test_public_docs_are_self_contained_without_private_surface(client, la
     # host must not proxy pricing or other account/internal endpoints.
     pricing_url = get_settings().public_api_base_url.rstrip("/") + "/price"
     assert all(
-        not link.startswith("http") or link in {pricing_url, TELEGRAM_APPLICATION_URL} for link in parsed.links
+        not link.startswith("http") or link in {pricing_url, telegram_bot_url()} for link in parsed.links
     )
 
     # Test the exact executable source customers copy, including HTML round-trip.

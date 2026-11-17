@@ -258,7 +258,15 @@ async def render_portal(request: Request, db: DbSession, partner: Partner, sessi
         entries, total = await _page_items(db, query, current_page)
         body = ledger_view(entries, total, current_page, selected_type)
     else:
-        body = settings_view(partner, csrf)
+        from app.accounts.models import PartnerIdentity
+        from app.dashboard.yandex import configured
+
+        linked = False
+        if configured():
+            linked = (await db.execute(select(PartnerIdentity.id).where(
+                PartnerIdentity.partner_id == partner.id, PartnerIdentity.provider == "yandex",
+            ))).scalar_one_or_none() is not None
+        body = settings_view(partner, csrf, yandex_linked=linked)
     return page_html(partner, section, body, csrf, notice=notice)
 
 

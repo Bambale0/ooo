@@ -663,7 +663,7 @@ def ledger_view(items: list[LedgerEntry], total: int, current: int, selected_typ
     )
 
 
-def settings_view(partner: Partner, csrf: str) -> str:
+def settings_view(partner: Partner, csrf: str, *, yandex_linked: bool = False) -> str:
     title = _heading(
         "АККАУНТ / SETTINGS", "Настройки",
         "Данные партнёра, контактная информация и безопасность сессии.",
@@ -689,10 +689,25 @@ def settings_view(partner: Partner, csrf: str) -> str:
         f' value="{_e(partner.payment_email or "")}" placeholder="billing@example.com"></label>'
         '<button type="submit" class="button button-primary">Сохранить</button></form></section>'
     )
+    from app.dashboard.yandex import configuration_errors, configured
+
+    yandex = ''
+    if yandex_linked:
+        yandex = '<p>Яндекс ID подключён. Вы можете использовать его для входа в этот же аккаунт.</p>'
+    elif configured() and not configuration_errors():
+        yandex = (
+            '<p>Подключите Яндекс ID для входа в этот же аккаунт с общим балансом. '
+            'Перед подключением войдите заново через Telegram (не более 5 минут назад).</p>'
+            '<form method="post" action="/cabinet/yandex/start">'
+            '<input type="hidden" name="mode" value="link">'
+            f'<input type="hidden" name="csrf" value="{_e(csrf)}">'
+            '<button type="submit" class="button button-secondary">Подключить Яндекс ID</button></form>'
+        )
     security = (
         '<section class="surface settings-card"><h2>Безопасность</h2>'
         '<p>Вход — через подтверждённый Telegram-аккаунт. '
         'Сеанс хранится на сервере и может быть закрыт в любой момент.</p>'
+        f'{yandex}'
         '<form method="post" action="/cabinet/logout">'
         f'<input type="hidden" name="csrf" value="{_e(csrf)}">'
         '<button type="submit" class="button button-secondary">Выйти из аккаунта</button></form></section>'

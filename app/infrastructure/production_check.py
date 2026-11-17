@@ -10,7 +10,9 @@ def validate_production_config() -> list[str]:
     settings = get_settings()
     if settings.app_env != "production":
         return []
-    errors: list[str] = []
+    from app.dashboard.yandex import configuration_errors
+
+    errors: list[str] = configuration_errors(settings)
     for name in ("admin_api_token", "provider_credentials_master_key"):
         value = getattr(settings, name) or ""
         if len(value) < 32 or any(part in value.lower() for part in ("change-me", "change-this", "test-", "example")):

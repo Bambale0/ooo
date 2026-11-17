@@ -58,6 +58,7 @@ def configure_logging() -> None:
         ),
         settings.crypto_pay_api_token,
         settings.telegram_bot_token,
+        settings.yandex_client_secret.get_secret_value() if settings.yandex_client_secret else None,
         settings.provider_credentials_master_key,
         settings.s3_secret_access_key,
         settings.database_url,
