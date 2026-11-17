@@ -103,7 +103,8 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, land
         f'<a href="/" {"aria-current=page" if landing else ""}>{t("Обзор", "Overview")}</a>'
         f'<a href="{docs_url}" {"aria-current=page" if not pricing and not landing else ""}>'
         f"{t('Документация', 'Documentation')}</a>"
-        f'<a href="{price_url}" {"aria-current=page" if pricing else ""}>{t("Цены", "Pricing")}</a></nav>'
+        f'<a href="{price_url}" {"aria-current=page" if pricing else ""}>{t("Цены", "Pricing")}</a>'
+        f'<a href="/cabinet">{t("Личный кабинет", "Cabinet")}</a></nav>'
         f'<a class="telegram-link" href="{TELEGRAM_APPLICATION_URL}" target="_blank" rel="noopener noreferrer" '
         f'aria-label="{t("Подать заявку через Telegram", "Apply via Telegram")}">{_telegram_icon()}'
         f'<span>{t("Подать заявку", "Apply")}</span></a>'
