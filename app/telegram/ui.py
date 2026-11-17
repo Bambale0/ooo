@@ -7,6 +7,8 @@ from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from app.infrastructure.config import get_settings
+
 logger = logging.getLogger(__name__)
 MSK = ZoneInfo("Europe/Moscow")
 
@@ -50,6 +52,7 @@ def home_keyboard(*, admin: bool = False) -> InlineKeyboardMarkup:
     actions = [
         ("🎬 Бесплатные видеотесты", "trials"),
         ("🤖 Заказать разработку бота", "dev:start"),
+        ("🌐 Веб-кабинет", get_settings().public_api_base_url.rstrip("/") + "/cabinet"),
         ("💳 Баланс", "balance"),
         ("🔑 API-ключи", "api_keys:0"),
         ("🧾 История", "history:0"),
