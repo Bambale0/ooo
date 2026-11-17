@@ -48,7 +48,10 @@ router = APIRouter(prefix="/dashboard", tags=["Partner Dashboard"])
     "/profile",
     response_model=ProfileRead,
     summary="Get partner profile",
-    description="Returns the authenticated partner's profile information including company name, project name, and account status.",
+    description=(
+        "Returns the authenticated partner\'s profile information including "
+        "company name, project name, and account status."
+    ),
 )
 async def get_profile(
     partner: Partner = Depends(get_current_partner),
