@@ -44,6 +44,9 @@ def create_app() -> FastAPI:
     from app.api.guide import router as guide_router
 
     app.include_router(guide_router)
+    from app.dashboard.web import router as web_cabinet_router
+
+    app.include_router(web_cabinet_router)
     from app.providers.notifications import router as provider_notifications_router
 
     app.include_router(provider_notifications_router)

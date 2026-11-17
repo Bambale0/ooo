@@ -25,6 +25,7 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, land
         return russian if ru else english
 
     price_url = escape(get_settings().public_api_base_url.rstrip("/") + "/price", quote=True)
+    cabinet_url = escape(get_settings().public_api_base_url.rstrip("/") + "/cabinet", quote=True)
     docs_url = f"/guide?lang={lang}"
     contents = ""
     introduction = ""
@@ -43,6 +44,7 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, land
             f'<a class="button primary telegram-button" href="{TELEGRAM_APPLICATION_URL}" target="_blank" '
             f'rel="noopener noreferrer">{_telegram_icon()}{t("Подать заявку", "Apply via Telegram")}</a>'
             f'<a class="button" href="{docs_url}#connect">{t("Документация", "Documentation")} ↗</a>'
+            f'<a class="button" href="{cabinet_url}">{t("Личный кабинет", "Partner cabinet")} →</a>'
         )
         side = ""
     elif pricing:
@@ -86,6 +88,10 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, land
             f'<a data-language href="{language_path}?lang=en" lang="en" {"aria-current=page" if not ru else ""}>EN</a>'
             '</nav>'
         )
+    # The docs host intentionally exposes only the public reference; keep private cabinet links on site and prices.
+    cabinet_nav_link = (
+        f'<a href="{cabinet_url}">{t("Личный кабинет", "Cabinet")}</a>' if landing or pricing else ""
+    )
     return HTMLResponse(
         f'<!doctype html><html lang="{lang}"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
@@ -103,7 +109,8 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, land
         f'<a href="/" {"aria-current=page" if landing else ""}>{t("Обзор", "Overview")}</a>'
         f'<a href="{docs_url}" {"aria-current=page" if not pricing and not landing else ""}>'
         f"{t('Документация', 'Documentation')}</a>"
-        f'<a href="{price_url}" {"aria-current=page" if pricing else ""}>{t("Цены", "Pricing")}</a></nav>'
+        f'<a href="{price_url}" {"aria-current=page" if pricing else ""}>{t("Цены", "Pricing")}</a>'
+        f'{cabinet_nav_link}</nav>'
         f'<a class="telegram-link" href="{TELEGRAM_APPLICATION_URL}" target="_blank" rel="noopener noreferrer" '
         f'aria-label="{t("Подать заявку через Telegram", "Apply via Telegram")}">{_telegram_icon()}'
         f'<span>{t("Подать заявку", "Apply")}</span></a>'
