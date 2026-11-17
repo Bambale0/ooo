@@ -3,7 +3,6 @@
 No templates, API bearer tokens, inline executable scripts or untrusted HTML.
 """
 
-import secrets
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from html import escape
