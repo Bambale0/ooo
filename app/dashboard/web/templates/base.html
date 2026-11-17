@@ -3,75 +3,82 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Partner Cabinet - Нейроныч</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>{% block title %}Cabinet{% endblock %} - Нейроныч</title>
+    <link rel="stylesheet" href="/static/brand.css">
+    <link rel="stylesheet" href="/static/cabinet.css">
     <script src="https://unpkg.com/htmx.org"></script>
 </head>
-<body class="bg-gray-900 text-white">
-    <div class="flex h-screen">
+<body>
+    <div class="cabinet-layout">
         <!-- Sidebar -->
-        <aside class="w-64 bg-gray-800 border-r border-gray-700 p-6 overflow-y-auto">
-            <div class="mb-8">
-                <h1 class="text-2xl font-bold text-purple-500">Нейроныч</h1>
-                <p class="text-gray-400 text-sm">{{ partner.company_name }}</p>
+        <aside class="cabinet-sidebar">
+            <div class="sidebar-header">
+                <div class="brand-mini">Нейроныч</div>
+                <div class="company-name">{{ partner.company_name }}</div>
             </div>
 
-            <!-- Menu -->
-            <nav class="space-y-2">
-                <div class="text-xs uppercase text-gray-500 font-semibold mb-4">Рабочая область</div>
-                
-                <a href="/cabinet/" class="flex items-center space-x-3 px-4 py-2 rounded hover:bg-gray-700">
-                    <span class="text-xl">📊</span>
-                    <span>Обзор</span>
-                </a>
-                
-                <a href="/cabinet/generations" class="flex items-center space-x-3 px-4 py-2 rounded hover:bg-gray-700">
-                    <span class="text-xl">⚙️</span>
-                    <span>Задачи генерации</span>
-                </a>
+            <nav class="cabinet-nav">
+                <div class="nav-section">
+                    <div class="nav-label">РАБОЧАЯ ОБЛАСТЬ</div>
+                    <a href="/cabinet/" class="nav-link" hx-boost="true">
+                        <span class="nav-icon">📊</span>
+                        <span>Обзор</span>
+                    </a>
+                    <a href="/cabinet/generations" class="nav-link" hx-boost="true">
+                        <span class="nav-icon">⚙️</span>
+                        <span>Задачи генерации</span>
+                    </a>
+                </div>
 
-                <div class="text-xs uppercase text-gray-500 font-semibold mt-6 mb-4">Аккаунт</div>
-                
-                <a href="/cabinet/api-keys" class="flex items-center space-x-3 px-4 py-2 rounded hover:bg-gray-700">
-                    <span class="text-xl">🔑</span>
-                    <span>API-ключи</span>
-                </a>
-                
-                <a href="/cabinet/wallet" class="flex items-center space-x-3 px-4 py-2 rounded hover:bg-gray-700">
-                    <span class="text-xl">💳</span>
-                    <span>Кошелёк</span>
-                </a>
+                <div class="nav-section">
+                    <div class="nav-label">АККАУНТ</div>
+                    <a href="/cabinet/api-keys" class="nav-link" hx-boost="true">
+                        <span class="nav-icon">🔑</span>
+                        <span>API-ключи</span>
+                    </a>
+                    <a href="/cabinet/wallet" class="nav-link" hx-boost="true">
+                        <span class="nav-icon">💳</span>
+                        <span>Кошелёк</span>
+                    </a>
+                </div>
 
-                <div class="text-xs uppercase text-gray-500 font-semibold mt-6 mb-4">Использование</div>
-                
-                <a href="/cabinet/statistics" class="flex items-center space-x-3 px-4 py-2 rounded hover:bg-gray-700">
-                    <span class="text-xl">📈</span>
-                    <span>Статистика</span>
-                </a>
+                <div class="nav-section">
+                    <div class="nav-label">ИСПОЛЬЗОВАНИЕ</div>
+                    <a href="/cabinet/statistics" class="nav-link" hx-boost="true">
+                        <span class="nav-icon">📈</span>
+                        <span>Статистика</span>
+                    </a>
+                    <a href="/cabinet/invoices" class="nav-link" hx-boost="true">
+                        <span class="nav-icon">📋</span>
+                        <span>Счета</span>
+                    </a>
+                </div>
 
-                <div class="text-xs uppercase text-gray-500 font-semibold mt-6 mb-4">Настройки</div>
-                
-                <a href="/cabinet/settings" class="flex items-center space-x-3 px-4 py-2 rounded hover:bg-gray-700">
-                    <span class="text-xl">⚙️</span>
-                    <span>Настройки аккаунта</span>
-                </a>
+                <div class="nav-section">
+                    <div class="nav-label">НАСТРОЙКИ</div>
+                    <a href="/cabinet/settings" class="nav-link" hx-boost="true">
+                        <span class="nav-icon">⚙️</span>
+                        <span>Аккаунт</span>
+                    </a>
+                </div>
             </nav>
         </aside>
 
-        <!-- Main content -->
-        <main class="flex-1 overflow-auto">
-            <header class="bg-gray-800 border-b border-gray-700 px-8 py-4 flex justify-between items-center">
-                <h1 class="text-2xl font-bold">{% block title %}Dashboard{% endblock %}</h1>
-                <div class="flex items-center space-x-4">
-                    <span class="text-gray-400">{{ partner.telegram_id }}</span>
-                    <a href="/logout" class="text-gray-400 hover:text-white">Выход</a>
+        <!-- Main -->
+        <main class="cabinet-main">
+            <header class="cabinet-header">
+                <h1 class="page-title">{% block title %}Cabinet{% endblock %}</h1>
+                <div class="header-actions">
+                    <span class="user-id">ID: {{ partner.telegram_id }}</span>
+                    <a href="/logout" class="button-secondary">Выход</a>
                 </div>
             </header>
 
-            <div class="p-8">
+            <div class="cabinet-content">
                 {% block content %}{% endblock %}
             </div>
         </main>
     </div>
 </body>
 </html>
+

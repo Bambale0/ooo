@@ -1,38 +1,36 @@
 {% extends "base.html" %}
 
-{% block title %}Dashboard{% endblock %}
+{% block title %}Обзор{% endblock %}
 
 {% block content %}
-<div class="space-y-6">
-    <!-- Balance Card -->
-    <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
-        <h2 class="text-xl font-semibold mb-4">Текущий баланс</h2>
-        <div class="grid grid-cols-3 gap-4">
-            <div>
-                <p class="text-gray-400 text-sm">Баланс</p>
-                <p class="text-3xl font-bold text-green-400">₽ {{ partner.balance_rub }}</p>
-            </div>
-            <div>
-                <p class="text-gray-400 text-sm">Кредитный лимит</p>
-                <p class="text-3xl font-bold text-blue-400">₽ {{ partner.credit_limit_rub }}</p>
-            </div>
-            <div>
-                <p class="text-gray-400 text-sm">Доступно</p>
-                <p class="text-3xl font-bold text-purple-400">₽ {{ partner.available_balance_rub }}</p>
-            </div>
-        </div>
-        <a href="/cabinet/wallet" class="mt-4 inline-block bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded">
-            Пополнить баланс
-        </a>
+<div class="card">
+    <div class="card-header">
+        <span>Текущий баланс</span>
     </div>
+    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;">
+        <div class="stat-box">
+            <div class="stat-label">Баланс</div>
+            <div class="stat-value">₽ 1,500.50</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Кредитный лимит</div>
+            <div class="stat-value">₽ 5,000</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Доступно</div>
+            <div class="stat-value">₽ 6,500.50</div>
+        </div>
+    </div>
+    <a href="/cabinet/wallet" class="button-primary" style="margin-top: 16px;">Пополнить баланс</a>
+</div>
 
-    <!-- Recent Generations -->
-    <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
-        <h2 class="text-xl font-semibold mb-4">Недавние задачи</h2>
-        <table class="w-full text-sm">
+<div class="card">
+    <div class="card-header">Недавние задачи</div>
+    <div class="table-container">
+        <table>
             <thead>
-                <tr class="border-b border-gray-700">
-                    <th class="text-left py-2">ID</th>
+                <tr>
+                    <th>ID</th>
                     <th>Модель</th>
                     <th>Статус</th>
                     <th>Дата</th>
@@ -40,15 +38,15 @@
             </thead>
             <tbody>
                 {% for gen in recent_generations %}
-                <tr class="border-b border-gray-700 hover:bg-gray-700">
-                    <td class="py-2">{{ gen.id[:8] }}</td>
+                <tr>
+                    <td>{{ gen.id[:8] }}</td>
                     <td>{{ gen.model }}</td>
                     <td>
-                        <span class="px-2 py-1 rounded text-xs
-                            {% if gen.status == 'completed' %}bg-green-900 text-green-200
-                            {% elif gen.status == 'failed' %}bg-red-900 text-red-200
-                            {% elif gen.status == 'processing' %}bg-yellow-900 text-yellow-200
-                            {% else %}bg-gray-700 text-gray-200{% endif %}">
+                        <span class="badge
+                            {% if gen.status == 'completed' %}badge-success
+                            {% elif gen.status == 'failed' %}badge-error
+                            {% elif gen.status == 'processing' %}badge-processing
+                            {% else %}badge-warning{% endif %}">
                             {{ gen.status }}
                         </span>
                     </td>
@@ -57,9 +55,8 @@
                 {% endfor %}
             </tbody>
         </table>
-        <a href="/cabinet/generations" class="mt-4 text-purple-400 hover:text-purple-300">
-            Посмотреть все задачи →
-        </a>
     </div>
+    <a href="/cabinet/generations" style="color: var(--purple-soft); margin-top: 12px; display: inline-block;">Посмотреть все задачи →</a>
 </div>
 {% endblock %}
+

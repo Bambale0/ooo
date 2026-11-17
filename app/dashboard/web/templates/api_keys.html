@@ -3,43 +3,51 @@
 {% block title %}API-ключи{% endblock %}
 
 {% block content %}
-<div class="space-y-6">
-    <!-- Create Key Form -->
-    <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
-        <h2 class="text-xl font-semibold mb-4">Создать новый ключ</h2>
-        <form method="post" action="/cabinet/api-keys/create" class="space-y-4">
-            <div>
-                <label class="block text-sm mb-2">Имя ключа</label>
-                <input type="text" name="name" required class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white" placeholder="e.g., Production Web App">
-            </div>
-            <button type="submit" class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded">
-                Создать ключ
-            </button>
-        </form>
-    </div>
-
-    <!-- API Keys List -->
-    <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
-        <h2 class="text-xl font-semibold mb-4">Ваши ключи</h2>
-        <div class="space-y-4">
-            {% for key in api_keys %}
-            <div class="bg-gray-700 rounded p-4 border border-gray-600">
-                <div class="flex justify-between items-start mb-2">
-                    <div>
-                        <p class="font-semibold">{{ key.name }}</p>
-                        <p class="text-gray-400 text-sm">{{ key.key_prefix }}......</p>
-                    </div>
-                    <span class="px-2 py-1 rounded text-xs {% if key.is_active %}bg-green-900 text-green-200{% else %}bg-red-900 text-red-200{% endif %}">
-                        {% if key.is_active %}Активен{% else %}Неактивен{% endif %}
-                    </span>
-                </div>
-                <p class="text-gray-400 text-sm mb-3">Создан: {{ key.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
-                <button hx-delete="/api/v1/dashboard/api-keys/{{ key.id }}" class="text-red-400 hover:text-red-300 text-sm">
-                    Деактивировать
-                </button>
-            </div>
-            {% endfor %}
+<div class="card">
+    <div class="card-header">Создать новый ключ</div>
+    <form method="post" action="/cabinet/api-keys/create">
+        <div class="form-group">
+            <label>Имя ключа</label>
+            <input type="text" name="name" required class="form-control" placeholder="e.g., Production Web App">
         </div>
+        <button type="submit" class="button-primary">Создать ключ</button>
+    </form>
+</div>
+
+<div class="card">
+    <div class="card-header">Ваши ключи</div>
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Имя</th>
+                    <th>Префикс</th>
+                    <th>Статус</th>
+                    <th>Создан</th>
+                    <th>Действие</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for key in api_keys %}
+                <tr>
+                    <td>{{ key.name }}</td>
+                    <td style="font-family: ui-monospace, monospace;">{{ key.key_prefix }}......</td>
+                    <td>
+                        <span class="badge {% if key.is_active %}badge-success{% else %}badge-error{% endif %}">
+                            {% if key.is_active %}Активен{% else %}Неактивен{% endif %}
+                        </span>
+                    </td>
+                    <td>{{ key.created_at.strftime('%Y-%m-%d') }}</td>
+                    <td>
+                        <button hx-delete="/api/v1/dashboard/api-keys/{{ key.id }}" class="button-danger">
+                            Деактивировать
+                        </button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 {% endblock %}
+
