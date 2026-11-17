@@ -312,3 +312,8 @@ input::placeholder { color: var(--muted); }
   .catalog-table table{min-width:0}
   .catalog-summary,.docs-quicklinks{break-inside:avoid}
 }
+
+.catalog-rule{padding:16px 18px;margin:8px 0 22px;background:#191424;
+  border:1px solid #5b417f;border-left:3px solid var(--purple);border-radius:10px}
+.catalog-rule strong{display:block;font-size:13px;color:#e9d8ff}
+.catalog-rule p{margin:8px 0 0;font-size:12px;line-height:1.7;color:var(--soft)}
