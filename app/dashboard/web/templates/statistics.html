@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+
+{% block title %}Статистика{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
+        <h2 class="text-xl font-semibold mb-4">Статистика за последние 30 дней</h2>
+        <div class="bg-gray-700 p-4 rounded text-gray-400">
+            Графики и детальная статистика будут загружены здесь.
+            <br>
+            Всего задач: {{ total_generations }}
+        </div>
+    </div>
+</div>
+{% endblock %}

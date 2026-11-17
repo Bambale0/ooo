@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}Кошелёк{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Top-up Form -->
+    <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
+        <h2 class="text-xl font-semibold mb-4">Пополнить баланс</h2>
+        <form method="post" action="/cabinet/wallet/topup" class="space-y-4">
+            <div>
+                <label class="block text-sm mb-2">Сумма (₽)</label>
+                <input type="number" name="amount" step="0.01" min="100" required class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white" placeholder="1000">
+            </div>
+            <div>
+                <label class="block text-sm mb-2">Способ оплаты</label>
+                <select name="payment_method" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white">
+                    <option value="lava_top">Lava.top (карта, СБП)</option>
+                    <option value="crypto_pay">Crypto Pay</option>
+                </select>
+            </div>
+            <button type="submit" class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded">
+                Перейти к оплате
+            </button>
+        </form>
+    </div>
+
+    <!-- Recent Transactions -->
+    <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
+        <h2 class="text-xl font-semibold mb-4">История операций</h2>
+        <table class="w-full text-sm">
+            <thead>
+                <tr class="border-b border-gray-700">
+                    <th class="text-left py-2">Тип</th>
+                    <th>Сумма</th>
+                    <th>Баланс после</th>
+                    <th>Дата</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for entry in ledger_entries %}
+                <tr class="border-b border-gray-700">
+                    <td class="py-2">{{ entry.operation_type }}</td>
+                    <td class="text-gray-400">₽ {{ entry.amount_rub }}</td>
+                    <td>₽ {{ entry.balance_after_rub }}</td>
+                    <td>{{ entry.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+
+{% block title %}Генерации{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Filters -->
+    <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+        <form method="get" class="flex items-center space-x-4">
+            <select name="status" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white">
+                <option value="">Все статусы</option>
+                <option value="completed" {% if status == 'completed' %}selected{% endif %}>Завершено</option>
+                <option value="processing" {% if status == 'processing' %}selected{% endif %}>Обработка</option>
+                <option value="failed" {% if status == 'failed' %}selected{% endif %}>Ошибка</option>
+            </select>
+            <button type="submit" class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded">
+                Фильтр
+            </button>
+        </form>
+    </div>
+
+    <!-- Generations Table -->
+    <div class="bg-gray-800 rounded-lg p-6 border border-gray-700 overflow-x-auto">
+        <table class="w-full text-sm">
+            <thead>
+                <tr class="border-b border-gray-700">
+                    <th class="text-left py-3">ID</th>
+                    <th>Модель</th>
+                    <th>Режим</th>
+                    <th>Статус</th>
+                    <th>Стоимость</th>
+                    <th>Дата</th>
+                    <th>Действие</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for gen in generations %}
+                <tr class="border-b border-gray-700 hover:bg-gray-700">
+                    <td class="py-3">{{ gen.id[:8] }}</td>
+                    <td>{{ gen.model }}</td>
+                    <td>{{ gen.mode or '-' }}</td>
+                    <td>
+                        <span class="px-2 py-1 rounded text-xs
+                            {% if gen.status == 'completed' %}bg-green-900 text-green-200
+                            {% elif gen.status == 'failed' %}bg-red-900 text-red-200
+                            {% elif gen.status == 'processing' %}bg-yellow-900 text-yellow-200
+                            {% else %}bg-gray-700 text-gray-200{% endif %}">
+                            {{ gen.status }}
+                        </span>
+                    </td>
+                    <td>₽ {{ gen.cost_rub }}</td>
+                    <td>{{ gen.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                    <td>
+                        <a href="/cabinet/generations/{{ gen.id }}" class="text-purple-400 hover:text-purple-300">
+                            Подробно
+                        </a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Pagination -->
+    {% if total_pages > 1 %}
+    <div class="flex justify-center space-x-2">
+        {% for p in range(1, total_pages + 1) %}
+        <a href="?page={{ p }}" class="px-3 py-2 rounded {% if p == page %}bg-purple-600{% else %}bg-gray-700 hover:bg-gray-600{% endif %}">
+            {{ p }}
+        </a>
+        {% endfor %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
