@@ -7,10 +7,10 @@ Following API design best practices:
 - Filter/sort parameters
 """
 
+import re
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-import re
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -20,10 +20,9 @@ from pydantic import BaseModel, Field, field_validator
 
 def _validate_payment_email(value: str | None) -> str | None:
     # EmailStr requires an optional dependency not present in the pinned production lock.
-    if value is not None and not re.fullmatch(r"[^@\\s]+@[^@\\s]+\\.[^@\\s]+", value):
+    if value is not None and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value):
         raise ValueError("invalid_payment_email")
     return value
-
 
 
 class ProfileRead(BaseModel):
