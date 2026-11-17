@@ -68,13 +68,10 @@ def _check_write(request: Request, session_id: str, csrf: str) -> None:
 
 
 async def _page_items(db: DbSession, statement, page: int) -> tuple[list, int]:
-    conditions = statement._where_criteria
-    # Reuse exactly the filtered FROM/WHERE of the main query. Callers supply
-    # single-entity select() statements to prevent ambiguous join counts.
-    selected = statement.column_descriptions[0]["entity"]
-    total = (
-        await db.execute(select(func.count()).select_from(selected).where(*conditions))
-    ).scalar_one()
+    # Counting the filtered subquery avoids SQLAlchemy private internals and
+    # preserves every tenant and status predicate of the displayed result set.
+    count_query = select(func.count()).select_from(statement.order_by(None).subquery())
+    total = (await db.execute(count_query)).scalar_one()
     rows = (await db.execute(statement.limit(_PAGE_SIZE).offset((page - 1) * _PAGE_SIZE))).scalars().all()
     return list(rows), total
 
