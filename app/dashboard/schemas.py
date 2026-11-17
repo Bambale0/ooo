@@ -10,11 +10,20 @@ Following API design best practices:
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
+import re
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 # ==================== Profile & Settings ====================
+
+
+def _validate_payment_email(value: str | None) -> str | None:
+    # EmailStr requires an optional dependency not present in the pinned production lock.
+    if value is not None and not re.fullmatch(r"[^@\\s]+@[^@\\s]+\\.[^@\\s]+", value):
+        raise ValueError("invalid_payment_email")
+    return value
+
 
 
 class ProfileRead(BaseModel):
@@ -23,10 +32,15 @@ class ProfileRead(BaseModel):
     partner_id: str
     company_name: str
     project_name: str
-    payment_email: EmailStr | None
+    payment_email: str | None
     status: str
     is_admin: bool
     created_at: datetime
+
+    @field_validator("payment_email")
+    @classmethod
+    def validate_payment_email(cls, value: str | None) -> str | None:
+        return _validate_payment_email(value)
 
     model_config = {"from_attributes": True}
 
@@ -34,9 +48,14 @@ class ProfileRead(BaseModel):
 class ProfileUpdate(BaseModel):
     """Updateable partner profile fields."""
 
-    payment_email: EmailStr | None = Field(
+    payment_email: str | None = Field(
         default=None, description="Email for payment notifications and invoices"
     )
+
+    @field_validator("payment_email")
+    @classmethod
+    def validate_payment_email(cls, value: str | None) -> str | None:
+        return _validate_payment_email(value)
 
     model_config = {"extra": "forbid"}
 
