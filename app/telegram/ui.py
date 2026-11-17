@@ -64,7 +64,10 @@ def home_keyboard(*, admin: bool = False) -> InlineKeyboardMarkup:
     if admin:
         actions.append(("🛡 Администратор", "admin_menu"))
     for label, callback in actions:
-        builder.button(text=label, callback_data=callback, style="primary")
+        if callback.startswith("https://"):
+            builder.button(text=label, url=callback, style="primary")
+        else:
+            builder.button(text=label, callback_data=callback, style="primary")
     builder.adjust(1, 1, 2, 2, 2, *([1] if admin else []))
     return builder.as_markup()
 
