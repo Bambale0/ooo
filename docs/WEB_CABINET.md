@@ -188,9 +188,19 @@ production. Если все три настройки отсутствуют, Te
 GitHub secrets сами по себе не попадают в runtime: текущий deploy сохраняет
 серверный `.env`. Не добавлять фиктивные credentials ради отображения кнопки.
 
-Порядок выкладки: зелёный CI → миграция `20261117_0043` через
-`alembic upgrade head` → релиз → настройка всех трёх env → пересоздание app с
-новой конфигурацией → smoke. Стандартный deploy применяет миграции до app.
+Порядок выкладки: зелёный CI → миграция `20261117_0043` → релиз → настройка всех
+трёх env → пересоздание app с новой конфигурацией → smoke.
+
+На существующем production с `compose.host.yml` code-only deploy намеренно
+**не применяет миграции**: `alembic current --check-heads` останавливает выпуск
+до замены контейнеров. Сначала запустить `Production Schema Migration`
+(`production-schema-migration.yml`) с `release_sha`, равным точному текущему
+SHA `main`, и `telegram_bot_username=apineurobrobot` (подтвердить по runtime).
+Workflow создаёт зашифрованную резервную копию, проверяет checksum, расшифровку
+и PostgreSQL TOC, затем выполняет `alembic upgrade head`, `current --check-heads`
+и `alembic check`. После зелёного результата повторить остановившийся deploy.
+В standalone-топологии миграции выполняет сам deploy до замены app.
+
 Миграция только добавляет таблицу; Telegram и финансовые записи не меняются.
 Откат приложения возможен с сохранением таблицы. Downgrade запрещён, если
 identity уже используется. Чтобы выключить Яндекс, удалить все три env и
