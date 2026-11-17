@@ -60,7 +60,10 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, land
             f'<a href="{docs_url}#models">Как выбрать модель <span aria-hidden="true">→</span></a></aside>'
         )
     else:
-        headline = t("Документация.<br><span>От идеи до API.</span>", "Documentation.<br><span>From idea to API.</span>")
+        headline = t(
+            "Документация.<br><span>От идеи до API.</span>",
+            "Documentation.<br><span>From idea to API.</span>",
+        )
         description = t(
             "Проверенные примеры запросов, параметры, ошибки и получение результатов. "
             "Работайте с моделями через единый API.",
