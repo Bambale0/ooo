@@ -145,7 +145,10 @@ async def _post(browser, csrf, action, **fields):
 async def test_portal_sections_and_assets_are_real_and_private(portal_browser, portal_accounts):
     own, _, _, _, raw_secret = portal_accounts
     assert (await portal_browser.get("/cabinet/export/logs")).status_code == 401
-    assert (await portal_browser.post("/cabinet/action", data={"action": "create_key", "csrf": "x"})).status_code == 401
+    without_login = await portal_browser.post(
+        "/cabinet/action", data={"action": "create_key", "csrf": "x"}
+    )
+    assert without_login.status_code == 401
     csrf = await _authenticate(portal_browser, own)
     assert len(csrf) == 64
     for section, expected in (
