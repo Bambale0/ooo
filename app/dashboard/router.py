@@ -36,7 +36,6 @@ from app.dashboard.schemas_extended import (
 from app.generations.models import Generation
 from app.infrastructure.config import get_settings
 from app.infrastructure.security import create_api_key, encrypt_secret
-from app.payments.models import PaymentInvoice
 from app.webhooks.security import validate_public_webhook_url
 
 router = APIRouter(prefix="/dashboard", tags=["Partner Dashboard"])
