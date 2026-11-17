@@ -15,14 +15,12 @@ from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 from redis.exceptions import RedisError
-from sqlalchemy import func, select
+from sqlalchemy import select
 
-from app.accounts.models import ApiKey, Partner
+from app.accounts.models import Partner
 from app.api.dependencies import DbSession
-from app.billing.models import LedgerEntry
-from app.generations.models import Generation
+from app.dashboard.portal import router as portal_router
 from app.infrastructure.config import get_settings
-from app.payments.models import PaymentInvoice
 
 router = APIRouter(tags=["Partner web cabinet"])
 _SESSION_COOKIE = "__Host-neironych_session"
@@ -270,6 +268,4 @@ async def logout(request: Request, db: DbSession, csrf: str = Form(...)) -> Redi
 
 
 # Keep the Telegram session router as the single mounted entrypoint.
-from app.dashboard.portal import router as portal_router
-
 router.include_router(portal_router)
