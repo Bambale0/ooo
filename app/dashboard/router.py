@@ -1,4 +1,4 @@
-﻿"""Partner Dashboard API Router.
+"""Partner Dashboard API Router.
 
 Following FastAPI and REST API best practices:
 - Resource-oriented URLs
