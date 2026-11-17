@@ -108,7 +108,10 @@ def render_catalog(rows: list[tuple[Model, PartnerPrice]], fx: Decimal) -> str:
             f'<code class="catalog-model-id">{_escape(model.slug)}</code>'
         )
         variant_html = f'<strong>{_escape(mode)}</strong><span>{_escape(price.resolution)}</span>'
-        money_html = f'<strong class="price-number">{exact_price} ₽</strong><span>{_escape(_unit(price.billing_unit))}</span>'
+        money_html = (
+            f'<strong class="price-number">{exact_price} ₽</strong>'
+            f'<span>{_escape(_unit(price.billing_unit))}</span>'
+        )
         link_html = f'<a class="catalog-docs-link" href="/guide?lang=ru#{section}">Документация ↗</a>'
         entries.append(
             f'<tr data-kind="{kind}" data-name="{_escape(model.name.casefold() + " " + model.slug.casefold())}" '
