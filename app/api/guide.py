@@ -73,7 +73,7 @@ async def _public_connection_guide(db: DbSession, lang: str) -> HTMLResponse:
                     {"llm": "Текст", "image": "Изображения", "video": "Видео"}.get(
                         model.modality, model.modality
                     ) if ru else model.modality,
-                    "/v1/" + MODELS[model.slug]["endpoint"].lstrip("/"),
+                    MODELS[model.slug]["endpoint"],
                 )
                 for model in model_rows
             ],
