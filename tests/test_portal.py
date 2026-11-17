@@ -179,6 +179,9 @@ async def test_key_creation_is_one_time_and_revoke_tenant_scoped(
     csrf = await _authenticate(portal_browser, own)
     denied = await _post(portal_browser, csrf, "revoke_key", key_id=foreign_key.id)
     assert denied.status_code == 404
+    # A handled 404 rolls back the request transaction; reload the ORM object
+    # explicitly instead of triggering an implicit async lazy DB round-trip.
+    await db_session.refresh(foreign_key)
     assert foreign_key.is_active
 
     created = await _post(portal_browser, csrf, "create_key", name="Mobile backend")
