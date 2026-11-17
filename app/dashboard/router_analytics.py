@@ -15,7 +15,7 @@ from app.dashboard.schemas_extended import (
 )
 from app.generations.models import Generation
 
-router_analytics = APIRouter(prefix="/v1/dashboard", tags=["Partner Dashboard - Analytics"])
+router_analytics = APIRouter(prefix="/dashboard", tags=["Partner Dashboard - Analytics"])
 
 
 @router_analytics.get(
@@ -56,8 +56,8 @@ async def get_analytics(
             func.count(Generation.id).label("total_count"),
             func.sum(case((Generation.status == "completed", 1), else_=0)).label("successful_count"),
             func.sum(case((Generation.status.in_(["failed", "cancelled"]), 1), else_=0)).label("failed_count"),
-            func.sum(Generation.cost_rub).label("total_cost"),
-            func.coalesce(func.sum(Generation.duration_seconds), 0).label("total_seconds"),
+            func.sum(Generation.actual_charge_rub).label("total_cost"),
+            func.coalesce(func.sum(Generation.duration_seconds).filter(Generation.status == "completed"), 0).label("total_seconds"),
         )
         .where(
             and_(
@@ -88,10 +88,10 @@ async def get_analytics(
     # Query model stats
     model_query = (
         select(
-            Generation.model,
+            Generation.model_slug,
             func.count(Generation.id).label("count"),
-            func.sum(Generation.cost_rub).label("total_cost"),
-            func.avg(Generation.cost_rub).label("avg_cost"),
+            func.sum(Generation.actual_charge_rub).label("total_cost"),
+            func.avg(Generation.actual_charge_rub).label("avg_cost"),
         )
         .where(
             and_(
@@ -100,8 +100,8 @@ async def get_analytics(
                 Generation.created_at <= to_date,
             )
         )
-        .group_by(Generation.model)
-        .order_by(func.sum(Generation.cost_rub).desc())
+        .group_by(Generation.model_slug)
+        .order_by(func.sum(Generation.actual_charge_rub).desc())
     )
 
     model_result = await db.execute(model_query)
@@ -109,7 +109,7 @@ async def get_analytics(
 
     model_stats = [
         ModelStats(
-            model=row.model,
+            model=row.model_slug,
             generations_count=row.count,
             total_cost_rub=abs(row.total_cost or Decimal("0.00")),
             average_cost_rub=abs(row.avg_cost or Decimal("0.00")),
