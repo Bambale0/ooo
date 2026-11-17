@@ -57,7 +57,9 @@ async def get_analytics(
             func.sum(case((Generation.status == "completed", 1), else_=0)).label("successful_count"),
             func.sum(case((Generation.status.in_(["failed", "cancelled"]), 1), else_=0)).label("failed_count"),
             func.sum(Generation.actual_charge_rub).label("total_cost"),
-            func.coalesce(func.sum(Generation.duration_seconds).filter(Generation.status == "completed"), 0).label("total_seconds"),
+            func.coalesce(
+                func.sum(Generation.duration_seconds).filter(Generation.status == "completed"), 0
+            ).label("total_seconds"),
         )
         .where(
             and_(
