@@ -50,6 +50,27 @@ EXAMPLES = {
             "response_format": "b64_json",
         },
     ),
+    "image-seedream55": (
+        "images/generations",
+        {
+            "model": "seedream-5.5",
+            "prompt": "A cinematic landscape at sunrise",
+            "resolution": "2k",
+            "aspect_ratio": "16:9",
+            "n": 1,
+            "response_format": "b64_json",
+        },
+    ),
+    "image-seedream55-edit": (
+        "images/edits",
+        {
+            "model": "seedream-5.5",
+            "prompt": "Change the background to blue",
+            "images": [{"image_url": "https://media.example.com/reference.png"}],
+            "resolution": "2k",
+            "n": 1,
+        },
+    ),
     "image-seedream-pro": (
         "images/generations",
         {
@@ -103,6 +124,26 @@ EXAMPLES = {
             "quality": "xhigh",
             "n": 1,
             "response_format": "b64_json",
+        },
+    ),
+    "video-flash": (
+        "videos/generations",
+        {
+            "model": "seedance-2.5-flash",
+            "prompt": "A train approaching through the mist",
+            "duration": 5,
+            "resolution": "720p",
+            "aspect_ratio": "16:9",
+        },
+    ),
+    "video-flash-edit": (
+        "videos/generations",
+        {
+            "model": "seedance-2.5-flash",
+            "prompt": "Turn the daylight into sunset",
+            "omni_reference_task_type": "edit",
+            "reference_videos": [{"url": "https://media.example.com/source.mp4"}],
+            "resolution": "720p",
         },
     ),
     "video-reference": (
@@ -171,6 +212,7 @@ EXAMPLES = {
 
 # Public contract limits, deliberately independent of procurement/pricing metadata.
 VIDEO_LIMITS = (
+    ("seedance-2.5-flash", "4–30", "480p, 720p", "10 / 5 / 5 / 20"),
     ("seedance-2.5", "4–30", "480p, 720p, 1080p", "30 / 10 / 10 / 50"),
     ("seedance-2.5-self-developed-nsfw", "4–30", "720p, 1080p", "30 / 10 / 10 / 50"),
     ("seedance-2.0", "4–15", "480p, 720p, 1080p, 4k", "9 / 3 / 3 / 12"),
@@ -429,6 +471,15 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
     body += example("image") + example("image-edit")
     body += "<h3>Nano Banana 2 · 4K</h3>" + example("image-nano-2")
     body += "<h3>Nano Banana Pro · 4K</h3>" + example("image-nano-pro")
+    body += "<h3>Seedream 5.5</h3>" + example("image-seedream55") + example("image-seedream55-edit")
+    body += p(
+        "Seedream 5.5: 1k/2k, n=1, PNG, 11 пропорций. До 8 изображений-референсов в одном запросе; "
+        "каждый референс тарифицируется отдельно. Поддерживаются JSON images и multipart image[]. "
+        "Финальный тариф смотрите в /pricing, доступность — в /v1/models.",
+        "Seedream 5.5: 1k/2k, n=1, PNG, 11 aspect ratios. Up to 8 reference images per request; "
+        "each input image has a separate retail fee. JSON images and multipart image[] are supported. "
+        "Check /pricing for retail rates and /v1/models for availability.",
+    )
     body += "<h3>Seedream 5.0 Pro</h3>" + example("image-seedream-pro") + example("image-seedream-pro-edit")
     body += p(
         "Seedream 5.0 Pro: 1k или 2k (по умолчанию), только n=1; JPEG. "
@@ -652,6 +703,15 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
         "Wan: omit aspect_ratio with input frames. Total reference_videos duration is at most 15 seconds, "
         "and output plus input videos must not exceed 30 seconds. For example, 15 seconds of reference video "
         "leaves at most 15 seconds for output. Request format validation does not replace media validation.",
+    )
+    body += "<h3>Seedance 2.5 Flash</h3>" + example("video-flash") + example("video-flash-edit")
+    body += p(
+        "Seedance Flash: 4–30 секунд, 480p/720p, до 10 фото, 5 видео и 5 аудио (всего 20). "
+        "Входные видео тарифицируются отдельно по видеотарифу, draft/1080p недоступны. "
+        "Для edit не задавайте duration и aspect_ratio; проверяйте доступность в /v1/models.",
+        "Seedance Flash: 4–30 seconds, 480p/720p, up to 10 images, 5 videos and 5 audios "
+        "(20 total). Video references use a separate video-input rate; draft/1080p are unavailable. "
+        "For edit omit duration and aspect_ratio. Check /v1/models for availability.",
     )
     body += "<h3>Seedance 2.5 · " + t("референс", "reference") + "</h3>" + example("video-reference")
     body += p(

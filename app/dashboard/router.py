@@ -10,12 +10,11 @@ Following FastAPI and REST API best practices:
 - Async/await for all DB operations
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import and_, func, or_, select
-from sqlalchemy.orm import selectinload
+from sqlalchemy import and_, func, select
 
 from app.accounts.models import ApiKey, Partner
 from app.api.dependencies import DbSession, get_current_partner
@@ -23,7 +22,6 @@ from app.billing.models import LedgerEntry
 from app.dashboard.schemas import (
     BalanceDetailRead,
     LedgerEntryRead,
-    LedgerQueryParams,
     LedgerResponse,
     ProfileRead,
     ProfileUpdate,
@@ -34,23 +32,13 @@ from app.dashboard.schemas_extended import (
     ApiKeyCreated,
     ApiKeyRead,
     ApiKeyWebhookUpdate,
-    AnalyticsQueryParams,
-    AnalyticsResponse,
-    DailyStats,
-    GenerationListItem,
-    GenerationsQueryParams,
-    GenerationsResponse,
-    InvoiceRead,
-    InvoicesQueryParams,
-    InvoicesResponse,
-    ModelStats,
 )
 from app.generations.models import Generation
-from app.infrastructure.security import create_api_key, encrypt_secret, hash_secret
-from app.payments.models import PaymentInvoice
+from app.infrastructure.config import get_settings
+from app.infrastructure.security import create_api_key, encrypt_secret
 from app.webhooks.security import validate_public_webhook_url
 
-router = APIRouter(prefix="/v1/dashboard", tags=["Partner Dashboard"])
+router = APIRouter(prefix="/dashboard", tags=["Partner Dashboard"])
 
 
 # ==================== Profile & Settings ====================
@@ -60,7 +48,10 @@ router = APIRouter(prefix="/v1/dashboard", tags=["Partner Dashboard"])
     "/profile",
     response_model=ProfileRead,
     summary="Get partner profile",
-    description="Returns the authenticated partner's profile information including company name, project name, and account status.",
+    description=(
+        "Returns the authenticated partner\'s profile information including "
+        "company name, project name, and account status."
+    ),
 )
 async def get_profile(
     partner: Partner = Depends(get_current_partner),
@@ -215,8 +206,8 @@ async def get_usage_summary(
     # Get counts by status
     stats_query = select(
         func.count(Generation.id).label("total"),
-        func.sum(func.cast(Generation.status == "completed", func.Integer)).label("successful"),
-        func.sum(func.cast(Generation.status.in_(["failed", "cancelled"]), func.Integer)).label("failed"),
+        func.count(Generation.id).filter(Generation.status == "completed").label("successful"),
+        func.count(Generation.id).filter(Generation.status.in_(["failed", "cancelled"])).label("failed"),
     ).where(and_(*conditions))
 
     stats_result = (await db.execute(stats_query)).one()
@@ -353,19 +344,21 @@ async def update_api_key_webhook(
     if not api_key:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="api_key_not_found")
 
-    # Validate webhook URL if provided
-    if payload.webhook_url:
-        validate_public_webhook_url(payload.webhook_url)
+    # PATCH semantics: an omitted URL must not disable an existing webhook.
+    if "webhook_url" in payload.model_fields_set:
+        if payload.webhook_url:
+            await validate_public_webhook_url(payload.webhook_url)
         api_key.webhook_url = payload.webhook_url
-    else:
-        api_key.webhook_url = None
+        if payload.webhook_url is None:
+            api_key.webhook_secret_encrypted = None
 
-    # Update webhook secret if provided
-    if payload.webhook_secret:
-        api_key.webhook_secret_encrypted = encrypt_secret(payload.webhook_secret)
-    elif payload.webhook_url is None:
-        # Clear secret when disabling webhooks
-        api_key.webhook_secret_encrypted = None
+    if payload.webhook_secret is not None:
+        if not api_key.webhook_url:
+            raise HTTPException(status_code=422, detail="webhook_url_required")
+        master_key = get_settings().provider_credentials_master_key
+        if not master_key:
+            raise HTTPException(status_code=503, detail="webhook_secret_configuration_unavailable")
+        api_key.webhook_secret_encrypted = encrypt_secret(payload.webhook_secret, master_key)
 
     await db.flush()
     await db.refresh(api_key)

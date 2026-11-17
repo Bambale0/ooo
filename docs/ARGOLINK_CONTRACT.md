@@ -10,6 +10,49 @@ documented below on 2026-10-01. The reviewed contracts contain **42 models:
 24 text, 9 image, 9 video**. Procurement data lives in `app/contracts/catalog.json`;
 retail prices and model availability are configured by the operator in the database.
 
+## Candidate additions — 2026-11-16 (draft, not yet enabled)
+
+Verified against the ArgoLink public catalog revision `49f58eaa02e8be8e`
+and model cards on 2026-11-16:
+
+| Model ID | Native endpoint | Procurement |
+| --- | --- | --- |
+| `seedance-2.5-flash` | `POST /v1/videos/generations` | $0.0572/sec at 480p; $0.129/sec at 720p |
+| `seedance-2.5-flash` with video input | same | $0.0351/sec at 480p; $0.0792/sec at 720p, over all billed output + input video seconds |
+| `seedream-5.5` | `POST /v1/images/generations`, `POST /v1/images/edits` | $0.02 per 1K output, $0.035 per 2K output, **plus $0.008 per reference image** |
+
+Seedance 2.5 Flash supports 4–30 seconds, up to 10 reference images / 5 videos
+/ 5 audio clips (combined 20), audio-only references, first/last frames, video
+edit, and silent output. Its first-frame mode requires `adaptive` ratio.
+Editing consumes the source duration as both output and billable video input;
+draft and 1080p options are not supported. Video-input price is stored as its
+own mode (`video_input`) so a discounted procurement path is not mistaken
+for a default video tariff.
+
+Seedream 5.5 supports 1K/2K, 11 ratios, exactly one PNG output, up to
+8 reference images / 48MB total, HTTPS or data-URL references for JSON edits,
+and multipart edits. Its separate `reference_image` tariff has unit
+`image_reference` and resolution `default`, applied once per supplied
+reference during quote **and** final usage settlement. Partner retail prices
+for all resolutions and reference-image add-ons must be configured through
+the existing authenticated pricing administration. Do not derive an
+unapproved resale markup from the provider procurement rates.
+
+Both models are registered only as **draft** via
+`python -m app.catalog.seed_20261116 --apply` after the release is deployed.
+The command adds provider capability rows and does not set partner retail
+prices, claim a live successful smoke test, or expose these models publicly.
+Before enabling them, configure complete retail price schedules, verify
+reference costs and settlement against one live ArgoLink generation for each
+model (including Seedream edits and Flash video input), and use the standard
+documented admin enable gate. Never bypass the gate by directly setting
+model status.
+
+Sources:
+- https://argolink.io/en/models/seedance-2.5-flash
+- https://argolink.io/ru/models/seedream-5.5
+- https://argolink.io/api/catalog/v1/models?page_size=100
+
 ## Native routes
 
 | Route | Behavior |

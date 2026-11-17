@@ -7,6 +7,8 @@ from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from app.infrastructure.config import get_settings
+
 logger = logging.getLogger(__name__)
 MSK = ZoneInfo("Europe/Moscow")
 
@@ -50,6 +52,7 @@ def home_keyboard(*, admin: bool = False) -> InlineKeyboardMarkup:
     actions = [
         ("🎬 Бесплатные видеотесты", "trials"),
         ("🤖 Заказать разработку бота", "dev:start"),
+        ("🌐 Веб-кабинет", get_settings().public_api_base_url.rstrip("/") + "/cabinet"),
         ("💳 Баланс", "balance"),
         ("🔑 API-ключи", "api_keys:0"),
         ("🧾 История", "history:0"),
@@ -61,7 +64,10 @@ def home_keyboard(*, admin: bool = False) -> InlineKeyboardMarkup:
     if admin:
         actions.append(("🛡 Администратор", "admin_menu"))
     for label, callback in actions:
-        builder.button(text=label, callback_data=callback, style="primary")
+        if callback.startswith("https://"):
+            builder.button(text=label, url=callback, style="primary")
+        else:
+            builder.button(text=label, callback_data=callback, style="primary")
     builder.adjust(1, 1, 2, 2, 2, *([1] if admin else []))
     return builder.as_markup()
 

@@ -13,7 +13,7 @@ SEEDANCE_MODELS = {"seedance-2.0", "seedance-2.0-mini", "seedance-2.0-fast", "se
 # 30 reference images and adaptive-only ratios with a start frame. Membership is
 # what decides the profile, never an exact slug, so a new variant cannot silently
 # inherit the narrower 2.0 limits.
-SEEDANCE_25_FAMILY = {"seedance-2.5", "seedance-2.5-self-developed-nsfw"}
+SEEDANCE_25_FAMILY = {"seedance-2.5", "seedance-2.5-self-developed-nsfw", "seedance-2.5-flash"}
 SEEDANCE_20_4K_FAMILY = {"seedance-2.0", "seedance-2.0-self-developed-nsfw"}
 SEEDANCE_MODELS |= SEEDANCE_25_FAMILY | SEEDANCE_20_4K_FAMILY
 REVIEWED_NATIVE_MODELS = {"kling-4.0", "minimax-h3", "wan-3", "wan-3-prime"}
@@ -62,7 +62,15 @@ def validate_video_request(payload: ProviderGenerationRequest) -> None:
         ratios = {"adaptive"} if payload.model_slug in SEEDANCE_25_FAMILY else ratios | {"adaptive"}
     if payload.aspect_ratio and payload.aspect_ratio not in ratios:
         raise ValueError("unsupported_aspect_ratio")
-    max_images = (30 if payload.model_slug in SEEDANCE_25_FAMILY else 9) if seedance else 7
+    max_images = (
+        10
+        if payload.model_slug == "seedance-2.5-flash"
+        else 30
+        if payload.model_slug in SEEDANCE_25_FAMILY
+        else 9
+        if seedance
+        else 7
+    )
     if len(payload.reference_images) > max_images:
         raise ValueError("too_many_reference_images")
     if payload.start_image and payload.reference_images:
