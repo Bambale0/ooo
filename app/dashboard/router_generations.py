@@ -1,8 +1,9 @@
 """Dashboard endpoints for Generations history."""
 
 from datetime import datetime
+from decimal import Decimal
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import and_, func, select
 
 from app.accounts.models import Partner
@@ -13,7 +14,7 @@ from app.dashboard.schemas_extended import (
 )
 from app.generations.models import Generation
 
-router_generations = APIRouter(prefix="/v1/dashboard", tags=["Partner Dashboard - Generations"])
+router_generations = APIRouter(prefix="/dashboard", tags=["Partner Dashboard - Generations"])
 
 
 @router_generations.get(
@@ -65,14 +66,14 @@ async def list_generations(
         GenerationListItem(
             id=gen.id,
             status=gen.status,
-            model=gen.model,
+            model=gen.model_slug,
             mode=gen.mode,
             resolution=gen.resolution,
             duration_seconds=gen.duration_seconds,
-            cost_rub=gen.cost_rub,
+            cost_rub=gen.actual_charge_rub if gen.actual_charge_rub is not None else Decimal("0.00"),
             created_at=gen.created_at,
-            completed_at=gen.completed_at,
-            error_code=gen.error_code if gen.status in ["failed", "cancelled"] else None,
+            completed_at=gen.client_finalized_at,
+            error_code=gen.public_error_code if gen.status in ["failed", "cancelled"] else None,
         )
         for gen in generations
     ]
