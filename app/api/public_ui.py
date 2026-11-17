@@ -43,6 +43,7 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, land
             f'<a class="button primary telegram-button" href="{TELEGRAM_APPLICATION_URL}" target="_blank" '
             f'rel="noopener noreferrer">{_telegram_icon()}{t("Подать заявку", "Apply via Telegram")}</a>'
             f'<a class="button" href="{docs_url}#connect">{t("Документация", "Documentation")} ↗</a>'
+            f'<a class="button" href="/cabinet">{t("Личный кабинет", "Partner cabinet")} →</a>'
         )
         side = ""
     elif pricing:
