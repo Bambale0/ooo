@@ -175,7 +175,6 @@ class InvoiceRead(BaseModel):
     amount_rub: Decimal
     payment_method: str
     payment_url: str | None
-    external_id: str | None
     paid_at: datetime | None
     expires_at: datetime | None
     created_at: datetime
