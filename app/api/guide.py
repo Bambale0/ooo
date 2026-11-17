@@ -24,6 +24,8 @@ router = APIRouter()
 _ASSETS = {
     "brand.css": "text/css",
     "brand.js": "text/javascript",
+    "cabinet.css": "text/css",
+    "cabinet.js": "text/javascript",
     "logo-mark.svg": "image/svg+xml",
     "neuronych.webp": "image/webp",
 }
