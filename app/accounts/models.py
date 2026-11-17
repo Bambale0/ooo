@@ -72,6 +72,23 @@ class Partner(Base):
         return Decimal(self.balance_rub) + Decimal(self.credit_limit_rub or 0)
 
 
+class PartnerIdentity(Base):
+    """Additional verified login identity; the existing Partner owns all money."""
+
+    __tablename__ = "partner_identities"
+    __table_args__ = (
+        UniqueConstraint("provider", "subject", name="uq_partner_identity_subject"),
+        UniqueConstraint("partner_id", "provider", name="uq_partner_identity_provider"),
+        CheckConstraint("provider = 'yandex'", name="partner_identity_provider"),
+    )
+
+    id: Mapped[str] = uuid_pk()
+    partner_id: Mapped[str] = mapped_column(ForeignKey("partners.id"), nullable=False)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    subject: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[object] = utc_created_at()
+
+
 class PartnerCreditLimitHistory(Base):
     __tablename__ = "partner_credit_limit_history"
     __table_args__ = (

@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     admin_telegram_id: str | None = None
     telegram_bot_token: str | None = None
     telegram_bot_username: str | None = None
+    yandex_client_id: str | None = None
+    yandex_client_secret: SecretStr | None = None
+    yandex_callback_url: str | None = None
     terms_url: str | None = None
     privacy_policy_url: str | None = None
     legal_document_version: str = "2026-09-19"

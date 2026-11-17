@@ -1,12 +1,16 @@
 """Shared, progressively enhanced public UI using the existing Neironych brand."""
 
+import re
 from html import escape
 
 from fastapi.responses import HTMLResponse
 
 from app.infrastructure.config import get_settings
 
-TELEGRAM_APPLICATION_URL = "https://t.me/apineurobrobot?start=apply"
+
+def telegram_bot_url() -> str:
+    username = (get_settings().telegram_bot_username or "").lstrip("@")
+    return f"https://t.me/{username}" if re.fullmatch(r"[A-Za-z0-9_]{5,32}", username) else ""
 
 
 def _telegram_icon() -> str:
@@ -20,6 +24,18 @@ def _telegram_icon() -> str:
 
 def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, landing: bool = False) -> HTMLResponse:
     ru = lang == "ru"
+    bot_url = telegram_bot_url()
+    bot_action = (
+        f'<a class="button primary telegram-button" href="{bot_url}" target="_blank" '
+        f'rel="noopener noreferrer">{_telegram_icon()}{"Telegram-бот" if ru else "Telegram bot"}</a>'
+        if bot_url else ""
+    )
+    bot_header = (
+        f'<a class="telegram-link" href="{bot_url}" target="_blank" rel="noopener noreferrer" '
+        f'aria-label="{"Открыть Telegram-бота" if ru else "Open Telegram bot"}">{_telegram_icon()}'
+        f'<span>{"Telegram-бот" if ru else "Telegram bot"}</span></a>'
+        if bot_url else ""
+    )
 
     def t(russian, english):
         return russian if ru else english
@@ -41,8 +57,7 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, land
             "Build products with text, image and video generation. One API, clear contracts and billing in rubles.",
         )
         action = (
-            f'<a class="button primary telegram-button" href="{TELEGRAM_APPLICATION_URL}" target="_blank" '
-            f'rel="noopener noreferrer">{_telegram_icon()}{t("Подать заявку", "Apply via Telegram")}</a>'
+            f'{bot_action}'
             f'<a class="button" href="{docs_url}#connect">{t("Документация", "Documentation")} ↗</a>'
             f'<a class="button" href="{cabinet_url}">{t("Личный кабинет", "Partner cabinet")} →</a>'
         )
@@ -140,9 +155,7 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, land
         f"{t('Документация', 'Documentation')}</a>"
         f'<a href="{price_url}" {"aria-current=page" if pricing else ""}>{t("Модели и цены", "Models & pricing")}</a>'
         f'{cabinet_nav_link}</nav>'
-        f'<a class="telegram-link" href="{TELEGRAM_APPLICATION_URL}" target="_blank" rel="noopener noreferrer" '
-        f'aria-label="{t("Подать заявку через Telegram", "Apply via Telegram")}">{_telegram_icon()}'
-        f'<span>{t("Подать заявку", "Apply")}</span></a>'
+        f'{bot_header}'
         f'{language}</div></header><main id="main" tabindex="-1" class="container">'
         '<section class="hero" aria-labelledby="page-title"><div class="hero-copy">'
         f'<p class="eyebrow">{t("Нейроныч для разработчиков", "Neironych for developers")}</p>'

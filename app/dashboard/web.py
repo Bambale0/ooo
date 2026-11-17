@@ -152,6 +152,8 @@ def _document(title: str, body: str, *, login: bool = False, csrf: str = "") -> 
 
 
 def _login_page(csrf: str) -> HTMLResponse:
+    from app.dashboard.yandex import configuration_errors, configured
+
     bot = get_settings().telegram_bot_username or ""
     if not re.fullmatch(r"[A-Za-z0-9_]{5,32}", bot):
         body = (
@@ -174,7 +176,14 @@ def _login_page(csrf: str) -> HTMLResponse:
         f'<p class="hint">Нет доступа? Откройте <a href="https://t.me/{escape(bot, quote=True)}"'
         ' target="_blank" rel="noopener noreferrer">бота Нейроныч</a> '
         'и проверьте статус партнёрского аккаунта.</p>'
-        '</section>'
+        + (
+            '<form method="post" action="/cabinet/yandex/start">'
+            f'<input type="hidden" name="csrf" value="{escape(csrf, quote=True)}">'
+            '<button type="submit" class="outline">Войти с Яндекс ID</button></form>'
+            '<p class="hint">Для первого входа подключите Яндекс ID в настройках кабинета через Telegram.</p>'
+            if configured() and not configuration_errors() else ''
+        )
+        + '</section>'
     )
     return _document("Вход", body, login=True, csrf=csrf)
 
@@ -240,6 +249,9 @@ async def telegram_login(request: Request, payload: TelegramLogin, db: DbSession
     token = secrets.token_urlsafe(32)
     try:
         await _store_session(token, partner.id)
+        previous = request.cookies.get(_SESSION_COOKIE)
+        if previous:
+            await _destroy_session(previous)
     except RedisError as exc:
         raise HTTPException(503, "cabinet_session_unavailable") from exc
     response = JSONResponse({"redirect": "/cabinet"}, headers=_HEADERS)
@@ -247,6 +259,12 @@ async def telegram_login(request: Request, payload: TelegramLogin, db: DbSession
         _SESSION_COOKIE, token, max_age=_SESSION_TTL, secure=True, httponly=True, samesite="strict", path="/"
     )
     response.delete_cookie(_LOGIN_COOKIE, secure=True, httponly=True, samesite="strict", path="/")
+    from app.dashboard.yandex import _PROOF_COOKIE, telegram_proof
+
+    response.set_cookie(
+        _PROOF_COOKIE, telegram_proof(token), max_age=_AUTH_TTL,
+        secure=True, httponly=True, samesite="strict", path="/",
+    )
     return response
 
 
@@ -264,8 +282,14 @@ async def logout(request: Request, db: DbSession, csrf: str = Form(...)) -> Redi
         raise HTTPException(503, "cabinet_session_unavailable") from exc
     response = RedirectResponse("/cabinet", status_code=303, headers=_HEADERS)
     response.delete_cookie(_SESSION_COOKIE, secure=True, httponly=True, samesite="strict", path="/")
+    from app.dashboard.yandex import _PROOF_COOKIE
+
+    response.delete_cookie(_PROOF_COOKIE, secure=True, httponly=True, samesite="strict", path="/")
     return response
 
 
 # Keep the Telegram session router as the single mounted entrypoint.
+from app.dashboard.yandex import router as yandex_router  # noqa: E402
+
+router.include_router(yandex_router)
 router.include_router(portal_router)
