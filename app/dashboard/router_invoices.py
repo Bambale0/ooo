@@ -13,7 +13,7 @@ from app.dashboard.schemas_extended import (
 )
 from app.payments.models import PaymentInvoice
 
-router_invoices = APIRouter(prefix="/v1/dashboard", tags=["Partner Dashboard - Invoices"])
+router_invoices = APIRouter(prefix="/dashboard", tags=["Partner Dashboard - Invoices"])
 
 
 @router_invoices.get(
@@ -58,7 +58,20 @@ async def list_invoices(
     invoices = list(result.scalars().all())
 
     return InvoicesResponse(
-        invoices=[InvoiceRead.model_validate(inv) for inv in invoices],
+        invoices=[
+            InvoiceRead(
+                id=inv.id,
+                partner_id=inv.partner_id,
+                status=inv.status,
+                amount_rub=inv.requested_rub,
+                payment_method=inv.provider,
+                payment_url=inv.invoice_url,
+                paid_at=inv.paid_at,
+                expires_at=inv.expires_at,
+                created_at=inv.created_at,
+            )
+            for inv in invoices
+        ],
         total=total,
         limit=limit,
         offset=offset,
