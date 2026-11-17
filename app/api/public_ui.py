@@ -60,24 +60,33 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, land
             f'<a href="{docs_url}#models">Как выбрать модель <span aria-hidden="true">→</span></a></aside>'
         )
     else:
-        headline = t("Ваши идеи.<br><span>Наш API.</span>", "Your ideas.<br><span>Our API.</span>")
+        headline = t(
+            "Документация.<br><span>От идеи до API.</span>",
+            "Documentation.<br><span>From idea to API.</span>",
+        )
         description = t(
-            "Текст, изображения и видео — в вашем продукте. Всё для подключения: от первого запроса до результата.",
-            "Text, images and video in your product. Everything you need, from your first request to the result.",
+            "Проверенные примеры запросов, параметры, ошибки и получение результатов. "
+            "Работайте с моделями через единый API.",
+            "Verified request examples, parameters, errors and result retrieval. "
+            "Use models through a unified API.",
         )
         action = (
-            f'<a class="button primary" href="#connect">{t("Начать интеграцию", "Start integrating")} '
+            f'<a class="button primary" href="#connect">{t("Быстрый старт", "Quickstart")} '
             '<span aria-hidden="true">↗</span></a>'
-            f'<a class="button" href="#models">{t("Выбрать модель", "Explore models")}</a>'
+            f'<a class="button" href="#models">{t("Список моделей", "Model list")}</a>'
         )
         side = (
-            '<aside class="sidebar"><details class="section-menu" open><summary>'
-            f"{t('На этой странице', 'On this page')}</summary>"
+            '<aside class="sidebar docs-aside"><details class="section-menu" open><summary>'
+            f"{t('Разделы документации', 'Documentation sections')}</summary>"
+            '<label class="docs-nav-label" for="docs-nav-search">'
+            f'{t("Найти раздел", "Find a section")}</label>'
+            f'<input id="docs-nav-search" type="search" placeholder="{t("Поиск по разделам…", "Search sections…")}" '
+            'autocomplete="off" hidden>'
             f'<nav class="contents" aria-label="{t("Разделы документации", "Reference sections")}">{contents}</nav>'
             '</details><div class="sidebar-note"><span class="eyebrow">API REFERENCE</span>'
-            f"<p>{t('От подключения до готового результата.', 'From connection to a finished result.')}</p>"
-            f'<a href="{price_url}">{t("Цены в рублях", "Prices in RUB")} <span aria-hidden="true">↗</span></a>'
-            "</div></aside>"
+            f"<p>{t('Примеры соответствуют контрактам API.', 'Examples match API contracts.')}</p>"
+            f'<a href="{price_url}">{t("Каталог и цены в рублях", "Catalog and prices in RUB")} '
+            '<span aria-hidden="true">↗</span></a></div></aside>'
         )
     language = ""
     language_path = "/" if landing else "/guide"
@@ -87,6 +96,26 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, land
             f'<a data-language href="{language_path}?lang=ru" lang="ru" {"aria-current=page" if ru else ""}>RU</a>'
             f'<a data-language href="{language_path}?lang=en" lang="en" {"aria-current=page" if not ru else ""}>EN</a>'
             '</nav>'
+        )
+    docs_tools = ""
+    if not landing and not pricing:
+        api_base = escape(get_settings().public_api_base_url.rstrip("/"))
+        docs_tools = (
+            '<section class="docs-start" aria-label="' + t("Быстрый доступ", "Quick links") + '">'
+            '<div class="docs-base"><span>API BASE URL</span>'
+            f'<code id="public-api-base">{api_base}</code>'
+            f'<button class="copy-button" type="button" data-copy-target="public-api-base">'
+            f'{t("Копировать", "Copy")}</button></div>'
+            '<div class="docs-quicklinks">'
+            f'<a href="#connect"><span>01</span><strong>{t("Подключение", "Connect")}</strong>'
+            f'<small>{t("Ключ и первый запрос", "API key and first request")}</small></a>'
+            f'<a href="#models"><span>02</span><strong>{t("Модели", "Models")}</strong>'
+            f'<small>{t("Доступность и Model ID", "Availability and model IDs")}</small></a>'
+            f'<a href="#video"><span>03</span><strong>{t("Генерация", "Generation")}</strong>'
+            f'<small>{t("Видео и обработка", "Video and results")}</small></a>'
+            f'<a href="#errors"><span>04</span><strong>{t("Ошибки и повторы", "Errors and retries")}</strong>'
+            f'<small>{t("Надёжная интеграция", "Reliable integration")}</small></a>'
+            '</div></section>'
         )
     # The docs host intentionally exposes only the public reference; keep private cabinet links on site and prices.
     cabinet_nav_link = (
@@ -98,8 +127,8 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, land
         '<meta name="theme-color" content="#05070b">'
         f'<meta name="description" content="{escape(description, quote=True)}"><title>{escape(title)}</title>'
         '<link rel="icon" href="/ui/logo-mark.svg" type="image/svg+xml">'
-        '<link rel="stylesheet" href="/ui/brand.css?v=2"><script src="/ui/brand.js?v=1" defer></script>'
-        f'</head><body class="{"pricing-page" if pricing else "reference-page"}">'
+        '<link rel="stylesheet" href="/ui/brand.css?v=3"><script src="/ui/brand.js?v=2" defer></script>'
+        f'</head><body class="{"pricing-page" if pricing else "reference-page" if landing else "docs-page"}">'
         f'<a class="skip-link" href="#main">{t("К содержимому", "Skip to content")}</a>'
         '<header class="site-header"><div class="header-inner">'
         f'<a class="brand" href="/" aria-label="{t("Нейроныч API — главная", "Neironych API — home")}">'
@@ -109,7 +138,7 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, land
         f'<a href="/" {"aria-current=page" if landing else ""}>{t("Обзор", "Overview")}</a>'
         f'<a href="{docs_url}" {"aria-current=page" if not pricing and not landing else ""}>'
         f"{t('Документация', 'Documentation')}</a>"
-        f'<a href="{price_url}" {"aria-current=page" if pricing else ""}>{t("Цены", "Pricing")}</a>'
+        f'<a href="{price_url}" {"aria-current=page" if pricing else ""}>{t("Модели и цены", "Models & pricing")}</a>'
         f'{cabinet_nav_link}</nav>'
         f'<a class="telegram-link" href="{TELEGRAM_APPLICATION_URL}" target="_blank" rel="noopener noreferrer" '
         f'aria-label="{t("Подать заявку через Telegram", "Apply via Telegram")}">{_telegram_icon()}'
@@ -126,7 +155,8 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, land
         f'<span class="art-note">{t("Умно. Просто. По делу.", "Smart. Simple. To the point.")}</span></div></section>'
         f'<div class="{"landing-layout" if landing else "document-layout"}">{side}'
         f'<article class="document" aria-label="{escape(title, quote=True)}">'
-        f"{'<div class=reference-intro>' + introduction + '</div>' if introduction else ''}{body}</article></div>"
+        f"{'<div class=reference-intro>' + introduction + '</div>' if introduction else ''}"
+        f"{docs_tools}{body}</article></div>"
         '</main><footer class="site-footer container"><span>Нейроныч · API</span>'
         f'<a href="#main">{t("Наверх", "Back to top")} ↑</a></footer>'
         '<p class="toast" role="status" aria-live="polite" aria-atomic="true"></p></body></html>'

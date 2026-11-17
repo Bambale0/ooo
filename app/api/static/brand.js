@@ -85,29 +85,97 @@
   };
   window.addEventListener('hashchange', openHash);
   openHash();
+  // Public docs: search only the navigation, never hide deep-link targets.
+  const docsNavSearch = document.querySelector('#docs-nav-search');
+  if (docsNavSearch) {
+    docsNavSearch.hidden = false;
+    const items = [...document.querySelectorAll('.docs-aside .contents a')];
+    docsNavSearch.addEventListener('input', () => {
+      const query = docsNavSearch.value.toLocaleLowerCase('ru').replace(/ё/g, 'е').trim();
+      items.forEach(link => {
+        link.hidden = !link.textContent.toLocaleLowerCase('ru').replace(/ё/g, 'е').includes(query);
+      });
+    });
+  }
+  document.querySelectorAll('[data-copy-target]').forEach(button => {
+    button.addEventListener('click', async () => {
+      const source = document.getElementById(button.dataset.copyTarget);
+      if (!source) return;
+      try {
+        if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
+        await navigator.clipboard.writeText(source.textContent);
+        notify(t('Скопировано в буфер обмена', 'Copied to clipboard'));
+      } catch {
+        const range = document.createRange();
+        range.selectNodeContents(source);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        notify(t('Текст выделен — скопируйте вручную', 'Text selected — copy manually'));
+      }
+    });
+  });
   const search = document.querySelector('#price-search');
   if (search) {
-    document.querySelector('.price-tools').hidden = false;
-    const rows = [...document.querySelectorAll('#price-table tbody tr')];
+    const toolbar = document.querySelector('.price-tools');
+    const categories = document.querySelector('.catalog-filters');
+    toolbar.hidden = false;
+    categories.hidden = false;
+    const tbody = document.querySelector('#price-table tbody');
+    const rows = [...tbody.querySelectorAll('tr')];
     const count = document.querySelector('#price-count');
     const empty = document.querySelector('#no-results');
     const clear = document.querySelector('#clear-search');
+    const sorting = document.querySelector('#price-sort');
+    const table = document.querySelector('#price-table');
+    const filterButtons = [...categories.querySelectorAll('[data-kind]')];
+    let activeKind = 'all';
     const normalize = value => value.toLocaleLowerCase('ru').replace(/ё/g, 'е').trim();
-    const indexed = rows.map(row => [row, normalize(row.textContent)]);
-    function filter() {
+    const indexed = rows.map((row, i) => ({
+      row, i, text: normalize(row.textContent), name: normalize(row.dataset.name || ''),
+      kind: row.dataset.kind, price: Number(row.dataset.price)
+    }));
+    function update() {
       const query = normalize(search.value);
-      let shown = 0;
-      indexed.forEach(([row, text]) => {
-        row.hidden = !text.includes(query);
-        if (!row.hidden) shown++;
+      const sorted = [...indexed].sort((a, b) => {
+        if (sorting.value === 'price-asc') return a.price - b.price || a.i - b.i;
+        if (sorting.value === 'price-desc') return b.price - a.price || a.i - b.i;
+        return a.name.localeCompare(b.name, 'ru') || a.i - b.i;
       });
-      count.textContent = `Показано конфигураций: ${shown} из ${rows.length}`;
+      let shown = 0;
+      sorted.forEach(item => {
+        const visible = (activeKind === 'all' || item.kind === activeKind) && item.text.includes(query);
+        item.row.hidden = !visible;
+        if (visible) shown++;
+        tbody.appendChild(item.row);
+      });
+      count.textContent = t(
+        'Показано конфигураций: ' + shown + ' из ' + rows.length,
+        'Configurations shown: ' + shown + ' of ' + rows.length
+      );
       empty.hidden = shown > 0;
-      document.querySelector('#price-table').hidden = shown === 0;
-      clear.disabled = !search.value;
+      table.hidden = shown === 0;
+      clear.disabled = !search.value && activeKind === 'all' && sorting.value === 'name';
     }
-    search.addEventListener('input', filter);
-    clear.addEventListener('click', () => { search.value = ''; filter(); search.focus(); });
-    filter();
+    filterButtons.forEach(button => {
+      button.addEventListener('click', () => {
+        activeKind = button.dataset.kind;
+        filterButtons.forEach(item => {
+          const selected = item === button;
+          item.classList.toggle('active', selected);
+          item.setAttribute('aria-pressed', String(selected));
+        });
+        update();
+      });
+    });
+    search.addEventListener('input', update);
+    sorting.addEventListener('change', update);
+    clear.addEventListener('click', () => {
+      search.value = '';
+      sorting.value = 'name';
+      filterButtons.find(button => button.dataset.kind === 'all')?.click();
+      search.focus();
+    });
+    update();
   }
 })();

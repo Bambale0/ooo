@@ -232,3 +232,7 @@ td code,.mono-link{font:12px ui-monospace,Consolas,monospace;color:#c9b0fb!impor
  .chart-tick:nth-child(2n){visibility:hidden}
  .secret-field{flex-wrap:wrap}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{transition:none!important}}
+
+/* Documentation is a primary workflow, not a footer-only link. */
+.topbar-docs{min-height:34px;padding:6px 12px}
+@media(max-width:760px){.topbar-docs{display:none}}

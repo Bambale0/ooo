@@ -1,7 +1,6 @@
 """Self-contained public inference documentation, without internal API exposure."""
 
 from decimal import Decimal
-from html import escape
 from importlib.resources import files
 
 from fastapi import APIRouter, HTTPException, Query, Response
@@ -10,11 +9,12 @@ from sqlalchemy import select
 
 from app.api.dependencies import DbSession
 from app.api.marketing import marketing_page
+from app.api.model_explorer import render_catalog
 from app.api.native_video_reference import REVIEWED_VIDEO_MODELS, render_native_video_reference
 from app.api.partner_reference import render_reference, table
 from app.api.public_ui import page
 from app.catalog.models import Model, PartnerPrice
-from app.catalog.video_edit_pricing import EDIT_MODE, EDIT_MODEL, edit_markup, retail_rate
+from app.catalog.video_edit_pricing import EDIT_MODE, EDIT_MODEL, edit_markup
 from app.contracts.registry import MODELS
 from app.infrastructure.config import get_settings
 
@@ -55,9 +55,29 @@ async def _public_connection_guide(db: DbSession, lang: str) -> HTMLResponse:
     )
 
     model_rows = [model for model in model_rows if model.slug in MODELS]
-    enabled = table(
-        ("Model", "Model ID", "Endpoint"),
-        [(model.name, model.slug, MODELS[model.slug]["endpoint"]) for model in model_rows],
+    enabled = (
+        f'<p class="doc-model-count">{len(model_rows)} '
+        + ("публично доступных моделей" if ru else "publicly available models")
+        + "</p>"
+        + table(
+            (
+                "Модель" if ru else "Model",
+                "Model ID",
+                "Тип" if ru else "Type",
+                "Endpoint",
+            ),
+            [
+                (
+                    model.name,
+                    model.slug,
+                    {"llm": "Текст", "image": "Изображения", "video": "Видео"}.get(
+                        model.modality, model.modality
+                    ) if ru else model.modality,
+                    MODELS[model.slug]["endpoint"],
+                )
+                for model in model_rows
+            ],
+        )
     )
     if not model_rows:
         enabled += (
@@ -91,7 +111,9 @@ async def guide(db: DbSession, lang: str = Query(default="ru", pattern="^(ru|en)
 
 @router.get("/price", response_class=HTMLResponse, include_in_schema=False)
 @router.get("/prices", response_class=HTMLResponse, include_in_schema=False)
+@router.get("/models", response_class=HTMLResponse, include_in_schema=False)
 async def prices(db: DbSession):
+    """Public model explorer; must never expose private model grants or supplier cost."""
     rows = (
         await db.execute(
             select(Model, PartnerPrice)
@@ -110,46 +132,4 @@ async def prices(db: DbSession):
         from app.billing.fx import current_fx
 
         fx = (await current_fx(db))["rate"]
-    units = {"million_tokens": "млн токенов", "second": "секунда", "generation": "изображение"}
-    body = '<h2 class="price-heading">Модели и цены</h2>'
-    body += "<p>Цены списания с партнёрского баланса. Цена вашей перепродажи определяется вами.</p>"
-    if any(model.slug == EDIT_MODEL and price.mode == EDIT_MODE for model, price in rows):
-        body += (
-            "<p><strong>Seedance 2.5 с видеореференсом:</strong> применяется цена режима edit "
-            "(даже если для видео с фото или аудио запрос отправляется как reference). "
-            "Без входного видео используется обычный тариф default. "
-            "Оплачиваемые секунды = длительность результата + длительность всех входных "
-            "видеореференсов по итоговому usage поставщика. "
-            "Тариф edit рассчитывается по действующему курсу на момент запроса.</p>"
-        )
-    if not rows:
-        body += (
-            '<div class="empty-state"><h3>Приём заказов ещё не открыт.</h3>'
-            "<p>Публичных цен пока нет. Изучите документацию, чтобы подготовить интеграцию.</p>"
-            '<a class="button" href="/docs">Открыть документацию</a></div>'
-        )
-        return page("Цены для партнёров", body, pricing=True)
-    body += (
-        '<div class="price-tools" hidden><label for="price-search">Поиск по модели, режиму или размеру'
-        '<input id="price-search" type="search" placeholder="Название модели или 1080p" '
-        'autocomplete="off" aria-controls="price-table" aria-describedby="price-count"></label>'
-        '<button id="clear-search" type="button" class="button">Сбросить</button></div>'
-        f'<p class="price-count" id="price-count" role="status">Конфигураций: {len(rows)}</p>'
-        '<div id="price-table" class="table-scroll" tabindex="0" role="region" aria-label="Цены моделей">'
-        '<table><thead><tr><th scope="col">Модель</th><th scope="col">Режим / размер</th>'
-        '<th scope="col">Цена, ₽</th><th scope="col">Единица</th></tr></thead><tbody>'
-    )
-    for model, price in rows:
-        mode = "edit / с видеореференсом" if model.slug == EDIT_MODEL and price.mode == EDIT_MODE else price.mode
-        visible_rate = retail_rate(model.slug, price, fx)
-        body += (
-            f"<tr><td>{escape(model.name)}</td><td>{escape(mode)} / {escape(price.resolution)}</td>"
-            f'<td class="price-number">{visible_rate:.2f}</td>'
-            f"<td>{escape(units.get(price.billing_unit, price.billing_unit))}</td></tr>"
-        )
-    body += (
-        '</tbody></table></div><div id="no-results" class="empty-state" hidden>'
-        "<h3>Совпадений нет</h3><p>Попробуйте другое название, режим или размер. "
-        "Кнопка «Сбросить» вернёт все цены.</p></div>"
-    )
-    return page("Цены для партнёров", body, pricing=True)
+    return page("Модели и тарифы — Нейроныч API", render_catalog(rows, fx), pricing=True)
