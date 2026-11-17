@@ -74,7 +74,10 @@ def _status(value: str) -> str:
 
 def _table(columns: tuple[str, ...], rows: list[tuple[str, ...]], message: str) -> str:
     if not rows:
-        return f'<div class="empty"><span class="empty-mark">◇</span><strong>Пока пусто</strong><p>{_e(message)}</p></div>'
+        return (
+            '<div class="empty"><span class="empty-mark">◇</span><strong>Пока пусто</strong>'
+            f'<p>{_e(message)}</p></div>'
+        )
     heads = "".join(f'<th scope="col">{_e(c)}</th>' for c in columns)
     cells = "".join("<tr>" + "".join(f"<td>{c}</td>" for c in row) + "</tr>" for row in rows)
     return (
@@ -206,12 +209,15 @@ def _stats(cards: list[tuple[str, str, str]]) -> str:
 def _bars(daily: list[tuple[str, int, Decimal]], *, metric: str) -> str:
     dates = [datetime.now(UTC).date() - timedelta(days=offset) for offset in range(13, -1, -1)]
     records = {day: (number, amount) for day, number, amount in daily}
-    amounts = [float(records.get(day.isoformat(), (0, Decimal("0")))[0 if metric == "requests" else 1]) for day in dates]
-    peak = max(amounts, default=0) or 1
+    amounts = [
+        Decimal(records.get(day.isoformat(), (0, Decimal("0")))[0 if metric == "requests" else 1])
+        for day in dates
+    ]
+    peak = max(amounts, default=Decimal("0")) or Decimal("1")
     elements = []
     for day, amount in zip(dates, amounts, strict=True):
-        percent = max(2, (amount / peak) * 100)
-        label = str(int(amount)) if metric == "requests" else _rub(Decimal(str(amount)))
+        percent = max(Decimal("2"), (amount / peak) * 100)
+        label = str(int(amount)) if metric == "requests" else _rub(amount)
         elements.append(
             f'<div class="chart-column" title="{_e(day.isoformat())}: {_e(label)}">'
             f'<span class="chart-bar" style="height:{percent:.1f}%"></span>'
@@ -266,7 +272,10 @@ def overview_view(partner: Partner, usage: dict, recent: list[Generation], keys_
         '<section class="surface"><div class="section-top"><div><h2>Последние запросы</h2>'
         '<p>Состояние задач и реальные списания</p></div>'
         '<a class="text-link" href="/cabinet?section=logs">Все запросы ↗</a></div>'
-        + _table(("ID запроса", "Модель", "Статус", "Списано", "Дата UTC"), log_rows, "Запросы появятся после первой генерации.")
+        + _table(
+            ("ID запроса", "Модель", "Статус", "Списано", "Дата UTC"),
+            log_rows, "Запросы появятся после первой генерации.",
+        )
         + "</section>"
     )
     return title + cards + chart + recent_html
@@ -383,7 +392,8 @@ async def models_view(db, tariff_rows: list, search: str) -> str:
         '<button class="button button-secondary" type="submit">Найти</button></form>'
     )
     needs_live_fx = any(
-        model.slug == EDIT_MODEL and rate.mode == EDIT_MODE and snapshot is None and edit_markup(model.slug) is not None
+        model.slug == EDIT_MODEL and rate.mode == EDIT_MODE
+        and snapshot is None and edit_markup(model.slug) is not None
         for model, rate, snapshot in tariff_rows
     )
     fx = Decimal("1")
@@ -407,7 +417,8 @@ async def models_view(db, tariff_rows: list, search: str) -> str:
             f'<strong class="model-name">{_e(model.name)}</strong><small class="model-id">{_e(model.slug)}</small>',
             _e({"llm": "Текст", "image": "Изображение", "video": "Видео"}.get(model.modality, model.modality)),
             f'<code>{_e(rate.mode)}</code> · {_e(rate.resolution)}',
-            f'<strong>{_e(price)}</strong><small class="model-id">{_e(unit.get(rate.billing_unit, rate.billing_unit))}</small>',
+            f'<strong>{_e(price)}</strong>'
+            f'<small class="model-id">{_e(unit.get(rate.billing_unit, rate.billing_unit))}</small>',
             '<span class="tag tag-positive">Доступна</span>',
         ))
     return (
