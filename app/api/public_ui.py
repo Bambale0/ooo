@@ -88,6 +88,10 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, land
             f'<a data-language href="{language_path}?lang=en" lang="en" {"aria-current=page" if not ru else ""}>EN</a>'
             '</nav>'
         )
+    # The docs host intentionally exposes only the public reference; keep private cabinet links on site and prices.
+    cabinet_nav_link = (
+        f'<a href="{cabinet_url}">{t("Личный кабинет", "Cabinet")}</a>' if landing or pricing else ""
+    )
     return HTMLResponse(
         f'<!doctype html><html lang="{lang}"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
@@ -106,7 +110,7 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, land
         f'<a href="{docs_url}" {"aria-current=page" if not pricing and not landing else ""}>'
         f"{t('Документация', 'Documentation')}</a>"
         f'<a href="{price_url}" {"aria-current=page" if pricing else ""}>{t("Цены", "Pricing")}</a>'
-        f'<a href="{cabinet_url}">{t("Личный кабинет", "Cabinet")}</a></nav>'
+        f'{cabinet_nav_link}</nav>'
         f'<a class="telegram-link" href="{TELEGRAM_APPLICATION_URL}" target="_blank" rel="noopener noreferrer" '
         f'aria-label="{t("Подать заявку через Telegram", "Apply via Telegram")}">{_telegram_icon()}'
         f'<span>{t("Подать заявку", "Apply")}</span></a>'
