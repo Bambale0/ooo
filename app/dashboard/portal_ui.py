@@ -247,7 +247,9 @@ def _generation_rows(gens: list[Generation], *, details: bool = True) -> list[tu
     return result
 
 
-def overview_view(partner: Partner, usage: dict, recent: list[Generation], keys_count: int) -> str:
+def overview_view(
+    partner: Partner, usage: dict, recent: list[Generation], keys_count: int, recent_keys: list[ApiKey]
+) -> str:
     title = _heading(
         "РАБОЧЕЕ ПРОСТРАНСТВО / OVERVIEW",
         "Обзор использования",
@@ -277,7 +279,22 @@ def overview_view(partner: Partner, usage: dict, recent: list[Generation], keys_
         )
         + "</section>"
     )
-    return title + cards + chart + recent_html
+    key_rows = [
+        (
+            f'<strong>{_e(key.name)}</strong>',
+            f'<code>{_e(key.key_prefix)}••••</code>',
+            _status("completed") if key.is_active else _status("cancelled"),
+        )
+        for key in recent_keys
+    ]
+    keys_html = (
+        '<section class="surface"><div class="section-top"><div><h2>API-ключи</h2>'
+        '<p>Последние ключи вашего проекта</p></div>'
+        '<a class="text-link" href="/cabinet?section=keys">Управление ключами ↗</a></div>'
+        + _table(("Название", "Префикс", "Статус"), key_rows, "У вас пока нет API-ключей.")
+        + "</section>"
+    )
+    return title + cards + chart + recent_html + keys_html
 
 
 def activity_view(usage: dict) -> str:
