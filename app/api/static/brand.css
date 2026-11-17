@@ -126,7 +126,7 @@ input::placeholder { color: var(--muted); }
   .header-inner { min-height: 72px; flex-wrap: wrap; gap: 6px 10px; padding: 10px 0; }
   .brand { font-size: 20px; flex: 1; }
   .brand img { width: 36px; height: 36px; }
-  .primary-nav { order: 3; width: 100%; justify-content: start; gap: 2px; }
+  .primary-nav { order: 3; width: 100%; justify-content: start; gap: 2px; overflow-x: auto; }
   .primary-nav a { padding: 7px 14px; font-size: 13px; }
   .telegram-link { padding-inline: 12px; }
   .telegram-link span { display: none; }
