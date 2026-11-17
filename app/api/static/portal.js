@@ -27,7 +27,8 @@
     });
   });
   document.querySelectorAll("form[action='/cabinet/action']").forEach((form) => {
-    form.addEventListener("submit", () => {
+    form.addEventListener("submit", (event) => {
+      if (event.defaultPrevented) return;
       const button = form.querySelector("button[type=submit]");
       if (button) {
         button.disabled = true;
