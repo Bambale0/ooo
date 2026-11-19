@@ -15,6 +15,16 @@ from app.infrastructure.retry import utc_now
 from app.providers.models import ProviderCircuit, ProviderOutcome
 from app.telegram.service import notify
 
+NATIVE_IMAGE_MODELS = frozenset({"nano-banana-pro", "nano-banana-2.1"})
+NATIVE_IMAGE_PROVIDER_PREFIX = "argolink:native:"
+
+
+def native_image_circuit_provider(model_slug: str) -> str | None:
+    """Isolate native image stalls from text, video and other image models."""
+    if model_slug not in NATIVE_IMAGE_MODELS:
+        return None
+    return NATIVE_IMAGE_PROVIDER_PREFIX + model_slug
+
 
 def aware(value):
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value
@@ -58,8 +68,8 @@ async def admit(db, generation_id, *, provider="argolink", claim=True):
     return True
 
 
-async def require_admission(db, generation_id, *, claim=True):
-    if not await admit(db, generation_id, claim=claim):
+async def require_admission(db, generation_id, *, claim=True, provider="argolink"):
+    if not await admit(db, generation_id, claim=claim, provider=provider):
         raise HTTPException(503, "provider_temporarily_unavailable", headers={"Retry-After": "60"})
 
 
@@ -127,13 +137,28 @@ async def observe(db, generation, *, outcome=None, provider="argolink"):
                     )
                 ).scalars()
             )
-            recent = [s for s in samples if aware(s.created_at) >= now - timedelta(minutes=5)]
-            errors = sum(s.outcome in {"error", "timeout"} for s in recent)
-            timeouts = sum(s.outcome == "timeout" for s in samples)
-            if (len(recent) >= 20 and errors * 10 > len(recent)) or (
-                len(samples) >= 20 and timeouts * 20 > len(samples)
-            ):
-                await open_circuit(db, row)
+            if provider.startswith(NATIVE_IMAGE_PROVIDER_PREFIX):
+                settings = get_settings()
+                recent = [
+                    sample for sample in samples
+                    if aware(sample.created_at) >= now - timedelta(
+                        seconds=settings.argolink_native_image_circuit_window_seconds
+                    )
+                ]
+                errors = sum(sample.outcome in {"error", "timeout"} for sample in recent)
+                if (
+                    len(recent) >= settings.argolink_native_image_circuit_min_samples
+                    and errors / len(recent) >= settings.argolink_native_image_circuit_failure_ratio
+                ):
+                    await open_circuit(db, row)
+            else:
+                recent = [s for s in samples if aware(s.created_at) >= now - timedelta(minutes=5)]
+                errors = sum(s.outcome in {"error", "timeout"} for s in recent)
+                timeouts = sum(s.outcome == "timeout" for s in samples)
+                if (len(recent) >= 20 and errors * 10 > len(recent)) or (
+                    len(samples) >= 20 and timeouts * 20 > len(samples)
+                ):
+                    await open_circuit(db, row)
     await db.flush()
 
 
@@ -160,7 +185,8 @@ async def recovery_tick(db, provider="argolink", *, health_check=None):
                 return
             health_check = (await get_partner_provider_adapter(db, "", provider)).health_check
         else:
-            health_check = get_provider_adapter(provider).health_check
+            physical_provider = "argolink" if provider.startswith(NATIVE_IMAGE_PROVIDER_PREFIX) else provider
+            health_check = get_provider_adapter(physical_provider).health_check
     row.last_check_at = now
     try:
         healthy = await health_check()

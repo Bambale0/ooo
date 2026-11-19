@@ -45,9 +45,13 @@ async def ensure_terminal_webhook_event(
     *,
     provider: str = "argolink",
 ) -> WebhookEvent | None:
-    from app.providers.circuit import observe
+    from app.providers.circuit import native_image_circuit_provider, observe
 
     await observe(db, generation, provider=provider)
+    if generation.mode in {"images/edits", "images/generations"}:
+        scoped_provider = native_image_circuit_provider(generation.model_slug)
+        if scoped_provider is not None:
+            await observe(db, generation, provider=scoped_provider)
     trial_user = (generation.request_payload or {}).get("trial_telegram_id")
     if trial_user and generation.status in _TERMINAL_STATUSES:
         from app.accounts.models import Partner

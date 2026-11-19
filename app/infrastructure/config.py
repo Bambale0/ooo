@@ -48,6 +48,12 @@ class Settings(BaseSettings):
     required_provider_float_usdt: Decimal = Field(default=Decimal("0"), ge=0)
     wallet_refresh_seconds: int = Field(default=60, ge=1)
     native_request_timeout_seconds: float = Field(default=600, gt=0)
+    # Guard only the affected native image models; video/text continue normally.
+    argolink_native_image_circuit_min_samples: int = Field(default=6, ge=3, le=100)
+    argolink_native_image_circuit_failure_ratio: Decimal = Field(
+        default=Decimal("0.5"), gt=0, le=1,
+    )
+    argolink_native_image_circuit_window_seconds: int = Field(default=600, ge=60, le=3600)
     native_response_max_bytes: int = Field(default=32 * 1024 * 1024, ge=1024, le=128 * 1024 * 1024)
     native_response_replay_ttl_seconds: int = Field(default=86400, ge=60, le=604800)
     native_rejection_receipts_max_per_partner: int = Field(default=10000, ge=0, le=100000)

@@ -345,12 +345,22 @@ async def reserve(
     )
     db.add(generation)
     await db.flush()
-    from app.providers.circuit import require_admission
+    from app.providers.circuit import native_image_circuit_provider, require_admission
 
     try:
         await require_admission(db, generation.id, claim=not video)
     except HTTPException as exc:
         raise _admission_error(exc, "provider_circuit") from exc
+    # The image circuit must not disable unrelated Argolink products.
+    image_provider = native_image_circuit_provider(model.slug) if not video else None
+    if image_provider:
+        try:
+            await require_admission(db, generation.id, provider=image_provider)
+        except HTTPException as exc:
+            # Before any paid POST: APIX may safely refund and must not fall back.
+            raise InferenceAdmissionError(
+                503, "provider_circuit_open", failure_stage="provider_circuit",
+            ) from exc
     await apply_cost_coverage_change(
         db,
         partner,

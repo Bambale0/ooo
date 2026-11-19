@@ -119,14 +119,19 @@ async def process_generation_work_concurrently_once(
         provider=provider,
     )
     from app.inference.recovery import recover_native_outcomes_once
-    from app.providers.circuit import recovery_tick
+    from app.providers.circuit import NATIVE_IMAGE_MODELS, native_image_circuit_provider, recovery_tick
 
     async with session_factory() as db:
         await recover_native_outcomes_once(db, limit=max(100, limit * 5))
         await recover_unconfirmed_submissions_once(db, limit=max(100, limit * 5))
         await db.commit()
     async with session_factory() as db:
-        for recovery_provider in [provider] if provider else [PRIMARY_PROVIDER, *FALLBACK_PROVIDERS]:
+        recovery_providers = [provider] if provider else [PRIMARY_PROVIDER, *FALLBACK_PROVIDERS]
+        if provider in {None, "argolink"}:
+            recovery_providers.extend(
+                native_image_circuit_provider(model) for model in sorted(NATIVE_IMAGE_MODELS)
+            )
+        for recovery_provider in recovery_providers:
             await recovery_tick(db, recovery_provider)
         await release_stale_partner_reserves_once(db, limit=max(100, limit * 5))
         await db.commit()
