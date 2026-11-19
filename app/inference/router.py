@@ -601,7 +601,8 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
             public = JSONResponse(scrub(data, generation.id), headers={"X-Request-Id": generation.id})
             if await preserve_unbilled_result(db, generation, attempt, public):
                 return public
-        return await fail(db, generation, attempt, "provider_response_invalid", definitive=False)
+        code = "request_deadline_exceeded" if isinstance(exc, TimeoutError) else "provider_response_invalid"
+        return await fail(db, generation, attempt, code, definitive=False)
     finally:
         await response.aclose()
 
