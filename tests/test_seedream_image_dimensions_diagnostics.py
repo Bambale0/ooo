@@ -10,8 +10,11 @@ from PIL import Image
 
 from app.inference.diagnostics import NativeRequestTrace
 from app.inference.images import (
-    ImageResultDimensionsMismatch, ImageResultFormatMismatch, image_usage,
-    recoverable_profile_image_dimensions, recoverable_profile_image_format,
+    ImageResultDimensionsMismatch,
+    ImageResultFormatMismatch,
+    image_usage,
+    recoverable_profile_image_dimensions,
+    recoverable_profile_image_format,
 )
 
 
