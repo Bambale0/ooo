@@ -114,11 +114,17 @@ def test_profile_image_recovery_does_not_apply_to_unprofiled_models():
     )
 
 
-def test_profile_image_recovery_does_not_apply_to_size_limited_models():
-    assert not recoverable_profile_image_dimensions(
-        {"model": "gpt-image-2.6-flare", "resolution": "1k", "aspect_ratio": "3:4"},
-        ImageResultDimensionsMismatch((848, 1104), (960, 1280)),
-    )
+@pytest.mark.parametrize("size", [(1600, 600), (2500, 500)])
+def test_size_profile_output_reaches_customer_despite_requested_size(size):
+    body = {"model": "gpt-image-2.6-flare", "prompt": "Original", "size": "1024x1024"}
+    source = io.BytesIO()
+    Image.new("RGB", size).save(source, format="PNG")
+    output = {"data": [{"b64_json": base64.b64encode(source.getvalue()).decode()}]}
+    with pytest.raises(ImageResultDimensionsMismatch) as mismatch:
+        image_usage(body, output)
+    assert mismatch.value.actual == size
+    assert mismatch.value.expected == (1024, 1024)
+    assert recoverable_profile_image_dimensions(body, mismatch.value)
 
 
 
