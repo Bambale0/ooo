@@ -91,9 +91,12 @@ async def test_off_contract_but_verified_image_reaches_partner_and_idempotent_re
 
     partner, headers, upstream = await setup(
         db_session, monkeypatch, provider, model=model, category="image",
-        rates=[("default", "1K", "generation", Decimal("10"), Decimal(".03"))],
+        rates=[
+            ("default", tier, "generation", Decimal("3.85"), Decimal(".03"))
+            for tier in ("1K", "2K")
+        ],
     )
-    body = {"model": model, "prompt": "Original"}
+    body = {"model": model, "prompt": "Original", "n": 1, "response_format": "b64_json"}
     if model.startswith("gpt-image-2.6"):
         body["size"] = "1024x1024"
     else:
