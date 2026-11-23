@@ -5,6 +5,7 @@ import io
 from decimal import Decimal
 
 import httpx
+import pytest
 from PIL import Image
 from sqlalchemy import select
 from test_native_inference import setup
@@ -60,6 +61,56 @@ async def test_final_error_replays_without_second_provider_submission(client, db
     assert len(calls) == 1 and partner.balance_rub == Decimal("1000000")
     await upstream.aclose()
 
+
+
+@pytest.mark.parametrize(
+    ("model", "encoding", "size"),
+    [
+        ("seedream-5.0-pro", "JPEG", (1600, 600)),
+        ("seedream-5.5", "PNG", (350, 2100)),
+        ("seedream-5.0-pro", "PNG", (1600, 600)),
+    ],
+)
+async def test_off_contract_but_verified_image_reaches_partner_and_idempotent_replay(
+    client, db_session, monkeypatch, model, encoding, size
+):
+    # The supplier returned real bytes. Ratio/size/encoding differences are
+    # not grounds for losing a completed job; nor for charging exact-size usage.
+    from app.providers.models import ProviderAttempt
+    from app.billing.models import LedgerEntry
+
+    buf = io.BytesIO()
+    Image.new("RGB", size, color="white").save(buf, format=encoding)
+    result = {"data": [{"b64_json": base64.b64encode(buf.getvalue()).decode()}]}
+    calls = []
+
+    def provider(request):
+        calls.append(request)
+        return httpx.Response(200, json=result)
+
+    partner, headers, upstream = await setup(
+        db_session, monkeypatch, provider, model=model, category="image",
+        rates=[("default", "1K", "generation", Decimal("10"), Decimal(".03"))],
+    )
+    body = {"model": model, "prompt": "Original", "resolution": "1k", "aspect_ratio": "3:4"}
+    try:
+        response = await client.post("/v1/images/generations", headers=headers, json=body)
+        assert response.status_code == 200, response.text[:400]
+        assert response.json()["data"][0]["b64_json"] == result["data"][0]["b64_json"]
+        generated = await db_session.scalar(select(Generation))
+        attempt = await db_session.scalar(select(ProviderAttempt))
+        assert generated.status == "completed"
+        assert generated.actual_charge_rub is None
+        assert generated.request_payload["usage_reconciliation_pending"] is True
+        assert attempt.cost_status == "unknown"
+        assert partner.balance_rub == Decimal("1000000")
+        assert not list(await db_session.scalars(select(LedgerEntry)))
+        replay = await client.post("/v1/images/generations", headers=headers, json=body)
+        assert replay.status_code == 200 and replay.content == response.content
+        assert len(calls) == 1
+        assert partner.balance_rub == Decimal("1000000")
+    finally:
+        await upstream.aclose()
 
 async def test_valid_image_survives_usage_failure(client, db_session, monkeypatch, tmp_path):
     buffer = io.BytesIO()
