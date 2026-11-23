@@ -55,8 +55,17 @@ def image_usage(body: dict, data: dict, *, reference_count: int | None = None) -
                             raise ValueError("image_result_invalid_format")
                         format_mismatch = ImageResultFormatMismatch(image.format, expected_format)
                     if profile["frame"] == "size":
-                        if max(image.size) > profile["max_size_edge"]:
-                            raise ValueError("image_result_invalid_dimensions")
+                        declared_size = body.get("size", "auto")
+                        expected = (
+                            tuple(int(side) for side in declared_size.split("x"))
+                            if declared_size != "auto"
+                            else (profile["max_size_edge"], profile["max_size_edge"])
+                        )
+                        if (
+                            max(image.size) > profile["max_size_edge"]
+                            or (declared_size != "auto" and image.size != expected)
+                        ):
+                            dimension_mismatch = ImageResultDimensionsMismatch(image.size, expected)
                     else:
                         resolution = image_resolution(body).lower()
                         ratio = body.get("aspect_ratio", profile["default_aspect_ratio"])
@@ -107,7 +116,7 @@ def recoverable_profile_image_dimensions(body: dict, mismatch: ImageResultDimens
     instead of pretending exact-size billable usage was fulfilled.
     """
     profile = MODELS.get(body.get("model"), {}).get("image")
-    if not profile or profile.get("frame") != "aspect_ratio":
+    if not profile or profile.get("frame") not in {"aspect_ratio", "size"}:
         return False
     width, height = mismatch.actual
     return width > 0 and height > 0 and width * height <= get_settings().media_image_max_pixels
