@@ -11,8 +11,8 @@ from uuid import UUID
 import httpx
 
 from app.contracts.validation_errors import VALIDATION_REASONS
-from app.inference.images import ImageResultDimensionsMismatch
 from app.generations.models import Generation
+from app.inference.images import ImageResultDimensionsMismatch
 from app.providers.models import ProviderAttempt
 
 logger = logging.getLogger(__name__)
