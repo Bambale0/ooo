@@ -24,7 +24,7 @@ from app.inference.images import (
     ImageResultDimensionsMismatch,
     image_usage,
     inspect_url_images,
-    recoverable_seedream_dimensions,
+    recoverable_profile_image_dimensions,
 )
 from app.inference.outcomes import finalize_native_failure, preserve_unbilled_result
 from app.inference.replay import replay_response, save_response
@@ -605,11 +605,12 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
         if (
             isinstance(exc, ImageResultDimensionsMismatch)
             and protocol in {"images/generations", "images/edits"}
-            and recoverable_seedream_dimensions(body, exc)
+            and recoverable_profile_image_dimensions(body, exc)
         ):
-            # image_usage verified JPEG bytes/pixels BEFORE raising mismatch.
-            # Preserve and deliver the original provider output; keep monetary
-            # settlement pending instead of lying about exact-size usage.
+            # image_usage decoded and verified the complete supported image BEFORE
+            # raising an exact-size mismatch. Deliver the supplier's real
+            # output regardless of aspect ratio, but do not invent the
+            # requested-size billable usage. Reconcile procurement separately.
             result_ready = True
         if result_ready:
             public = JSONResponse(scrub(data, generation.id), headers={"X-Request-Id": generation.id})
