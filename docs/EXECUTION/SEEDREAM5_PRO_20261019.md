@@ -37,3 +37,39 @@ Never run a global catalog import: unrelated upstream changes need their own rev
 Verify actual generation and editing, then set the truthful smoke flag and use
 `enable_model`, which rechecks economic and contract gates. Verify public catalog,
 pricing, installed native route, replay, and unchanged unrelated price snapshots.
+
+
+## 2026-11-23: off-size Seedream output recovery (KSU delivery)
+
+Production correlation: KSU `7a10f069-784f-4c07-97f9-046070256708`
+→ Neironych `22ae7708-854d-46df-8211-65af0b50d90f`
+→ Argolink `images/edits`. The source returned HTTP 200 and a decoded
+848×1104 raster for a documented 1K 3:4 request expecting 960×1280.
+An independent KSU request, `d31f2de1-b8fd-4592-8704-4c9097b3a4b6`,
+showed the same actual/expected dimensions. The existing
+`ImageResultDimensionsMismatch` was correct for the *billable exact-size*
+contract; however, the existing safe recovery predicate required less than
+1% aspect drift, while this image differs by ~2.36%. The gateway returned
+503 `provider_response_invalid`, and KSU eventually failed/refunded the
+ambiguous synchronous submission without receiving its image.
+
+The focused repair expands **only** the already existing Seedream-specific,
+unbilled near-frame recovery envelope from 1% to 3%. The strict dimension
+check in `image_usage` still fails mismatched rasters, and the router's
+`preserve_unbilled_result` path delivers only fully decoded, profile-format
+validated, bounded output; it leaves provider usage/cost reconciliation pending,
+rather than charging the partner as if the exact requested raster arrived.
+Other models, malformed/truncated media, markedly wrong framing, very small
+images, oversized rasters, pricing, idempotency and partner routing are unchanged.
+
+Production database audit of the KSU partner's last seven days showed 12
+`image_result_invalid_dimensions`, eight policy refusals, two invalid
+image counts, one invalid format and ten native completions. The other
+failure types are **not** treated as recoverable image deliveries.
+
+Existing historical failed jobs contain no native response asset in the
+Neironych database; no replay, refund reversal, provider POST or manual
+media delivery is authorized by this fix. Historical restoration would
+require a separate safe read-only recovery source and customer-account
+reconciliation. Release must pass exact-head CI and a smoke that verifies
+the updated deployed predicate without any paid generation.
