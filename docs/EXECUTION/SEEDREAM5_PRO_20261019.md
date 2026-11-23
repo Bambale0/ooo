@@ -86,8 +86,10 @@ billable usage, but routes a fully verified mismatch through the existing
 and a durable idempotent response for the originating KSU request.
 
 Applies to image profiles that enforce `aspect_ratio` output shapes (Seedream
-5 Pro and 5.5). Other catalog images without an exact aspect check already
-have no such delivery gate. For supported JPEG/PNG/WEBP files with a different
+5 Pro and 5.5) and size-based profiles (e.g. GPT Image 2.6 Flare/Sunburst)
+when the supplier raster differs from the requested size/allowed edge.
+Other catalog images without an exact size/aspect check already have no such
+delivery gate. For supported JPEG/PNG/WEBP files with a different
 declared image encoding, the same verified/unbilled path now applies. Complete
 decode, legitimate image type, source policy refusals, configured byte/pixel
 limits, provider isolation, request identity, idempotent replay and financial
