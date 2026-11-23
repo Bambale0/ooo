@@ -118,6 +118,20 @@ def test_profile_image_recovery_does_not_apply_to_size_limited_models():
     )
 
 
+
+def test_format_mismatch_diagnostics_are_allowlisted_and_never_log_media(caplog):
+    attempt = SimpleNamespace(raw_error=None)
+    trace = NativeRequestTrace(context={"trace_id": "safe-format-test"})
+    with caplog.at_level("WARNING"):
+        trace.failed(attempt, ImageResultFormatMismatch("PNG", "JPEG"), phase="response_body_or_usage")
+    event = json.loads(attempt.raw_error)
+    assert event["validation_reason"] == "image_result_invalid_format"
+    assert event["actual_format"] == "PNG"
+    assert event["expected_format"] == "JPEG"
+    assert "b64_json" not in caplog.text
+
+
+
 def test_safe_mismatch_dimensions_are_logged_but_never_image_bytes_or_arbitrary_text(caplog):
     attempt = SimpleNamespace(raw_error=None)
     trace = NativeRequestTrace(context={"trace_id": "safe-test"})
