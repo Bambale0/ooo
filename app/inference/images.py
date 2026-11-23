@@ -16,6 +16,15 @@ class ImageResultDimensionsMismatch(ValueError):
         self.expected = expected
 
 
+class ImageResultFormatMismatch(ValueError):
+    """Decoded supported image format differs from the provider contract."""
+
+    def __init__(self, actual: str, expected: str) -> None:
+        super().__init__("image_result_invalid_format")
+        self.actual = actual
+        self.expected = expected
+
+
 def image_usage(body: dict, data: dict, *, reference_count: int | None = None) -> dict[str, int]:
     images = data.get("data")
     if not isinstance(images, list) or not images or len(images) > body.get("n", 1):
@@ -35,13 +44,16 @@ def image_usage(body: dict, data: dict, *, reference_count: int | None = None) -
             if not content or len(content) > maximum:
                 raise ValueError("image_result_too_large")
             dimension_mismatch = None
+            format_mismatch = None
             try:
                 with Image.open(io.BytesIO(content)) as image:
-                    if (
-                        (profile.get("output_format") and image.format != profile["output_format"])
-                        or image.width * image.height > get_settings().media_image_max_pixels
-                    ):
+                    if image.width * image.height > get_settings().media_image_max_pixels:
                         raise ValueError("image_result_invalid_format")
+                    expected_format = profile.get("output_format")
+                    if expected_format and image.format != expected_format:
+                        if image.format not in {"JPEG", "PNG", "WEBP"}:
+                            raise ValueError("image_result_invalid_format")
+                        format_mismatch = ImageResultFormatMismatch(image.format, expected_format)
                     if profile["frame"] == "size":
                         if max(image.size) > profile["max_size_edge"]:
                             raise ValueError("image_result_invalid_dimensions")
@@ -61,6 +73,8 @@ def image_usage(body: dict, data: dict, *, reference_count: int | None = None) -
                     decoded.load()
             except Image.DecompressionBombError as exc:
                 raise ValueError("image_result_too_large") from exc
+            if format_mismatch is not None:
+                raise format_mismatch
             if dimension_mismatch is not None:
                 raise dimension_mismatch
         # GPT charges by actual rendered pixels, never by requested dimensions.
@@ -97,6 +111,20 @@ def recoverable_profile_image_dimensions(body: dict, mismatch: ImageResultDimens
         return False
     width, height = mismatch.actual
     return width > 0 and height > 0 and width * height <= get_settings().media_image_max_pixels
+
+
+def recoverable_profile_image_format(body: dict, mismatch: ImageResultFormatMismatch) -> bool:
+    """Allow verified JPEG, PNG or WEBP output with a different declared format.
+
+    The byte and pixel limits, decode and actual image integrity have already
+    been checked by image_usage before the typed mismatch can be raised.
+    """
+    profile = MODELS.get(body.get("model"), {}).get("image")
+    return bool(
+        profile
+        and profile.get("output_format") == mismatch.expected
+        and mismatch.actual in {"JPEG", "PNG", "WEBP"}
+    )
 
 
 # Backward-compatible internal name for callers that imported the original
