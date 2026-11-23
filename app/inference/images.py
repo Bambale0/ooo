@@ -7,6 +7,15 @@ from app.contracts.registry import MODELS, image_resolution
 from app.infrastructure.config import get_settings
 
 
+class ImageResultDimensionsMismatch(ValueError):
+    """Exact image-contract mismatch, with only safe numeric diagnostics."""
+
+    def __init__(self, actual: tuple[int, int], expected: tuple[int, int]) -> None:
+        super().__init__("image_result_invalid_dimensions")
+        self.actual = actual
+        self.expected = expected
+
+
 def image_usage(body: dict, data: dict, *, reference_count: int | None = None) -> dict[str, int]:
     images = data.get("data")
     if not isinstance(images, list) or not images or len(images) > body.get("n", 1):
@@ -39,8 +48,9 @@ def image_usage(body: dict, data: dict, *, reference_count: int | None = None) -
                         dimensions = next(
                             row["pixels"][resolution] for row in profile["output_sizes"] if row["aspect_ratio"] == ratio
                         )
-                        if image.size != tuple(int(side) for side in dimensions.split("x")):
-                            raise ValueError("image_result_invalid_dimensions")
+                        expected = tuple(int(side) for side in dimensions.split("x"))
+                        if image.size != expected:
+                            raise ImageResultDimensionsMismatch(image.size, expected)
                     image.verify()
                 # verify() checks structure, not pixels. Reopen only after the
                 # configured byte/pixel limits and exact dimensions are checked.
