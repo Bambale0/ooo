@@ -22,9 +22,11 @@ from app.inference.diagnostics import NativeRequestTrace, log_rejection
 from app.inference.image_results import persist_single_image
 from app.inference.images import (
     ImageResultDimensionsMismatch,
+    ImageResultFormatMismatch,
     image_usage,
     inspect_url_images,
-    recoverable_seedream_dimensions,
+    recoverable_profile_image_dimensions,
+    recoverable_profile_image_format,
 )
 from app.inference.outcomes import finalize_native_failure, preserve_unbilled_result
 from app.inference.replay import replay_response, save_response
@@ -603,13 +605,18 @@ async def inference(protocol: str, request: Request, db: DbSession, auth: Partne
     except (ValueError, TypeError, KeyError, OSError, httpx.HTTPError) as exc:
         trace.failed(attempt, exc, phase="response_body_or_usage")
         if (
-            isinstance(exc, ImageResultDimensionsMismatch)
-            and protocol in {"images/generations", "images/edits"}
-            and recoverable_seedream_dimensions(body, exc)
+            protocol in {"images/generations", "images/edits"}
+            and (
+                isinstance(exc, ImageResultDimensionsMismatch)
+                and recoverable_profile_image_dimensions(body, exc)
+                or isinstance(exc, ImageResultFormatMismatch)
+                and recoverable_profile_image_format(body, exc)
+            )
         ):
-            # image_usage verified JPEG bytes/pixels BEFORE raising mismatch.
-            # Preserve and deliver the original provider output; keep monetary
-            # settlement pending instead of lying about exact-size usage.
+            # image_usage fully decoded and verified the supplier's image BEFORE
+            # raising an exact-size or encoding mismatch. Deliver real media
+            # regardless of output proportions/format without inventing
+            # exact-contract billed usage. Reconcile procurement separately.
             result_ready = True
         if result_ready:
             public = JSONResponse(scrub(data, generation.id), headers={"X-Request-Id": generation.id})

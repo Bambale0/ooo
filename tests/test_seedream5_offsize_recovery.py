@@ -73,7 +73,7 @@ async def test_completed_seedream_offsize_result_is_delivered_unbilled_with_reco
 
 
 @pytest.mark.asyncio
-async def test_seedream_wrong_ratio_is_not_reclassified_as_valid(
+async def test_seedream_wrong_ratio_is_delivered_unbilled_without_changing_request(
     client, db_session, monkeypatch
 ):
     output = jpeg_payload(1280, 960)
@@ -90,10 +90,14 @@ async def test_seedream_wrong_ratio_is_not_reclassified_as_valid(
             "model": MODEL, "prompt": "A scene", "resolution": "1k",
             "aspect_ratio": "3:4", "n": 1,
         })
-        assert a.status_code == 503
+        assert a.status_code == 200, a.text[:300]
+        assert a.json()["data"] == output["data"]
         g = (await db_session.scalars(select(Generation))).one()
-        assert g.status == "failed"
+        attempt = (await db_session.scalars(select(ProviderAttempt))).one()
+        assert g.status == attempt.status == "completed"
+        assert g.request_payload["usage_reconciliation_pending"] is True
         assert g.actual_charge_rub is None
+        assert attempt.cost_status == "unknown"
         assert not list(await db_session.scalars(select(LedgerEntry)))
     finally:
         await upstream.aclose()

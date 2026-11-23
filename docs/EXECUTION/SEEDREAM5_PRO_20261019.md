@@ -73,3 +73,32 @@ media delivery is authorized by this fix. Historical restoration would
 require a separate safe read-only recovery source and customer-account
 reconciliation. Release must pass exact-head CI and a smoke that verifies
 the updated deployed predicate without any paid generation.
+
+
+## 2026-11-23: any verified image must reach the partner
+
+Owner's explicit delivery decision supersedes the 1%/3% near-frame limit
+recorded above: **never withhold a valid generated picture because its actual
+aspect ratio, raster dimensions or supported encoding differ from the request**.
+The gateway keeps exact output dimensions/encoding requirements for normal
+billable usage, but routes a fully verified mismatch through the existing
+`preserve_unbilled_result` response, with `usage_reconciliation_pending`
+and a durable idempotent response for the originating KSU request.
+
+Applies to image profiles that enforce `aspect_ratio` output shapes (Seedream
+5 Pro and 5.5) and size-based profiles (e.g. GPT Image 2.6 Flare/Sunburst)
+when the supplier raster differs from the requested size/allowed edge.
+Other catalog images without an exact size/aspect check already have no such
+delivery gate. For supported JPEG/PNG/WEBP files with a different
+declared image encoding, the same verified/unbilled path now applies. Complete
+decode, legitimate image type, source policy refusals, configured byte/pixel
+limits, provider isolation, request identity, idempotent replay and financial
+settlement remain enforced. No ambiguous error envelope or missing/corrupt
+media is treated as an image.
+
+Regression matrix: 848×1104, 1600×600 and 350×2100 outputs against a 1K 3:4
+request; both Seedream profile models; alternate safe image encodings; oversized
+and unsupported media rejected; fully mocked HTTP API response and same-key
+replay without a second provider call or invented retail charge. Real
+production proof requires exact-sha deployment plus a customer-delivery smoke.
+Historical failed submissions are not automatically charged or resubmitted.

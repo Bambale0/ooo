@@ -16,6 +16,15 @@ class ImageResultDimensionsMismatch(ValueError):
         self.expected = expected
 
 
+class ImageResultFormatMismatch(ValueError):
+    """Decoded supported image format differs from the provider contract."""
+
+    def __init__(self, actual: str, expected: str) -> None:
+        super().__init__("image_result_invalid_format")
+        self.actual = actual
+        self.expected = expected
+
+
 def image_usage(body: dict, data: dict, *, reference_count: int | None = None) -> dict[str, int]:
     images = data.get("data")
     if not isinstance(images, list) or not images or len(images) > body.get("n", 1):
@@ -35,16 +44,28 @@ def image_usage(body: dict, data: dict, *, reference_count: int | None = None) -
             if not content or len(content) > maximum:
                 raise ValueError("image_result_too_large")
             dimension_mismatch = None
+            format_mismatch = None
             try:
                 with Image.open(io.BytesIO(content)) as image:
-                    if (
-                        (profile.get("output_format") and image.format != profile["output_format"])
-                        or image.width * image.height > get_settings().media_image_max_pixels
-                    ):
+                    if image.width * image.height > get_settings().media_image_max_pixels:
                         raise ValueError("image_result_invalid_format")
+                    expected_format = profile.get("output_format")
+                    if expected_format and image.format != expected_format:
+                        if image.format not in {"JPEG", "PNG", "WEBP"}:
+                            raise ValueError("image_result_invalid_format")
+                        format_mismatch = ImageResultFormatMismatch(image.format, expected_format)
                     if profile["frame"] == "size":
-                        if max(image.size) > profile["max_size_edge"]:
-                            raise ValueError("image_result_invalid_dimensions")
+                        declared_size = body.get("size", "auto")
+                        expected = (
+                            tuple(int(side) for side in declared_size.split("x"))
+                            if declared_size != "auto"
+                            else (profile["max_size_edge"], profile["max_size_edge"])
+                        )
+                        if (
+                            max(image.size) > profile["max_size_edge"]
+                            or (declared_size != "auto" and image.size != expected)
+                        ):
+                            dimension_mismatch = ImageResultDimensionsMismatch(image.size, expected)
                     else:
                         resolution = image_resolution(body).lower()
                         ratio = body.get("aspect_ratio", profile["default_aspect_ratio"])
@@ -61,6 +82,8 @@ def image_usage(body: dict, data: dict, *, reference_count: int | None = None) -
                     decoded.load()
             except Image.DecompressionBombError as exc:
                 raise ValueError("image_result_too_large") from exc
+            if format_mismatch is not None:
+                raise format_mismatch
             if dimension_mismatch is not None:
                 raise dimension_mismatch
         # GPT charges by actual rendered pixels, never by requested dimensions.
@@ -81,37 +104,41 @@ def image_usage(body: dict, data: dict, *, reference_count: int | None = None) -
     return units
 
 
-def recoverable_seedream_dimensions(body: dict, mismatch: ImageResultDimensionsMismatch) -> bool:
-    """Allow only verified Seedream JPEGs with near-requested framing.
+def recoverable_profile_image_dimensions(body: dict, mismatch: ImageResultDimensionsMismatch) -> bool:
+    """Deliver fully verified image output even when the supplier chose a different raster.
 
-    Accepted off-size outputs are NOT settled as a billed generation; the
-    native response is delivered with a cost reconciliation obligation.
-    Limits derive from the published model profile, not a mutable price.
+    This predicate is called ONLY after image_usage() validated the complete
+    encoded file, supported format, decompression, and configured byte/pixel
+    bounds, then raised the typed exact-size mismatch. A differing aspect ratio
+    or resolution is not a reason to withhold an already generated image.
+
+    The router preserves this response as UNBILLED and schedules reconciliation
+    instead of pretending exact-size billable usage was fulfilled.
     """
-    if body.get("model") != "seedream-5.0-pro":
+    profile = MODELS.get(body.get("model"), {}).get("image")
+    if not profile or profile.get("frame") not in {"aspect_ratio", "size"}:
         return False
-    profile = MODELS["seedream-5.0-pro"]["image"]
-    ratio = body.get("aspect_ratio", profile["default_aspect_ratio"])
-    variants = [row for row in profile["output_sizes"] if row["aspect_ratio"] == ratio]
-    if len(variants) != 1:
-        return False
-    upper = tuple(int(v) for v in variants[0]["pixels"]["2k"].split("x"))
-    aw, ah = mismatch.actual
-    ew, eh = mismatch.expected
-    # The provider may use a different raster size without changing framing.
-    # Never accept arbitrary aspect ratios, microscopic thumbnails, or a
-    # resolution above the documented 2K profile.
-    return (
-        0 < aw <= upper[0]
-        and 0 < ah <= upper[1]
-        and aw * 2 >= ew
-        and ah * 2 >= eh
-        # ArgoLink's observed 848x1104 raster for a 960x1280 1K request
-        # differs in framing by 2.36%. Keep it eligible for the existing
-        # verified, UNBILLED response path, without changing strict usage
-        # settlement or accepting unrelated crops/aspect ratios.
-        and abs(aw * eh - ah * ew) * 100 <= 3 * aw * eh
+    width, height = mismatch.actual
+    return width > 0 and height > 0 and width * height <= get_settings().media_image_max_pixels
+
+
+def recoverable_profile_image_format(body: dict, mismatch: ImageResultFormatMismatch) -> bool:
+    """Allow verified JPEG, PNG or WEBP output with a different declared format.
+
+    The byte and pixel limits, decode and actual image integrity have already
+    been checked by image_usage before the typed mismatch can be raised.
+    """
+    profile = MODELS.get(body.get("model"), {}).get("image")
+    return bool(
+        profile
+        and profile.get("output_format") == mismatch.expected
+        and mismatch.actual in {"JPEG", "PNG", "WEBP"}
     )
+
+
+# Backward-compatible internal name for callers that imported the original
+# Seedream-only helper. Do not restore aspect-ratio restrictions.
+recoverable_seedream_dimensions = recoverable_profile_image_dimensions
 
 
 async def inspect_url_images(body: dict, data: dict) -> dict:
