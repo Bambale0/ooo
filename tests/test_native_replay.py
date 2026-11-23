@@ -69,6 +69,7 @@ async def test_final_error_replays_without_second_provider_submission(client, db
         ("seedream-5.0-pro", "JPEG", (1600, 600)),
         ("seedream-5.5", "PNG", (350, 2100)),
         ("seedream-5.0-pro", "PNG", (1600, 600)),
+        ("gpt-image-2.6-flare", "PNG", (1600, 600)),
     ],
 )
 async def test_off_contract_but_verified_image_reaches_partner_and_idempotent_replay(
@@ -92,7 +93,11 @@ async def test_off_contract_but_verified_image_reaches_partner_and_idempotent_re
         db_session, monkeypatch, provider, model=model, category="image",
         rates=[("default", "1K", "generation", Decimal("10"), Decimal(".03"))],
     )
-    body = {"model": model, "prompt": "Original", "resolution": "1k", "aspect_ratio": "3:4"}
+    body = {"model": model, "prompt": "Original"}
+    if model.startswith("gpt-image-2.6"):
+        body["size"] = "1024x1024"
+    else:
+        body.update(resolution="1k", aspect_ratio="3:4")
     try:
         response = await client.post("/v1/images/generations", headers=headers, json=body)
         assert response.status_code == 200, response.text[:400]
