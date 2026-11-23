@@ -106,7 +106,11 @@ def recoverable_seedream_dimensions(body: dict, mismatch: ImageResultDimensionsM
         and 0 < ah <= upper[1]
         and aw * 2 >= ew
         and ah * 2 >= eh
-        and abs(aw * eh - ah * ew) * 100 <= aw * eh
+        # ArgoLink's observed 848x1104 raster for a 960x1280 1K request
+        # differs in framing by 2.36%. Keep it eligible for the existing
+        # verified, UNBILLED response path, without changing strict usage
+        # settlement or accepting unrelated crops/aspect ratios.
+        and abs(aw * eh - ah * ew) * 100 <= 3 * aw * eh
     )
 
 
