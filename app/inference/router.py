@@ -20,7 +20,12 @@ from app.inference.admission_receipts import fence_rejected_admission, rejected_
 from app.inference.correlation import derive_client_request_id, generation_client_request_id
 from app.inference.diagnostics import NativeRequestTrace, log_rejection
 from app.inference.image_results import persist_single_image
-from app.inference.images import ImageResultDimensionsMismatch, image_usage, inspect_url_images, recoverable_seedream_dimensions
+from app.inference.images import (
+    ImageResultDimensionsMismatch,
+    image_usage,
+    inspect_url_images,
+    recoverable_seedream_dimensions,
+)
 from app.inference.outcomes import finalize_native_failure, preserve_unbilled_result
 from app.inference.replay import replay_response, save_response
 from app.inference.service import InferenceAdmissionError, reserve
