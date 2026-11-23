@@ -76,8 +76,8 @@ async def test_off_contract_but_verified_image_reaches_partner_and_idempotent_re
 ):
     # The supplier returned real bytes. Ratio/size/encoding differences are
     # not grounds for losing a completed job; nor for charging exact-size usage.
-    from app.providers.models import ProviderAttempt
     from app.billing.models import LedgerEntry
+    from app.providers.models import ProviderAttempt
 
     buf = io.BytesIO()
     Image.new("RGB", size, color="white").save(buf, format=encoding)
