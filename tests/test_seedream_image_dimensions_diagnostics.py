@@ -9,7 +9,10 @@ import pytest
 from PIL import Image
 
 from app.inference.diagnostics import NativeRequestTrace
-from app.inference.images import ImageResultDimensionsMismatch, image_usage, recoverable_profile_image_dimensions
+from app.inference.images import (
+    ImageResultDimensionsMismatch, ImageResultFormatMismatch, image_usage,
+    recoverable_profile_image_dimensions, recoverable_profile_image_format,
+)
 
 
 def test_seedream_provider_output_mismatch_has_actual_and_expected_dimensions():
@@ -71,6 +74,34 @@ def test_profile_image_delivery_still_rejects_invalid_or_unbounded_rasters(actua
         {"model": "seedream-5.0-pro", "resolution": "1k", "aspect_ratio": "3:4"},
         ImageResultDimensionsMismatch(actual, (960, 1280)),
     )
+
+
+
+@pytest.mark.parametrize(
+    ("model", "encoding"),
+    [("seedream-5.0-pro", "PNG"), ("seedream-5.5", "JPEG"), ("seedream-5.0-pro", "WEBP")],
+)
+def test_valid_generated_image_with_different_encoding_is_still_delivered(model, encoding):
+    # The supplier finished a valid PNG/JPEG/WebP, even if its declared
+    # representation differs. Do not lose customer media due to the envelope.
+    body = {"model": model, "resolution": "1k", "aspect_ratio": "3:4"}
+    source = io.BytesIO()
+    Image.new("RGB", (960, 1280)).save(source, format=encoding)
+    data = {"data": [{"b64_json": base64.b64encode(source.getvalue()).decode()}]}
+    with pytest.raises(ImageResultFormatMismatch) as mismatch:
+        image_usage(body, data)
+    assert mismatch.value.actual == encoding
+    assert recoverable_profile_image_format(body, mismatch.value)
+
+
+def test_invalid_image_format_remains_rejected_without_unbilled_delivery():
+    body = {"model": "seedream-5.0-pro", "resolution": "1k", "aspect_ratio": "3:4"}
+    source = io.BytesIO()
+    Image.new("RGB", (960, 1280)).save(source, format="GIF")
+    data = {"data": [{"b64_json": base64.b64encode(source.getvalue()).decode()}]}
+    with pytest.raises(ValueError, match="image_result_invalid_format") as error:
+        image_usage(body, data)
+    assert not isinstance(error.value, ImageResultFormatMismatch)
 
 
 def test_profile_image_recovery_does_not_apply_to_unprofiled_models():
