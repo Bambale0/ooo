@@ -12,6 +12,7 @@ import httpx
 
 from app.contracts.validation_errors import VALIDATION_REASONS
 from app.generations.models import Generation
+from app.inference.images import ImageResultDimensionsMismatch
 from app.providers.models import ProviderAttempt
 
 logger = logging.getLogger(__name__)
@@ -164,6 +165,11 @@ class NativeRequestTrace:
             and error.args[0] in IMAGE_RESPONSE_FAILURE_REASONS
         ):
             event["validation_reason"] = error.args[0]
+        if isinstance(error, ImageResultDimensionsMismatch):
+            # Safe numbers only. Never log source media, URL, prompt or bytes.
+            event["validation_reason"] = "image_result_invalid_dimensions"
+            event["actual_width"], event["actual_height"] = error.actual
+            event["expected_width"], event["expected_height"] = error.expected
         attempt.raw_error = json.dumps(event, separators=(",", ":"))
         # No exception string or exc_info: they may contain signed URLs or keys.
         logger.warning("native_inference_transport_or_decode_failed", extra=event)
