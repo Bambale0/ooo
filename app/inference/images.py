@@ -22,6 +22,8 @@ def image_usage(body: dict, data: dict, *, reference_count: int | None = None) -
         raise ValueError("invalid_image_count")
     units = {}
     for item in images:
+        # A size mismatch is only actionable after full image verification and
+        # decode. Otherwise a truncated JPEG could masquerade as recoverable.
         profile = MODELS.get(body["model"], {}).get("image")
         if profile:
             if not isinstance(item, dict) or not isinstance(item.get("b64_json"), str) or not item["b64_json"]:
@@ -32,6 +34,7 @@ def image_usage(body: dict, data: dict, *, reference_count: int | None = None) -
             content = base64.b64decode(item["b64_json"], validate=True)
             if not content or len(content) > maximum:
                 raise ValueError("image_result_too_large")
+            dimension_mismatch = None
             try:
                 with Image.open(io.BytesIO(content)) as image:
                     if (
@@ -50,7 +53,7 @@ def image_usage(body: dict, data: dict, *, reference_count: int | None = None) -
                         )
                         expected = tuple(int(side) for side in dimensions.split("x"))
                         if image.size != expected:
-                            raise ImageResultDimensionsMismatch(image.size, expected)
+                            dimension_mismatch = ImageResultDimensionsMismatch(image.size, expected)
                     image.verify()
                 # verify() checks structure, not pixels. Reopen only after the
                 # configured byte/pixel limits and exact dimensions are checked.
@@ -58,6 +61,8 @@ def image_usage(body: dict, data: dict, *, reference_count: int | None = None) -
                     decoded.load()
             except Image.DecompressionBombError as exc:
                 raise ValueError("image_result_too_large") from exc
+            if dimension_mismatch is not None:
+                raise dimension_mismatch
         # GPT charges by actual rendered pixels, never by requested dimensions.
         if body["model"].startswith("gpt-image"):
             encoded = item.get("b64_json")
@@ -74,6 +79,35 @@ def image_usage(body: dict, data: dict, *, reference_count: int | None = None) -
         if count:
             units["reference_images"] = count
     return units
+
+
+def recoverable_seedream_dimensions(body: dict, mismatch: ImageResultDimensionsMismatch) -> bool:
+    """Allow only verified Seedream JPEGs with near-requested framing.
+
+    Accepted off-size outputs are NOT settled as a billed generation; the
+    native response is delivered with a cost reconciliation obligation.
+    Limits derive from the published model profile, not a mutable price.
+    """
+    if body.get("model") != "seedream-5.0-pro":
+        return False
+    profile = MODELS["seedream-5.0-pro"]["image"]
+    ratio = body.get("aspect_ratio", profile["default_aspect_ratio"])
+    variants = [row for row in profile["output_sizes"] if row["aspect_ratio"] == ratio]
+    if len(variants) != 1:
+        return False
+    upper = tuple(int(v) for v in variants[0]["pixels"]["2k"].split("x"))
+    aw, ah = mismatch.actual
+    ew, eh = mismatch.expected
+    # The provider may use a different raster size without changing framing.
+    # Never accept arbitrary aspect ratios, microscopic thumbnails, or a
+    # resolution above the documented 2K profile.
+    return (
+        0 < aw <= upper[0]
+        and 0 < ah <= upper[1]
+        and aw * 2 >= ew
+        and ah * 2 >= eh
+        and abs(aw * eh - ah * ew) * 100 <= aw * eh
+    )
 
 
 async def inspect_url_images(body: dict, data: dict) -> dict:
