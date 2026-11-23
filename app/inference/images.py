@@ -81,37 +81,27 @@ def image_usage(body: dict, data: dict, *, reference_count: int | None = None) -
     return units
 
 
-def recoverable_seedream_dimensions(body: dict, mismatch: ImageResultDimensionsMismatch) -> bool:
-    """Allow only verified Seedream JPEGs with near-requested framing.
+def recoverable_profile_image_dimensions(body: dict, mismatch: ImageResultDimensionsMismatch) -> bool:
+    """Deliver fully verified image output even when the supplier chose a different raster.
 
-    Accepted off-size outputs are NOT settled as a billed generation; the
-    native response is delivered with a cost reconciliation obligation.
-    Limits derive from the published model profile, not a mutable price.
+    This predicate is called ONLY after image_usage() validated the complete
+    encoded file, supported format, decompression, and configured byte/pixel
+    bounds, then raised the typed exact-size mismatch. A differing aspect ratio
+    or resolution is not a reason to withhold an already generated image.
+
+    The router preserves this response as UNBILLED and schedules reconciliation
+    instead of pretending exact-size billable usage was fulfilled.
     """
-    if body.get("model") != "seedream-5.0-pro":
+    profile = MODELS.get(body.get("model"), {}).get("image")
+    if not profile or profile.get("frame") != "aspect_ratio":
         return False
-    profile = MODELS["seedream-5.0-pro"]["image"]
-    ratio = body.get("aspect_ratio", profile["default_aspect_ratio"])
-    variants = [row for row in profile["output_sizes"] if row["aspect_ratio"] == ratio]
-    if len(variants) != 1:
-        return False
-    upper = tuple(int(v) for v in variants[0]["pixels"]["2k"].split("x"))
-    aw, ah = mismatch.actual
-    ew, eh = mismatch.expected
-    # The provider may use a different raster size without changing framing.
-    # Never accept arbitrary aspect ratios, microscopic thumbnails, or a
-    # resolution above the documented 2K profile.
-    return (
-        0 < aw <= upper[0]
-        and 0 < ah <= upper[1]
-        and aw * 2 >= ew
-        and ah * 2 >= eh
-        # ArgoLink's observed 848x1104 raster for a 960x1280 1K request
-        # differs in framing by 2.36%. Keep it eligible for the existing
-        # verified, UNBILLED response path, without changing strict usage
-        # settlement or accepting unrelated crops/aspect ratios.
-        and abs(aw * eh - ah * ew) * 100 <= 3 * aw * eh
-    )
+    width, height = mismatch.actual
+    return width > 0 and height > 0 and width * height <= get_settings().media_image_max_pixels
+
+
+# Backward-compatible internal name for callers that imported the original
+# Seedream-only helper. Do not restore aspect-ratio restrictions.
+recoverable_seedream_dimensions = recoverable_profile_image_dimensions
 
 
 async def inspect_url_images(body: dict, data: dict) -> dict:
