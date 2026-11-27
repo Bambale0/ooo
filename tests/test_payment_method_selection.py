@@ -57,7 +57,8 @@ async def test_selected_provider_survives_restart_default_change_and_replay(
     else:
         assert "email" not in screen.text.lower()
     screen = (await feed(text="3000"))[-1]
-    assert ("3,300" if method == "lava_top" else "3,000") in screen.text
+    assert "3,000" in screen.text
+    assert "3,300" not in screen.text
     action = (await db_session.scalars(select(BotAction))).one()
     assert action.payload["payment_provider"] == method
     assert not crypto.created and not lava.created
@@ -67,7 +68,7 @@ async def test_selected_provider_survives_restart_default_change_and_replay(
     payment = (await db_session.scalars(select(PaymentInvoice))).one()
     assert payment.provider == method
     assert payment.requested_rub == Decimal("3000")
-    assert payment.amount_due_rub == Decimal("3300" if method == "lava_top" else "3000")
+    assert payment.amount_due_rub == Decimal("3000")
     assert payment.invoice_url
     assert len(crypto.created) == (1 if method == "crypto_pay" else 0)
     assert len(lava.created) == (1 if method == "lava_top" else 0)
