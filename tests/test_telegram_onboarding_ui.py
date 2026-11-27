@@ -128,6 +128,9 @@ async def test_bound_menu_buttons_navigate(cabinet, db_session, monkeypatch, cal
     monkeypatch.setattr(get_settings(), "privacy_policy_url", "https://example.org/privacy")
     home = (await feed(user=999, text="/start"))[-1]
     menu_markup = home.reply_markup
+    if callback == "trials":
+        # A button already delivered before removal must remain usable.
+        menu_markup = keyboard(("Бесплатные видеотесты", "trials"))
     if callback in {"legal_documents", "settings"}:
         # Secondary destinations are now grouped in the compact "Ещё" menu.
         more = (await feed(user=999, callback="more_menu", reply_markup=menu_markup))[-1]

@@ -30,7 +30,7 @@ _PAGE_SIZE = 25
 _EXPORT_LIMIT = 1000
 _MAX_PERIOD = 90
 _ALLOWED_SECTIONS = frozenset(
-    {"overview", "activity", "logs", "models", "keys", "credits", "invoices", "ledger", "settings"}
+    {"overview", "playground", "activity", "logs", "models", "keys", "credits", "invoices", "ledger", "settings"}
 )
 
 
@@ -141,7 +141,11 @@ async def render_portal(request: Request, db: DbSession, partner: Partner, sessi
     current_page = _int_value(request.query_params.get("page"), default=1, minimum=1, maximum=100000)
     notice = request.query_params.get("notice", "")[:40]
     period = _period(request)
-    if section == "overview":
+    if section == "playground":
+        from app.dashboard.playground_ui import playground_view
+
+        body = playground_view(csrf)
+    elif section == "overview":
         usage = await _usage(db, partner.id, 30)
         recent = (
             await db.execute(

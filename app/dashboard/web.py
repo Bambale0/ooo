@@ -304,3 +304,7 @@ from app.dashboard.yandex import router as yandex_router  # noqa: E402
 
 router.include_router(yandex_router)
 router.include_router(portal_router)
+
+from app.dashboard.playground import router as playground_router  # noqa: E402
+
+router.include_router(playground_router)

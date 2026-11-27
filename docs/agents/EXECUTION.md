@@ -361,3 +361,33 @@ Branch: `fix/persistent-partner-pricing-20261010`.
   publications on old revisions after the migration. Schema downgrade refuses
   while any custom rate exists.
 - Verification status: pending PR CI / migration / production release.
+
+## 2026-11-27 — Cabinet API playground and Telegram menu
+
+Baseline: `5b436ea88ea3383bf1097b96dc207c64982a13af`; branch `feature/cabinet-playground`.
+Preflight: this is the SaaS repository (Bambale0/ooo). The existing cabinet is a
+session-authenticated BFF with Origin/session CSRF protection. Native inference
+owns validation, partner prices/snapshots, actual-only settlement, admission,
+durable video queue and response replay. The reviewed model registry contains
+text/image/video protocols; no audio endpoint exists. No new provider adapter,
+ledger, tariffs, secrets, trial entitlement or schema is needed.
+
+Outcome/acceptance: remove trials from generated Telegram menus, preserve old
+callbacks; add cabinet navigation and a usable model/parameter editor, signed
+server quote, explicit paid submission, request/response, polling/result and curl.
+Use current active owned API key identity, without retrieving its plaintext.
+History stays in existing generations/logs. Preserve native replay and price gates.
+
+Test seams authorized by the request: synthetic Telegram updates; authenticated
+cabinet HTTP (CSRF, ownership, validation, quote tampering, balance); real native
+admission/settlement and queue with isolated provider transport; browser UI against
+an isolated local server. Provider credentials/results never enter logs/examples.
+No new migrations/configuration. Business availability/prices remain DB/admin-owned.
+Safe diagnostics use existing native correlation IDs and redacted errors.
+
+1. [done] Read AGENTS, README, brief, launch gates, cabinet/inference architecture,
+   tests and CI. Initialized pinned .agents via HTTPS (SSH port 22 unavailable).
+   Applied local python-testing-patterns and api-security-best-practices.
+2. [in progress] Regression slice: menus, authenticated playground and paid execution.
+3. [pending] Focused/full tests, browser scenario, lint/review and exact-head CI.
+4. [pending] PR and release access/gates inspection; production claims need live evidence.
