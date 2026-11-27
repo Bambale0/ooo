@@ -218,6 +218,31 @@ Code-only deploy на существующем хосте сам миграци�
 аккаунты, балансы, ledger, счета и привязки не переписываются. Downgrade запрещён
 при наличии строк без Telegram; новые identity нельзя удалять ради отката схемы.
 
+На текущем хосте Nginx дополнительно выдавал собственный `no-referrer`, поверх
+заголовка приложения. Поэтому одной замены Python-кода недостаточно. В
+`/etc/nginx/conf.d/neironych-referrer-policy.conf` в http-контексте установить:
+
+```nginx
+map $upstream_http_referrer_policy $neironych_referrer_policy {
+    same-origin same-origin;
+    default no-referrer;
+}
+```
+
+В HTTPS server только API-сайта `/etc/nginx/sites-available/neiro-api.conf`
+заменить прежний `add_header Referrer-Policy no-referrer always` на:
+
+```nginx
+proxy_hide_header Referrer-Policy;
+add_header Referrer-Policy $neironych_referrer_policy always;
+```
+
+Это тот же whitelist, что в `nginx/production.conf`: одно значение заголовка,
+`same-origin` только по ответу приложения, `no-referrer` по умолчанию. Другие
+виртуальные хосты не менять. Сохранить приватные backup исходных файлов,
+проверить `nginx -t`, выполнить reload, проверить фактические HTTPS-заголовки и
+обычное нажатие кнопки. При неуспехе восстановить файлы и повторить валидацию/reload.
+
 Тесты: `test_yandex_cabinet`, `test_yandex_provider`, `test_yandex_signup`,
 `test_yandex_persistence`, `test_yandex_signup_persistence`, `test_portal`,
 `test_argolink_registration_key_pool`, `test_shared_registration_key`.
