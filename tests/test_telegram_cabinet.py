@@ -350,7 +350,7 @@ async def test_lava_top_payment_email_is_saved_reused_and_changeable(cabinet, db
     await db_session.refresh(owner)
     assert owner.payment_email == "buyer@example.org"
     confirmation = (await feed(text="1500"))[-1]
-    assert "Создать счёт на 1,650 ₽" in confirmation.text
+    assert "Создать счёт на 1,500 ₽" in confirmation.text
     assert "На баланс зачислится 1,500 ₽" in confirmation.text
     action = (
         await db_session.execute(
@@ -369,7 +369,7 @@ async def test_lava_top_payment_email_is_saved_reused_and_changeable(cabinet, db
         )
     ).scalar_one()
     await feed(callback=f"confirm:{action.id}")
-    assert fake.created == [(1650, "buyer@example.org"), (1760, "buyer@example.org")]
+    assert fake.created == [(1500, "buyer@example.org"), (1600, "buyer@example.org")]
 
     await feed(callback="payment_email")
     await feed(text="new@example.org")
@@ -461,6 +461,7 @@ async def test_legacy_lava_topup_exemption_hides_ten_percent_from_balance_and_co
     owner.payment_email = "buyer@example.org"
     owner.lava_top_surcharge_exempt = True
     await db_session.commit()
+    monkeypatch.setattr(get_settings(), "lava_top_surcharge_rate", Decimal("0.10"))
     monkeypatch.setattr(get_settings(), "payment_provider", "lava_top")
     fake = FakeLavaTopClient()
     monkeypatch.setattr("app.payments.service.get_lava_top_client", lambda: fake)
