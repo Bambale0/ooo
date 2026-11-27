@@ -27,6 +27,13 @@ p{color:var(--soft)}
   padding:clamp(24px,5vw,52px);border:1px solid var(--line);border-radius:20px;
   background:linear-gradient(155deg,#161027,var(--panel) 65%);box-shadow:0 24px 90px rgba(0,0,0,.3)}
 .login-card p{margin:18px auto}
+.login-options,.signup-form{display:grid;gap:14px}
+.signup-form{text-align:left;margin:24px 0}
+.signup-form label{display:grid;gap:6px}
+.signup-form input:not([type=checkbox]){width:100%;padding:11px 12px;border:1px solid var(--line);
+  border-radius:9px;background:var(--bg);color:var(--text);font:inherit}
+.signup-form .consent{display:flex;align-items:flex-start;gap:10px;font-size:13px;color:var(--soft)}
+.signup-form input[type=checkbox]{flex-shrink:0;margin-top:5px;accent-color:var(--purple)}
 .telegram-widget{min-height:66px;margin:28px auto 12px;display:flex;justify-content:center;align-items:center}
 .error{padding:12px;border:1px solid #a74768;color:#ffbfd0;border-radius:10px}
 .hint{font-size:13px}

@@ -9,6 +9,7 @@ from app.accounts.models import (
     Partner,
     PartnerAccountStateHistory,
     PartnerApplication,
+    PartnerIdentity,
     PartnerLavaTopSurchargeHistory,
 )
 from app.accounts.schemas import (
@@ -33,6 +34,14 @@ from app.providers.models import PartnerProviderCredentialBinding, ProviderCrede
 from app.webhooks.security import validate_public_webhook_url
 
 router = APIRouter()
+
+
+def _application_partner(application: PartnerApplication):
+    # NULL Telegram IDs must never match another independent Yandex account.
+    return (
+        Partner.telegram_id == application.telegram_id if application.telegram_id is not None
+        else Partner.application_id == application.id
+    )
 
 
 @router.post(
@@ -115,10 +124,10 @@ async def auto_activate_application(application_id: str, db: DbSession) -> Partn
     application = await db.get(PartnerApplication, application_id, with_for_update=True)
     if application is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="application_not_found")
-    await lock_key_hashes(db, [hash_secret(f"partner-registration:{application.telegram_id}")])
+    await lock_key_hashes(db, [hash_secret(f"partner-registration:{application.registration_identity}")])
     existing_partner = await db.scalar(
         select(Partner)
-        .where(Partner.telegram_id == application.telegram_id, Partner.status != "deleted")
+        .where(_application_partner(application), Partner.status != "deleted")
         .with_for_update()
     )
     if existing_partner is not None:
@@ -181,7 +190,7 @@ async def _activate_application(
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="required_provider_key_missing")
 
     existing = await db.execute(
-        select(Partner).where(Partner.telegram_id == application.telegram_id, Partner.status != "deleted")
+        select(Partner).where(_application_partner(application), Partner.status != "deleted")
     )
     partner = existing.scalar_one_or_none()
     if partner is None:
@@ -204,6 +213,14 @@ async def _activate_application(
         )
     elif require_dedicated_argolink_credential:
         partner.requires_dedicated_argolink_credential = True
+    if application.yandex_subject is not None:
+        identity = await db.scalar(select(PartnerIdentity).where(
+            PartnerIdentity.provider == "yandex", PartnerIdentity.subject == application.yandex_subject,
+        ))
+        if identity is None:
+            db.add(PartnerIdentity(partner_id=partner.id, provider="yandex", subject=application.yandex_subject))
+        elif identity.partner_id != partner.id:
+            raise HTTPException(409, "identity_already_linked")
     from app.referrals.service import claim_partner_attribution
 
     await claim_partner_attribution(db, partner)
@@ -361,7 +378,8 @@ async def delete_partner(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="negative_balance_delete_forbidden")
     previous_status = partner.status
     partner.status = "deleted"
-    partner.telegram_id = "deleted:" + partner.id
+    if partner.telegram_id is not None:
+        partner.telegram_id = "deleted:" + partner.id
     partner.company_name = "Удалённый аккаунт"
     partner.project_name = "Удалённый аккаунт"
     partner.payment_email = None

@@ -9,9 +9,15 @@ from app.infrastructure.types import utc_created_at, uuid_pk
 
 class PartnerApplication(Base):
     __tablename__ = "partner_applications"
+    __table_args__ = (
+        CheckConstraint(
+            "(telegram_id IS NOT NULL) <> (yandex_subject IS NOT NULL)", name="application_login_identity"
+        ),
+    )
 
     id: Mapped[str] = uuid_pk()
-    telegram_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    telegram_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    yandex_subject: Mapped[str | None] = mapped_column(String(128), unique=True)
     company_name: Mapped[str] = mapped_column(String(255), nullable=False)
     project_name: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)
@@ -19,6 +25,14 @@ class PartnerApplication(Base):
     terms_version: Mapped[str] = mapped_column(String(40), nullable=False, default="2026-09-19")
     privacy_policy_version: Mapped[str] = mapped_column(String(40), nullable=False, default="2026-09-19")
     created_at: Mapped[object] = utc_created_at()
+
+    @property
+    def registration_identity(self) -> str:
+        if self.telegram_id is not None:
+            return self.telegram_id
+        if self.yandex_subject is not None:
+            return "yandex:" + self.yandex_subject
+        raise ValueError("application_identity_required")
 
 
 class RegistrationInvite(Base):
@@ -46,7 +60,7 @@ class Partner(Base):
 
     id: Mapped[str] = uuid_pk()
     application_id: Mapped[str | None] = mapped_column(ForeignKey("partner_applications.id"))
-    telegram_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    telegram_id: Mapped[str | None] = mapped_column(String(64), unique=True)
     company_name: Mapped[str] = mapped_column(String(255), nullable=False)
     project_name: Mapped[str] = mapped_column(String(255), nullable=False)
     payment_email: Mapped[str | None] = mapped_column(String(320))
@@ -138,7 +152,7 @@ class ConsentAcceptance(Base):
     __tablename__ = "consent_acceptances"
 
     id: Mapped[str] = uuid_pk()
-    telegram_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    telegram_id: Mapped[str | None] = mapped_column(String(64), index=True)
     partner_application_id: Mapped[str | None] = mapped_column(ForeignKey("partner_applications.id"))
     partner_id: Mapped[str | None] = mapped_column(ForeignKey("partners.id"))
     document_type: Mapped[str] = mapped_column(String(64), nullable=False)

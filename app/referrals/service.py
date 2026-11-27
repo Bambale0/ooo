@@ -64,6 +64,8 @@ async def bind_referral(db: AsyncSession, *, referred_telegram_id: str, code: st
 
 
 async def claim_partner_attribution(db: AsyncSession, partner: Partner) -> ReferralAttribution | None:
+    if partner.telegram_id is None:
+        return None
     attribution = await db.scalar(
         select(ReferralAttribution).where(ReferralAttribution.referred_telegram_id == partner.telegram_id)
     )
@@ -76,7 +78,7 @@ async def claim_partner_attribution(db: AsyncSession, partner: Partner) -> Refer
 async def accrue_commission(
     db: AsyncSession,
     *,
-    referred_telegram_id: str,
+    referred_telegram_id: str | None,
     referred_partner_id: str | None = None,
     kind: str,
     source_id: str,
@@ -89,6 +91,8 @@ async def accrue_commission(
     existing = await db.scalar(select(ReferralCommission).where(ReferralCommission.event_key == event_key))
     if existing is not None:
         return existing
+    if referred_telegram_id is None:
+        return None
     attribution = None
     if referred_partner_id is not None:
         attribution = await db.scalar(

@@ -1,4 +1,4 @@
-"""Browser-bound authorization code + PKCE. Never provision or merge partners."""
+"""Browser-bound authorization code + PKCE, independent signup and explicit linking."""
 
 import base64
 import hashlib
@@ -168,6 +168,7 @@ def _failure(status: int, detail: str) -> HTMLResponse:
         f'<p>{message}</p><a href="/cabinet">Вернуться в кабинет</a></section>',
     )
     response.status_code = status
+    response.headers["Referrer-Policy"] = "no-referrer"
     response.delete_cookie(_COOKIE, secure=True, httponly=True, samesite="lax", path="/")
     return response
 
@@ -190,7 +191,7 @@ async def start(request: Request, db: DbSession, csrf: str = Form(...), mode: st
         if not _recent_telegram(request, session):
             return _failure(403, "sign_in_with_telegram_again_before_linking")
         bound = {"partner_id": partner.id, "session_key": _session_key(session)}
-    elif mode == "login":
+    elif mode in {"login", "register"}:
         if partner is not None:
             return RedirectResponse("/cabinet", status_code=303, headers=_HEADERS)
         origin = request.headers.get("origin", "")
@@ -231,7 +232,7 @@ async def start(request: Request, db: DbSession, csrf: str = Form(...), mode: st
 
 @router.get("/cabinet/yandex/callback", include_in_schema=False)
 async def callback(request: Request, db: DbSession):
-    from app.dashboard.web import _HEADERS, _LOGIN_COOKIE, _SESSION_COOKIE, _SESSION_TTL, _store_session
+    from app.dashboard.web import _store_session
 
     if not configured() or configuration_errors():
         return _failure(503, "yandex_login_unavailable")
@@ -258,6 +259,10 @@ async def callback(request: Request, db: DbSession):
             subject = await _subject(code, flow["verifier"])
         except (httpx.HTTPError, ValueError, KeyError, TypeError):
             return _failure(502, "yandex_identity_unavailable")
+        from app.infrastructure.security import hash_secret
+        from app.providers.key_pool import lock_key_hashes
+
+        await lock_key_hashes(db, [hash_secret(f"partner-registration:yandex:{subject}")])
         identity = (
             await db.execute(
                 select(PartnerIdentity).where(
@@ -286,13 +291,23 @@ async def callback(request: Request, db: DbSession):
         else:
             partner = await db.get(Partner, identity.partner_id) if identity else None
             if partner is None:
-                return _failure(403, "sign_in_with_telegram_and_link_yandex_in_settings")
+                if identity is not None:
+                    return _failure(403, "partner_account_not_active")
+                from app.dashboard.yandex_signup import begin_signup
+
+                return await begin_signup(subject)
             if partner.status != "active":
                 return _failure(403, "partner_account_not_active")
         token = secrets.token_urlsafe(32)
         await _store_session(token, partner.id)
     except RedisError:
         return _failure(503, "cabinet_session_unavailable")
+    return session_response(token)
+
+
+def session_response(token: str) -> HTMLResponse:
+    from app.dashboard.web import _HEADERS, _LOGIN_COOKIE, _SESSION_COOKIE, _SESSION_TTL
+
     # A same-origin document starts a fresh navigation so Strict session cookies work
     # even in browsers that retain a cross-site redirect chain after OAuth.
     response = HTMLResponse(
@@ -314,4 +329,10 @@ async def callback(request: Request, db: DbSession):
     response.delete_cookie(_COOKIE, secure=True, httponly=True, samesite="lax", path="/")
     response.delete_cookie(_LOGIN_COOKIE, secure=True, httponly=True, samesite="strict", path="/")
     response.delete_cookie(_PROOF_COOKIE, secure=True, httponly=True, samesite="strict", path="/")
+    response.delete_cookie("__Host-neironych_signup", secure=True, httponly=True, samesite="strict", path="/")
     return response
+
+
+from app.dashboard.yandex_signup import router as signup_router  # noqa: E402
+
+router.include_router(signup_router)

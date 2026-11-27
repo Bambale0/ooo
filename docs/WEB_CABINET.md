@@ -4,7 +4,7 @@
 
 ## Авторизация
 
-Используется официальный Telegram Login Widget (callback), привязанный к существующему
+Для входа через Telegram используется официальный Telegram Login Widget (callback), привязанный к существующему
 Telegram-боту Нейроныча. Widget передаёт JSON в POST /cabinet/telegram без
 Telegram auth-параметров в URL. Сервер проверяет HMAC-SHA256 по SHA256 токена
 бота, auth_date (максимум 5 минут), браузерный CSRF
@@ -134,130 +134,124 @@ org members / RBAC, per-key spending guardrails, автоматического 
 ссылка в авторизованном /cabinet, scope docs-хоста, /v1/models
 и тесты регрессий. Изменений в биллинге и провайдерах нет.
 
-## Яндекс ID (2026-11-17)
+## Самостоятельные вход и регистрация через Яндекс ID (2026-11-27)
 
-Публичные header и CTA ведут непосредственно на официального бота из
-`TELEGRAM_BOT_USERNAME`, без `start=apply` и текста «Подать заявку». Если имя
-не настроено, ссылка скрыта; чужой или предположительный URL не подставляется.
+Яндекс ID — самостоятельный способ регистрации и входа в веб-кабинет.
+Telegram-аккаунт и настроенный Telegram-бот для него не требуются. На /cabinet
+есть отдельные кнопки «Войти с Яндекс ID» и «Зарегистрироваться с Яндекс ID».
 
-### Один аккаунт и один баланс
+1. Пользователь подтверждает Яндекс ID через Authorization Code + PKCE S256.
+2. Для известной identity открывается её существующий активный Partner.
+3. Для новой identity показывается отдельная веб-анкета: компания/имя, проект,
+   два явных согласия с текущими условиями и политикой конфиденциальности.
+4. Только после отправки анкеты создаются заявка и аккаунт с нулевыми балансом,
+   кредитным лимитом и покрытием. Активация использует существующие правила
+   выделения provider credential, shared route и глобальный бюджет регистраций.
+   Недоступность маршрута оставляет одну pending-заявку, без нового Partner,
+   расходов ключей или обхода лимитов; повторная попытка использует ту же заявку.
+5. API-ключ создаётся пользователем в веб-кабинете и показывается один раз.
+   Повторные входы и регистрации не создают второй аккаунт и не расходуют новые
+   provider keys. Заблокированные и удалённые аккаунты не активируются заново.
 
-Регистрация и принятие документов остаются в Telegram. Существующий
-`Partner.telegram_id` — основная уникальная Telegram identity. Яндекс ID —
-дополнительная identity в `partner_identities`, FK на тот же `partners.id`.
-OAuth не создаёт Partner, API key, баланс, ledger, платёж или регистрацию у провайдера.
-Нет автоматического сопоставления по email, имени, телефону или данным браузера.
+`Partner.telegram_id`, `PartnerApplication.telegram_id` и
+`ConsentAcceptance.telegram_id` допускают NULL. Yandex subject хранится отдельно,
+а не как выдуманный Telegram ID. В заявке ровно одна исходная identity: Telegram
+либо Яндекс. Уникальные subject и PostgreSQL advisory locks защищают параллельные
+регистрации. У независимых аккаунтов раздельные Partner ID, API-ключи и балансы,
+включая режим общего provider credential. Ответы admin API могут содержать
+`telegram_id: null` для новых аккаунтов без Telegram.
 
-1. Войти через Telegram. Для подключения Яндекса вход должен быть не старше 5 минут.
-2. В кабинете открыть **Настройки → Подключить Яндекс ID**.
-3. Подтвердить нужный аккаунт на странице Яндекса. `force_confirm=yes` запрашивает
-   явное согласие даже при существующей авторизации у провайдера.
-4. После подключения можно выходить и пользоваться **Войти с Яндекс ID**.
-   Откроется тот же партнёр, API-ключи, история и баланс.
+### Привязка существующего аккаунта
 
-Уникальности `(provider, subject)` и `(partner_id, provider)` в PostgreSQL
-запрещают присоединить один Яндекс ID к двум партнёрам и заменить существующий
-ID другим. Конкурирующие подключения получают 409, без слияния аккаунтов.
-Неизвестный Яндекс ID получает понятную инструкцию сначала войти через Telegram.
-Самостоятельного unlink/relink нет; восстановление доступа — через Telegram и
-проверку владельца, без ручного изменения денежных записей.
+Если уже есть партнёрский аккаунт с балансом, следует войти в него и выбрать
+«Настройки → Подключить Яндекс ID». Для аккаунта Telegram сохраняется проверка
+свежего подтверждённого Telegram-входа. Это отдельная операция, не условие
+самостоятельной регистрации. Автоматического сопоставления по email, имени,
+телефону или профилю нет; неизвестный Яндекс ID не получает чужой аккаунт.
+Уникальности `(provider, subject)` и `(partner_id, provider)` запрещают захват,
+замену и привязку одной identity к двум партнёрам. Самостоятельного слияния нет.
 
-Наличие кнопки Яндекса не зависит от `TELEGRAM_BOT_USERNAME`: при отсутствующем
-или некорректном имени Telegram-бота ранее привязанный Яндекс ID всё равно может
-войти. Вместо неработающего Telegram widget показывается сообщение о временной
-недоступности. Новый или непривязанный Яндекс ID по-прежнему не получает аккаунт
-или сессию; первое подключение требует свежего подтверждённого Telegram-входа.
+### Настройки OAuth
 
-### Конфигурация и запуск
-
-Создать приложение в [Яндекс OAuth](https://oauth.yandex.ru/) с веб-платформой
-и минимальным правом `login:info`. В **Redirect URI** зарегистрировать точный URL:
+Приложение в [Яндекс OAuth](https://oauth.yandex.ru/) использует веб-платформу и
+минимальное право `login:info`. Точный Redirect URI:
 
 ```text
 https://api.xn--e1aikcel5c5a.online/cabinet/yandex/callback
 ```
 
-В runtime `.env` сервера (не в Git и не в браузере) задать:
+В приватной конфигурации сервера задаются `YANDEX_CLIENT_ID`,
+`YANDEX_CLIENT_SECRET` и `YANDEX_CALLBACK_URL`; `PUBLIC_API_BASE_URL` должен
+использовать тот же точный HTTPS origin. Ключи не коммитятся. GitHub deployment
+сохраняет серверный .env. Для регистрации нужны опубликованные `TERMS_URL`,
+`PRIVACY_POLICY_URL` и текущая `LEGAL_DOCUMENT_VERSION`.
 
-```dotenv
-YANDEX_CLIENT_ID=
-YANDEX_CLIENT_SECRET=
-YANDEX_CALLBACK_URL=https://api.xn--e1aikcel5c5a.online/cabinet/yandex/callback
+### Защита браузерного протокола
+
+- POST start/register требуют точный Origin и браузерный CSRF. `Origin: null`,
+  отсутствующий или чужой Origin не разрешаются. HTML-страницы с формами имеют
+  `Referrer-Policy: same-origin`: это сохраняет настоящий Origin при обычном
+  браузерном POST и не отправляет Referer внешним сайтам. Прежний `no-referrer`
+  превращал Origin обычной HTML-формы в null, что воспроизводилось в браузере.
+- Callback, его ошибки, промежуточные документы OAuth и ответы с session cookie
+  сохраняют `Referrer-Policy: no-referrer`, чтобы code/state не попадали в Referer.
+  [Алгоритм Origin в Fetch Standard](https://fetch.spec.whatwg.org/#append-a-request-origin-header).
+- State, PKCE verifier и browser nonce случайны, действуют 300 секунд; nonce cookie
+  __Host-/Secure/HttpOnly/Lax, Redis GETDEL запрещает повтор callback.
+- Новая регистрация получает отдельную __Host-/Secure/HttpOnly/Strict cookie и
+  серверное подтверждение subject/CSRF/версии документов на 600 секунд.
+  Subject не принимается из формы или query. Подтверждение поглощается однократно
+  перед фиксацией аккаунта. Изменение версии документов требует нового OAuth.
+- Provider endpoints фиксированы, TLS включён, redirect/timeout/error закрывают
+  вход. /info проверяет client_id и числовой id. Токены Яндекса не хранятся и не
+  передаются в браузер. Успешный вход выдаёт новую серверную сессию на 12 часов.
+- Query callback исключён из access logs, Uvicorn работает с --no-access-log,
+  ошибки и секреты провайдера не показываются пользователю.
+
+### Выкладка и проверки
+
+Нужна additive-миграция `20261127_0044`. Перед merge отключить autodeploy,
+дождаться зелёного CI, затем выполнить штатный Production Schema Migration для
+точного main SHA: зашифрованный backup, валидация, Alembic upgrade/check.
+После успешной миграции включить autodeploy и повторить main CI для того же SHA.
+Code-only deploy на существующем хосте сам миграции не применяет. Исторические
+аккаунты, балансы, ledger, счета и привязки не переписываются. Downgrade запрещён
+при наличии строк без Telegram; новые identity нельзя удалять ради отката схемы.
+
+На текущем хосте Nginx дополнительно выдавал собственный `no-referrer`, поверх
+заголовка приложения. Поэтому одной замены Python-кода недостаточно. В
+`/etc/nginx/conf.d/neironych-referrer-policy.conf` в http-контексте установить:
+
+```nginx
+map $upstream_http_referrer_policy $neironych_referrer_policy {
+    same-origin same-origin;
+    default no-referrer;
+}
 ```
 
-`PUBLIC_API_BASE_URL` должен использовать тот же HTTPS origin. Если production
-использует Unicode-домен, сначала согласовать его ASCII-представление в env и
-зарегистрированном callback: проверки origin намеренно точные.
-Частичная конфигурация или callback на другом origin/path блокируют запуск в
-production. Если все три настройки отсутствуют, Telegram работает как раньше,
-а кнопки Яндекса скрыты; прямой OAuth start/callback возвращает 503.
-GitHub secrets сами по себе не попадают в runtime: текущий deploy сохраняет
-серверный `.env`. Не добавлять фиктивные credentials ради отображения кнопки.
+В HTTPS server только API-сайта `/etc/nginx/sites-available/neiro-api.conf`
+заменить прежний `add_header Referrer-Policy no-referrer always` на:
 
-Порядок выкладки: зелёный CI → миграция `20261117_0043` → релиз → настройка всех
-трёх env → пересоздание app с новой конфигурацией → smoke.
-
-На существующем production с `compose.host.yml` code-only deploy намеренно
-**не применяет миграции**: `alembic current --check-heads` останавливает выпуск
-до замены контейнеров. Сначала запустить `Production Schema Migration`
-(`production-schema-migration.yml`) с `release_sha`, равным точному текущему
-SHA `main`, и `telegram_bot_username=apineurobrobot` (подтвердить по runtime).
-Workflow создаёт зашифрованную резервную копию, проверяет checksum, расшифровку
-и PostgreSQL TOC, затем выполняет `alembic upgrade head`, `current --check-heads`
-и `alembic check`. После зелёного результата повторить остановившийся deploy.
-В standalone-топологии миграции выполняет сам deploy до замены app.
-
-Миграция только добавляет таблицу; Telegram и финансовые записи не меняются.
-Откат приложения возможен с сохранением таблицы. Downgrade запрещён, если
-identity уже используется. Чтобы выключить Яндекс, удалить все три env и
-пересоздать app; существующие Telegram-сессии остаются доступными.
-
-### Защита протокола
-
-- `POST /cabinet/yandex/start`: точный Origin, CSRF, явный режим login/link.
-  Для link дополнительно требуются действующая серверная сессия и подписанное
-  подтверждение свежего Telegram-входа, связанное с этой сессией.
-- Authorization Code, PKCE **S256**, случайные state/verifier/browser nonce,
-  TTL 300 секунд. В Redis остаются только временный verifier и хеш привязки
-  сессии. Callback требует `__Host-` Secure/HttpOnly/SameSite=Lax nonce и
-  атомарно забирает состояние через `GETDEL`: другой браузер, повтор и expiry запрещены.
-- После возврата от провайдера link повторно проверяет активность партнёра и
-  поглощает исходную сессию. Logout во время OAuth блокирует подключение.
-- Проверяются фиксированные HTTPS endpoints, TLS, таймаут и `client_id` в
-  ответе `/info`; identity берётся только из проверенного числового `id`.
-  Email и прочие атрибуты не сохраняются и не используются для привязки.
-- Access token/refresh token не хранятся и не передаются в браузер.
-  Успешный вход выдаёт новую случайную серверную сессию на 12 часов;
-  cookie Secure/HttpOnly/SameSite=Strict/Path=/, без Domain.
-  Промежуточный документ callback начинает новую навигацию в кабинет,
-  чтобы Strict cookie работала после перехода с домена Яндекса.
-- Ответы не кэшируются, Referrer-Policy=no-referrer. Callback не пишет query
-  в access log в обоих Nginx-конфигах; Uvicorn запускается с `--no-access-log`.
-  Дополнительные внешние reverse proxies тоже должны скрывать callback query.
-  Client secret включён в общий механизм маскировки логов, тела ошибок OAuth
-  не выводятся пользователю или в exception log.
-- При сбое Redis авторизация закрывается с 503. Если identity уже сохранена,
-  а выдача новой сессии не удалась, войти повторно через Telegram: identity
-  остаётся на том же Partner, повторного пользователя и баланса нет.
-
-### Проверки перед включением
-
-CI проверяет реальные PostgreSQL-конфликты двух callback, однократность и TTL
-Redis; локальные тесты изолируют внешние HTTP-вызовы через MockTransport.
-Проверяются scope/PKCE, ошибка/отмена Яндекса, ошибочный client_id, replay,
-другой браузер, CSRF/Origin, старый Telegram proof, блокировка партнёра,
-logout во время обмена, уникальные identities, rotation и tenant isolation.
-
-```bash
-pytest tests/test_yandex_cabinet.py tests/test_yandex_provider.py tests/test_yandex_persistence.py
-ruff check .
+```nginx
+proxy_hide_header Referrer-Policy;
+add_header Referrer-Policy $neironych_referrer_policy always;
 ```
 
-Живой smoke после настройки приложения: Telegram → подключить Яндекс → выйти →
-Яндекс → тот же Partner ID и баланс; отмена согласия; другой Яндекс ID;
-заблокированный партнёр; повтор callback; logout. Сравнить
-`/api/v1/readiness.revision` с релизом. Без реальных credentials и интерактивного
-согласия владельца нельзя отмечать полный OAuth E2E PASS.
+Это тот же whitelist, что в `nginx/production.conf`: одно значение заголовка,
+`same-origin` только по ответу приложения, `no-referrer` по умолчанию. Другие
+виртуальные хосты не менять. Сохранить приватные backup исходных файлов,
+проверить `nginx -t`, выполнить reload, проверить фактические HTTPS-заголовки и
+обычное нажатие кнопки. При неуспехе восстановить файлы и повторить валидацию/reload.
 
-Документация протокола: [код + PKCE](https://yandex.ru/dev/id/doc/ru/codes/code-url),
-[проверка пользователя и client_id](https://yandex.ru/dev/id/doc/ru/user-information).
+Тесты: `test_yandex_cabinet`, `test_yandex_provider`, `test_yandex_signup`,
+`test_yandex_persistence`, `test_yandex_signup_persistence`, `test_portal`,
+`test_argolink_registration_key_pool`, `test_shared_registration_key`.
+CI проверяет реальные гонки PostgreSQL и однократность/TTL Redis.
+
+Живая проверка требует обычного нажатия кнопок в браузере, без вручную заданного
+Origin: обе кнопки должны открыть Яндекс. Владелец затем подтверждает свой ID,
+сам принимает документы и завершает анкету. Без этого нельзя заявлять полный
+production E2E новой регистрации. Не создавать фиктивные production-аккаунты.
+
+[Протокол Яндекса и PKCE](https://yandex.ru/dev/id/doc/ru/codes/code-url),
+[проверка client_id и пользователя](https://yandex.ru/dev/id/doc/ru/user-information).

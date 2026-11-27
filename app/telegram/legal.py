@@ -15,7 +15,8 @@ async def needs_acceptance(db, partner):
         (
             await db.execute(
                 select(ConsentAcceptance.document_type).where(
-                    ConsentAcceptance.telegram_id == partner.telegram_id,
+                    (ConsentAcceptance.telegram_id == partner.telegram_id if partner.telegram_id is not None
+                     else ConsentAcceptance.partner_id == partner.id),
                     ConsentAcceptance.document_version == version,
                     ConsentAcceptance.accepted.is_(True),
                 )
