@@ -28,7 +28,9 @@
     const data = await response.json();
     if (!response.ok) {
       const code = typeof data.detail === 'string' ? data.detail : data.error?.type || `HTTP ${response.status}`;
-      throw new Error(code);
+      const error = new Error(code);
+      error.requestId = data.request_id; error.status = response.status;
+      throw error;
     }
     return {data, requestId: response.headers.get('X-Request-Id')};
   }
@@ -49,12 +51,15 @@
       field(name, 'Максимум токенов ответа', null, '1024', 'number');
     } else {
       const image = model.image;
-      if (model.resolutions.length) field('resolution', 'Разрешение', model.resolutions,
-        image.default_resolution || model.resolutions[0]);
+      if (model.resolutions.length && (!image.request_fields || image.request_fields.includes('resolution'))) {
+        field('resolution', 'Разрешение', model.resolutions,
+          image.default_resolution || model.resolutions[0]);
+      }
       if (model.category === 'video') {
         field('duration', 'Длительность результата, сек.', null, '5', 'number');
         field('aspect_ratio', 'Соотношение сторон (необязательно)', null, '');
       }
+      if (model.category === 'image') field('n', 'Количество изображений', null, '1', 'number');
       if (image.aspect_ratios) field('aspect_ratio', 'Соотношение сторон', image.aspect_ratios,
         image.default_aspect_ratio || image.aspect_ratios[0]);
       if (image.frame === 'size') field('size', 'Размер (auto или ширина×высота через x)', null, 'auto');
@@ -150,7 +155,7 @@
       }
     } catch (error) {
       status(`Статус недоступен: ${error.message}. Проверим повторно.`);
-      timer = setTimeout(() => poll(id), 10000);
+      if (![401, 403, 404].includes(error.status)) timer = setTimeout(() => poll(id), 10000);
     }
   }
   el('form').addEventListener('submit', async event => {
@@ -165,6 +170,7 @@
       if (id) { storage.set('playground-result', id); await poll(id); }
       status('Запрос принят. Статус и фактические расходы отображаются справа.');
     } catch (error) {
+      if (error.requestId) { storage.set('playground-result', error.requestId); await poll(error.requestId); }
       status(`Ответ не получен: ${error.message}. Рассчитайте стоимость и повторите тот же запрос; ` +
         'idempotency key сохранён. Не создавайте новую генерацию для проверки статуса.');
     } finally { quote = null; el('quote').disabled = false; el('new').disabled = false; }
@@ -173,6 +179,9 @@
   el('new').addEventListener('click', () => {
     sent = null; idem = crypto.randomUUID(); storage.set('playground-operation', idem);
     storage.remove('playground-result'); clearTimeout(timer); freeze(false); invalidate(); display();
+    el('preview').replaceChildren(); el('response').textContent = '';
+    el('result-status').textContent = 'Запрос ещё не отправлен.';
+    history.replaceState(null, '', '/cabinet?section=playground');
     status('Новый запрос подготовлен. Отправка создаст отдельную платную генерацию.');
   });
   el('model').addEventListener('change', chooseModel);
@@ -187,8 +196,11 @@
       models.forEach(m => el('model').append(option(m.id, m.name)));
       data.keys.forEach(k => el('key').append(option(k.id, k.name)));
       chooseModel(); root.hidden = false; status('Выберите модель и задайте параметры.');
-      const resultId = storage.get('playground-result');
-      if (resultId) { freeze(true); el('quote').disabled = true; await poll(resultId);
+      const queryId = new URLSearchParams(location.search).get('generation_id');
+      const resultId = queryId && /^[0-9a-f-]{36}$/.test(queryId) ? queryId : storage.get('playground-result');
+      if (resultId) { freeze(true); el('quote').disabled = true;
+        el('request').textContent = 'Исходный JSON не сохраняется в браузере. Открыт результат из истории.';
+        el('curl').textContent = ''; await poll(resultId);
         status('Восстановлен статус последнего запроса. Для новой генерации нажмите «Новый запрос».'); }
     } catch (error) { status(`Не удалось загрузить песочницу: ${error.message}. Обновите страницу.`); }
   })();

@@ -19,6 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
+from app.catalog.models import Model
 from app.dashboard import web
 from app.generations.models import Generation
 from app.infrastructure.config import get_settings
@@ -55,6 +56,11 @@ async def main():
     async with factory() as db:
         partner, _, upstream = await setup(db, patch, handler)
         partner_id = partner.id
+        db.add_all([
+            Model(slug='gpt-image-2.6-flare', name='Test image', modality='image', status='production'),
+            Model(slug='seedance-2.5', name='Test video', modality='video', status='production'),
+        ])
+        await db.commit()
     async def read_session(token):
         return partner_id if token == 'synthetic-browser-session' else None
     patch.setattr(web, '_read_session', read_session)
@@ -99,6 +105,12 @@ async def main():
             await page.goto('https://localhost:8765/cabinet?section=playground')
             await page.wait_for_load_state('networkidle')
             await page.locator('#pg-app').wait_for(state='visible')
+            await page.locator('#pg-model').select_option('gpt-image-2.6-flare')
+            assert await page.locator('[data-parameter=resolution]').count() == 0
+            assert await page.locator('[data-parameter=size]').count() == 1
+            await page.locator('#pg-model').select_option('seedance-2.5')
+            assert await page.locator('[data-parameter=duration]').count() == 1
+            await page.locator('#pg-model').select_option('gpt-5.4')
             await page.locator('#pg-prompt').fill("Hello ' $(touch /tmp/do-not-run) `example`")
             await page.locator('#pg-quote').click()
             await page.locator('#pg-run').wait_for(state='visible')

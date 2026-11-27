@@ -114,7 +114,13 @@ async def test_key_and_generation_ownership_and_revocation(browser, db_session, 
     key = ApiKey(partner_id=stranger.id, name='Other secret key', key_hash='other-hash', key_prefix='other')
     db_session.add(key)
     await db_session.flush()
+    foreign = Generation(
+        partner_id=stranger.id, model_id='foreign', model_slug='gpt-5.4', mode='responses',
+        resolution='default', idempotency_key='foreign-request', partner_price_rub=Decimal('1'), prompt='private',
+    )
+    db_session.add(foreign)
     await db_session.commit()
+    foreign_id = foreign.id
     partner_id, other_key_id = partner.id, key.id
     payload['api_key_id'] = other_key_id
     assert (await browser.post('/cabinet/playground/quote', json=payload, headers=headers)).status_code == 404
@@ -126,7 +132,7 @@ async def test_key_and_generation_ownership_and_revocation(browser, db_session, 
     await db_session.commit()
     assert (await browser.post('/cabinet/playground/run', json={**payload, 'quote_token': token},
                                headers=headers)).status_code == 404
-    assert (await browser.get('/cabinet/playground/results/unknown')).status_code == 404
+    assert (await browser.get('/cabinet/playground/results/' + foreign_id)).status_code == 404
     await db_session.refresh(partner)
     partner.status = 'suspended'
     await db_session.commit()

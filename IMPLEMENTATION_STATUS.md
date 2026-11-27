@@ -1,6 +1,6 @@
 # Состояние реализации — 23.09.2026
 
-Кандидат 27.11.2026: API-песочница в веб-кабинете, native биллинг/queue/replay и
+Кандидат [PR #185](https://github.com/Bambale0/ooo/pull/185), 27.11.2026: API-песочница в веб-кабинете, native биллинг/queue/replay и
 удаление trial-кнопки из новых Telegram меню. Локальные проверки и точный PR/CI
 фиксируются в `docs/agents/EXECUTION.md`; production-релиз требует отдельных фактов.
 
