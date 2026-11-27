@@ -8,6 +8,7 @@ from collections import Counter
 from decimal import Decimal
 from html import escape
 
+from app.api.seo import model_path
 from app.catalog.models import Model, PartnerPrice
 from app.catalog.video_edit_pricing import EDIT_MODE, EDIT_MODEL, retail_rate
 from app.contracts.registry import MODELS
@@ -39,6 +40,9 @@ def render_catalog(rows: list[tuple[Model, PartnerPrice]], fx: Decimal) -> str:
         '<div class="catalog-intro">'
         '<span class="eyebrow">MODEL EXPLORER / НЕЙРОНЫЧ API</span>'
         '<h2 class="price-heading">Модели и тарифы</h2>'
+        '<nav aria-label="Категории моделей"><a href="/models">Все модели</a> · '
+        '<a href="/models/video">Видео</a> · <a href="/models/image">Изображения</a> · '
+        '<a href="/models/text">Текст и LLM</a></nav>'
         '<p>Выбирайте модель по задаче, сравнивайте режимы и стоимость. '
         'Розничные тарифы указаны в рублях; индивидуальные тарифы '
         'вашего проекта могут отличаться — проверяйте их в личном кабинете.</p>'
@@ -120,6 +124,8 @@ def render_catalog(rows: list[tuple[Model, PartnerPrice]], fx: Decimal) -> str:
             f'<strong class="catalog-model-name">{_escape(model.name)}</strong>'
             f'<code class="catalog-model-id">{_escape(model.slug)}</code>'
         )
+        if contract:
+            model_html = f'<a href="{_escape(model_path(model.slug))}">{model_html}</a>'
         variant_html = f'<strong>{_escape(mode)}</strong><span>{_escape(price.resolution)}</span>'
         money_html = (
             f'<strong class="price-number">{exact_price} ₽</strong>'

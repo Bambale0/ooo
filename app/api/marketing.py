@@ -121,7 +121,8 @@ def marketing_page(lang: str):
         f'<a class="button primary" href="/price">{t("Посмотреть цены", "View prices")} ↗</a></section>'
     )
     return page(
-        t("Нейроныч API — нейросети для вашего продукта", "Neironych API — AI for your product"),
+        t("API нейросетей — генерация видео, изображений и текста | Нейроныч",
+          "AI API for video, images and text | Neironych"),
         body,
         lang,
         landing=True,
