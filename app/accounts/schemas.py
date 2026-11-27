@@ -15,7 +15,7 @@ class PartnerApplicationCreate(BaseModel):
 
 class PartnerApplicationRead(BaseModel):
     id: str
-    telegram_id: str
+    telegram_id: str | None
     company_name: str
     project_name: str
     status: str
@@ -27,7 +27,7 @@ class PartnerApplicationRead(BaseModel):
 
 class PartnerRead(BaseModel):
     id: str
-    telegram_id: str
+    telegram_id: str | None
     company_name: str
     project_name: str
     payment_email: str | None

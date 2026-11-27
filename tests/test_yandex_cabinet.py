@@ -14,7 +14,7 @@ from redis.exceptions import ConnectionError as RedisConnectionError
 from sqlalchemy import func, select
 
 from app.accounts.models import Partner, PartnerIdentity
-from app.dashboard import web, yandex
+from app.dashboard import web, yandex, yandex_signup
 from app.infrastructure.config import get_settings
 
 browser = telegram_tests.browser
@@ -29,7 +29,10 @@ def oauth(monkeypatch, browser):
     monkeypatch.setattr(s, "yandex_client_id", "test-client-id")
     monkeypatch.setattr(s, "yandex_client_secret", SecretStr("test-client-secret"))
     monkeypatch.setattr(s, "yandex_callback_url", "https://testserver/cabinet/yandex/callback")
+    monkeypatch.setattr(s, "terms_url", "https://testserver/terms")
+    monkeypatch.setattr(s, "privacy_policy_url", "https://testserver/privacy")
     flows = {}
+    signups = {}
     bound_tokens = {}
 
     async def save(state, nonce, data):
@@ -54,10 +57,18 @@ def oauth(monkeypatch, browser):
         assert len(verifier) == 43
         return "1234567"
 
+    async def save_signup(token, data):
+        signups[token] = data
+
+    async def read_signup(token, *, consume=False):
+        return signups.pop(token, None) if consume else signups.get(token)
+
     monkeypatch.setattr(yandex, "_save_flow", save)
     monkeypatch.setattr(yandex, "_take_flow", take)
     monkeypatch.setattr(yandex, "_bound_session", bound)
     monkeypatch.setattr(yandex, "_subject", subject)
+    monkeypatch.setattr(yandex_signup, "_save", save_signup)
+    monkeypatch.setattr(yandex_signup, "_read", read_signup)
     return flows
 
 
@@ -135,13 +146,16 @@ async def test_link_then_yandex_login_keeps_partner_balance_and_rotates_session(
     assert partner.balance_rub == Decimal("123.45")
 
 
-async def test_unlinked_yandex_cannot_create_partner_even_if_email_matches(browser, oauth, web_partner, db_session):
+async def test_unlinked_yandex_offers_registration_without_matching_existing_email(
+    browser, oauth, web_partner, db_session,
+):
     partner, _, _ = web_partner
     partner.payment_email = "same@yandex.ru"
     await db_session.commit()
     result = await _finish(browser, await _start(browser))
-    assert result.status_code == 403
-    assert "через Telegram" in result.text
+    assert result.status_code == 200
+    assert "/cabinet/yandex/register" in result.text
+    assert result.headers["referrer-policy"] == "no-referrer"
     assert web._SESSION_COOKIE not in browser.cookies
     assert await db_session.scalar(select(func.count()).select_from(PartnerIdentity)) == 0
     assert await db_session.scalar(select(func.count()).select_from(Partner)) == 2
@@ -356,14 +370,15 @@ async def test_yandex_login_survives_unavailable_telegram_widget_without_bypassi
     assert "Войти с Яндекс ID" in page.text
     assert "data-telegram-login" not in page.text
     assert "https://t.me/" not in page.text
-    assert "Telegram-вход временно недоступен" in page.text
+    assert "Зарегистрироваться с Яндекс ID" in page.text
     assert page.cookies.get(web._LOGIN_COOKIE)
     result = await _finish(browser, await _start(browser))
     if linked:
         assert result.status_code == 200
         assert await web._read_session(browser.cookies[web._SESSION_COOKIE]) == partner.id
     else:
-        assert result.status_code == 403
+        assert result.status_code == 200
+        assert "/cabinet/yandex/register" in result.text
         assert web._SESSION_COOKIE not in browser.cookies
     assert await db_session.scalar(select(func.count()).select_from(Partner)) == 2
     assert await db_session.scalar(select(func.count()).select_from(PartnerIdentity)) == int(linked)

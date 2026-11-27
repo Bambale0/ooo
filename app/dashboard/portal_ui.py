@@ -192,7 +192,7 @@ def page_html(
         headers={
             "Cache-Control": "private, no-store, max-age=0",
             "Pragma": "no-cache",
-            "Referrer-Policy": "no-referrer",
+            "Referrer-Policy": "same-origin",
             "X-Content-Type-Options": "nosniff",
         },
     )
@@ -676,7 +676,7 @@ def settings_view(partner: Partner, csrf: str, *, yandex_linked: bool = False) -
         f'<div><span>Компания</span><strong>{_e(partner.company_name)}</strong></div>'
         f'<div><span>Проект</span><strong>{_e(partner.project_name)}</strong></div>'
         f'<div><span>Partner ID</span><code>{_e(partner.id)}</code></div>'
-        f'<div><span>Telegram ID</span><code>{_e(partner.telegram_id)}</code></div>'
+        f'<div><span>Telegram ID</span><code>{_e(partner.telegram_id or "Не подключён")}</code></div>'
         '</div></section>'
     )
     email = (
@@ -705,7 +705,7 @@ def settings_view(partner: Partner, csrf: str, *, yandex_linked: bool = False) -
         )
     security = (
         '<section class="surface settings-card"><h2>Безопасность</h2>'
-        '<p>Вход — через подтверждённый Telegram-аккаунт. '
+        '<p>Вход — через подтверждённый Яндекс ID или Telegram-аккаунт. '
         'Сеанс хранится на сервере и может быть закрыт в любой момент.</p>'
         f'{yandex}'
         '<form method="post" action="/cabinet/logout">'

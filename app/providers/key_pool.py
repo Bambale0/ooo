@@ -175,7 +175,7 @@ async def provision_application_key(db: AsyncSession, application_id: str) -> Pr
     # One Telegram identity must not drain a new pool key through concurrent or
     # delete/re-register applications. Applications retain the original
     # Telegram id even after a deleted Partner is anonymized.
-    await lock_key_hashes(db, [hash_secret(f"partner-registration:{application.telegram_id}")])
+    await lock_key_hashes(db, [hash_secret(f"partner-registration:{application.registration_identity}")])
     existing = await db.scalar(
         select(ProviderCredential).where(
             ProviderCredential.provider == "argolink",
@@ -197,7 +197,7 @@ async def provision_application_key(db: AsyncSession, application_id: str) -> Pr
         .order_by(ProviderCredential.created_at.desc())
         .with_for_update(of=ProviderCredential)
         .limit(1)
-    )
+    ) if application.telegram_id is not None else None
     if reusable is not None:
         previous_partner = await db.get(Partner, reusable.partner_id)
         reusable.partner_application_id = application.id

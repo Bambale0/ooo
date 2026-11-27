@@ -137,7 +137,7 @@ def _document(title: str, body: str, *, login: bool = False, csrf: str = "") -> 
         '<meta name="color-scheme" content="dark">'
         f'<title>{_safe(title)} — Нейроныч</title>'
         '<link rel="icon" href="/ui/logo-mark.svg" type="image/svg+xml">'
-        '<link rel="stylesheet" href="/ui/cabinet.css?v=1">'
+        '<link rel="stylesheet" href="/ui/cabinet.css?v=2">'
         f'{extra}</head><body><a class="skip" href="#main">К содержимому</a>'
         '<header class="topbar"><a class="brand" href="/">'
         '<img src="/ui/logo-mark.svg" alt="" width="36" height="36"> Нейроныч'
@@ -148,7 +148,9 @@ def _document(title: str, body: str, *, login: bool = False, csrf: str = "") -> 
         f'<main id="main" class="workspace">{body}</main>'
         '<footer class="footer">Нейроныч · Партнёрский кабинет</footer></body></html>'
     )
-    return HTMLResponse(html, headers=_HEADERS)
+    # Native same-origin POST forms need a non-null Origin in real browsers.
+    # same-origin still suppresses the referrer on every external navigation.
+    return HTMLResponse(html, headers={**_HEADERS, "Referrer-Policy": "same-origin"})
 
 
 def _login_page(csrf: str) -> HTMLResponse:
@@ -183,13 +185,15 @@ def _login_page(csrf: str) -> HTMLResponse:
             'и проверьте статус партнёрского аккаунта.</p>'
         )
     else:
-        body += '<p>Telegram-вход временно недоступен. Войдите с ранее подключённым Яндекс ID.</p>'
+        body += '<p>Войдите или зарегистрируйтесь с Яндекс ID.</p>'
     if yandex_ready:
         body += (
-            '<form method="post" action="/cabinet/yandex/start">'
+            '<form class="login-options" method="post" action="/cabinet/yandex/start">'
             f'<input type="hidden" name="csrf" value="{escape(csrf, quote=True)}">'
-            '<button type="submit" class="outline">Войти с Яндекс ID</button></form>'
-            '<p class="hint">Для первого входа подключите Яндекс ID в настройках кабинета через Telegram.</p>'
+            '<button type="submit" name="mode" value="login" class="outline">Войти с Яндекс ID</button>'
+            '<button type="submit" name="mode" value="register" class="outline">'
+            'Зарегистрироваться с Яндекс ID</button></form>'
+            '<p class="hint">Войдите или создайте аккаунт через Яндекс ID. Telegram не требуется.</p>'
         )
     body += '</section>'
     return _document("Вход", body, login=True, csrf=csrf)
