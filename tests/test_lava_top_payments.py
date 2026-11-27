@@ -400,7 +400,7 @@ async def test_lava_top_unknown_create_is_not_replayed(db_session):
     )
     assert repeated.status == "creation_unknown"
     assert repeated.provider_amount_rub == Decimal("1500")
-    assert fake.created == [(1650, "buyer@example.org")]
+    assert fake.created == [(1500, "buyer@example.org")]
 
 
 async def test_lava_top_rejected_buyer_email_is_failed_not_ambiguous(db_session):
