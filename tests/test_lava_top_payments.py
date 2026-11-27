@@ -15,7 +15,7 @@ from sqlalchemy import create_engine, func, inspect, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.billing.models import CoverageLedgerEntry, LedgerEntry
-from app.infrastructure.config import get_settings
+from app.infrastructure.config import Settings, get_settings
 from app.payments.lava_top import (
     LavaTopBuyerEmailRejected,
     LavaTopClient,
@@ -64,8 +64,19 @@ class FakeLavaTopClient:
         (Decimal("1505"), Decimal("1656")),
     ],
 )
-def test_lava_top_checkout_adds_ten_percent_with_whole_ruble_rounding(requested, checkout):
+def test_lava_top_checkout_adds_ten_percent_with_whole_ruble_rounding(requested, checkout, monkeypatch):
+    monkeypatch.setattr(get_settings(), "lava_top_surcharge_rate", Decimal("0.10"))
     assert lava_top_checkout_amount(requested) == checkout
+
+
+@pytest.mark.parametrize("requested", [1000, 1505, 10000])
+@pytest.mark.parametrize("exempt", [False, True])
+def test_lava_top_default_checkout_has_no_surcharge(requested, exempt, monkeypatch):
+    monkeypatch.delenv("LAVA_TOP_SURCHARGE_RATE", raising=False)
+    settings = Settings(_env_file=None)
+    monkeypatch.setattr("app.payments.lava_top.get_settings", lambda: settings)
+    assert settings.lava_top_surcharge_rate == Decimal("0")
+    assert lava_top_checkout_amount(requested, surcharge_exempt=exempt) == Decimal(requested)
 
 
 def test_lava_top_surcharge_migration_is_additive_and_reversible():
@@ -249,8 +260,8 @@ async def test_lava_top_sbp_webhook_rechecks_and_credits_exactly_once(
     assert created.status_code == 202
     assert created.json()["provider"] == "lava_top"
     assert created.json()["accepted_assets"] == "RUB:SBP"
-    assert fake.created == [(1650, "buyer@example.org")]
-    assert Decimal(created.json()["amount_due_rub"]) == Decimal("1650.00")
+    assert fake.created == [(1500, "buyer@example.org")]
+    assert Decimal(created.json()["amount_due_rub"]) == Decimal("1500.00")
 
     duplicate = await client.post(
         "/api/v1/payments/invoices",
@@ -306,7 +317,7 @@ async def test_lava_top_sbp_webhook_rechecks_and_credits_exactly_once(
     await db_session.refresh(partner)
     assert payment.status == "credited"
     assert payment.paid_asset == "RUB"
-    assert payment.paid_amount == Decimal("1650")
+    assert payment.paid_amount == Decimal("1500")
     assert payment.paid_usd_rate == Decimal("0.01")
     assert partner.balance_rub == Decimal("1500")
     assert partner.cost_coverage_rub == Decimal("1500")
@@ -342,7 +353,7 @@ async def test_lava_top_reuses_and_updates_partner_payment_email(client, db_sess
         json={"requested_rub": 1600, "idempotency_key": "lava-save-email-reused"},
     )
     assert reused.status_code == 202
-    assert fake.created[-1] == (1760, "buyer@example.org")
+    assert fake.created[-1] == (1600, "buyer@example.org")
 
     updated = await client.post(
         "/api/v1/payments/invoices",
@@ -388,7 +399,7 @@ async def test_lava_top_unknown_create_is_not_replayed(db_session):
         client=fake,
     )
     assert repeated.status == "creation_unknown"
-    assert repeated.provider_amount_rub == Decimal("1650")
+    assert repeated.provider_amount_rub == Decimal("1500")
     assert fake.created == [(1650, "buyer@example.org")]
 
 
@@ -427,7 +438,8 @@ async def test_lava_top_rejected_buyer_email_is_failed_not_ambiguous(db_session)
     }
 
 
-async def test_lava_top_new_invoice_rejects_provider_amount_without_surcharge(db_session):
+async def test_lava_top_new_invoice_rejects_provider_amount_without_surcharge(db_session, monkeypatch):
+    monkeypatch.setattr(get_settings(), "lava_top_surcharge_rate", Decimal("0.10"))
     partner, _ = await _partner_with_api_key(db_session, telegram_id="lava-underpaid")
     fake = FakeLavaTopClient()
     payment = await create_or_resume_lava_invoice(
@@ -438,6 +450,7 @@ async def test_lava_top_new_invoice_rejects_provider_amount_without_surcharge(db
         buyer_email="buyer@example.org",
         client=fake,
     )
+    monkeypatch.setattr(get_settings(), "lava_top_surcharge_rate", Decimal("0"))
     underpaid = replace(fake.invoices[payment.provider_reference], status="paid", amount="1500")
 
     with pytest.raises(HTTPException) as mismatch:
@@ -536,6 +549,7 @@ async def test_lava_exemption_is_tenant_scoped_and_preserves_existing_invoices(
 ):
     from app.accounts.models import PartnerLavaTopSurchargeHistory
 
+    monkeypatch.setattr(get_settings(), "lava_top_surcharge_rate", Decimal("0.10"))
     monkeypatch.setattr(get_settings(), "payment_provider", "lava_top")
     fake = FakeLavaTopClient()
     monkeypatch.setattr("app.payments.router.get_lava_top_client", lambda: fake)
@@ -571,6 +585,7 @@ async def test_lava_exemption_is_tenant_scoped_and_preserves_existing_invoices(
     })
     assert other.status_code == 202
     assert Decimal(other.json()["amount_due_rub"]) == Decimal("1100.00")
+    monkeypatch.setattr(get_settings(), "lava_top_surcharge_rate", Decimal("0"))
     replay = await client.post("/api/v1/payments/invoices", headers={"Authorization": f"Bearer {first_key}"}, json={
         "requested_rub": 1000, "idempotency_key": "before-exemption",
     })
