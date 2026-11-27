@@ -342,6 +342,61 @@ async def test_missing_bot_config_never_invents_bot_link(client, monkeypatch):
     assert "https://t.me/" not in page.text
 
 
+@pytest.mark.parametrize("bot", [None, "invalid-bot-name"])
+@pytest.mark.parametrize("linked", [False, True])
+async def test_yandex_login_survives_unavailable_telegram_widget_without_bypassing_link(
+    browser, oauth, web_partner, db_session, monkeypatch, bot, linked
+):
+    partner, _, _ = web_partner
+    if linked:
+        db_session.add(PartnerIdentity(partner_id=partner.id, provider="yandex", subject="1234567"))
+        await db_session.commit()
+    monkeypatch.setattr(get_settings(), "telegram_bot_username", bot)
+    page = await browser.get("/cabinet")
+    assert "Войти с Яндекс ID" in page.text
+    assert "data-telegram-login" not in page.text
+    assert "https://t.me/" not in page.text
+    assert "Telegram-вход временно недоступен" in page.text
+    assert page.cookies.get(web._LOGIN_COOKIE)
+    result = await _finish(browser, await _start(browser))
+    if linked:
+        assert result.status_code == 200
+        assert await web._read_session(browser.cookies[web._SESSION_COOKIE]) == partner.id
+    else:
+        assert result.status_code == 403
+        assert web._SESSION_COOKIE not in browser.cookies
+    assert await db_session.scalar(select(func.count()).select_from(Partner)) == 2
+    assert await db_session.scalar(select(func.count()).select_from(PartnerIdentity)) == int(linked)
+    await db_session.refresh(partner)
+    assert partner.balance_rub == Decimal("123.45")
+
+
+async def test_no_provider_config_shows_unavailable_without_login_form(browser, monkeypatch):
+    s = get_settings()
+    for name in ("telegram_bot_username", "yandex_client_id", "yandex_client_secret", "yandex_callback_url"):
+        monkeypatch.setattr(s, name, None)
+    page = await browser.get("/cabinet")
+    assert "Вход временно недоступен" in page.text
+    assert "data-telegram-login" not in page.text
+    assert "/cabinet/yandex/start" not in page.text
+
+
+@pytest.mark.parametrize("change", ["missing_cookie", "csrf", "origin"])
+async def test_yandex_login_start_requires_browser_challenge_and_origin(browser, oauth, change):
+    page = await browser.get("/cabinet")
+    csrf = re.search(r'<meta name="tg-login-csrf" content="([^"]+)"', page.text).group(1)
+    if change == "missing_cookie":
+        browser.cookies.delete(web._LOGIN_COOKIE)
+    result = await browser.post(
+        "/cabinet/yandex/start",
+        data={"csrf": "x" * 43 if change == "csrf" else csrf},
+        headers={"origin": "https://attacker.example" if change == "origin" else "https://testserver"},
+    )
+    assert result.status_code == 403
+    assert not oauth
+    assert yandex._COOKIE not in browser.cookies
+
+
 async def test_link_survives_session_store_failure_without_duplicate_account(
     browser,
     oauth,

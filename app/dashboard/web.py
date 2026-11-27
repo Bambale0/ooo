@@ -155,7 +155,9 @@ def _login_page(csrf: str) -> HTMLResponse:
     from app.dashboard.yandex import configuration_errors, configured
 
     bot = get_settings().telegram_bot_username or ""
-    if not re.fullmatch(r"[A-Za-z0-9_]{5,32}", bot):
+    telegram_ready = bool(re.fullmatch(r"[A-Za-z0-9_]{5,32}", bot))
+    yandex_ready = configured() and not configuration_errors()
+    if not telegram_ready and not yandex_ready:
         body = (
             '<section class="login-card"><p class="eyebrow">Личный кабинет</p>'
             '<h1>Вход временно недоступен</h1>'
@@ -165,26 +167,31 @@ def _login_page(csrf: str) -> HTMLResponse:
     body = (
         '<section class="login-card"><p class="eyebrow">Партнёрам</p>'
         '<h1>Личный кабинет</h1>'
-        '<p>Войдите через Telegram, привязанный к вашему партнёрскому аккаунту. '
-        'Пароль и API-ключ не потребуются.</p>'
-        '<div class="telegram-widget">'
-        '<script async src="https://telegram.org/js/telegram-widget.js?22"'
-        f' data-telegram-login="{escape(bot, quote=True)}"'
-        ' data-size="large" data-radius="8" data-userpic="false"'
-        ' data-onauth="NeironychTelegramAuth(user)"></script></div>'
-        '<p id="login-error" class="error" role="alert" hidden></p>'
-        f'<p class="hint">Нет доступа? Откройте <a href="https://t.me/{escape(bot, quote=True)}"'
-        ' target="_blank" rel="noopener noreferrer">бота Нейроныч</a> '
-        'и проверьте статус партнёрского аккаунта.</p>'
-        + (
+    )
+    if telegram_ready:
+        body += (
+            '<p>Войдите через Telegram, привязанный к вашему партнёрскому аккаунту. '
+            'Пароль и API-ключ не потребуются.</p>'
+            '<div class="telegram-widget">'
+            '<script async src="https://telegram.org/js/telegram-widget.js?22"'
+            f' data-telegram-login="{escape(bot, quote=True)}"'
+            ' data-size="large" data-radius="8" data-userpic="false"'
+            ' data-onauth="NeironychTelegramAuth(user)"></script></div>'
+            '<p id="login-error" class="error" role="alert" hidden></p>'
+            f'<p class="hint">Нет доступа? Откройте <a href="https://t.me/{escape(bot, quote=True)}"'
+            ' target="_blank" rel="noopener noreferrer">бота Нейроныч</a> '
+            'и проверьте статус партнёрского аккаунта.</p>'
+        )
+    else:
+        body += '<p>Telegram-вход временно недоступен. Войдите с ранее подключённым Яндекс ID.</p>'
+    if yandex_ready:
+        body += (
             '<form method="post" action="/cabinet/yandex/start">'
             f'<input type="hidden" name="csrf" value="{escape(csrf, quote=True)}">'
             '<button type="submit" class="outline">Войти с Яндекс ID</button></form>'
             '<p class="hint">Для первого входа подключите Яндекс ID в настройках кабинета через Telegram.</p>'
-            if configured() and not configuration_errors() else ''
         )
-        + '</section>'
-    )
+    body += '</section>'
     return _document("Вход", body, login=True, csrf=csrf)
 
 
