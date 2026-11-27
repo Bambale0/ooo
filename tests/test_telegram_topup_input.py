@@ -24,17 +24,22 @@ async def test_topup_accepts_digits_with_boundary_paste_marks(cabinet, db_sessio
     monkeypatch.setattr(get_settings(), "payment_provider", "lava_top")
     fake = FakeLavaTopClient()
     monkeypatch.setattr("app.payments.service.get_lava_top_client", lambda: fake)
+    balance = (await feed(callback="balance"))[-1]
+    assert "надбавк" not in balance.text.lower()
+    assert "0%" not in balance.text
     await feed(callback="topup")
     methods = await feed(text=value)
-    assert "3,300" in methods[-1].text, methods[-1].text
-    assert "3,000" in methods[-1].text
+    assert "Создать счёт на 3,000 ₽" in methods[-1].text, methods[-1].text
+    assert "На баланс зачислится 3,000 ₽" in methods[-1].text
+    assert "надбавк" not in methods[-1].text.lower()
+    assert "0%" not in methods[-1].text
     assert not fake.created
     assert await db_session.scalar(select(func.count()).select_from(PaymentInvoice)) == 0
     action = (await db_session.scalars(select(BotAction).where(BotAction.kind == "invoice_create"))).one()
     assert action.payload["amount"] == "3000"
     await feed(callback=f"confirm:{action.id}")
     await feed(callback=f"confirm:{action.id}")
-    assert fake.created == [(3300, "buyer@example.org")]
+    assert fake.created == [(3000, "buyer@example.org")]
     assert await db_session.scalar(select(func.count()).select_from(PaymentInvoice)) == 1
     assert owner.balance_rub == Decimal("1000")
 
