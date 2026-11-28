@@ -625,7 +625,7 @@ def render_text_reference(lang: str) -> str:
                 optional,
                 choose(
                     "Управляют вариативностью ответа. Допустимые диапазоны и совместимость с режимом рассуждений зависят от модели; "
-                    "при первом запросе не указывайте оба параметра.",
+                    "при первом запросе не указывайте ни один из этих параметров.",
                     "Sampling controls. Ranges and reasoning compatibility depend on the model; omit both "
                     "for the first request.",
                 ),
