@@ -1,11 +1,13 @@
 """Partner-safe model reference shared by Telegram and web integration screens."""
 
+import asyncio
 import json
 from dataclasses import dataclass
 from functools import lru_cache
 from html import escape
 from urllib.parse import urlencode
 
+from fastapi import HTTPException, Response
 from sqlalchemy import and_, or_, select
 
 from app.api.native_video_reference import EXAMPLES as NATIVE_VIDEO_EXAMPLES
@@ -249,6 +251,28 @@ def render_model_pdf(doc):
     return _pdf_cached(doc.name, manual_markdown(doc))
 
 
+async def model_download(rows, slug, base_url, output):
+    selected = next((row for row in rows if row.slug == slug), None)
+    if selected is None:
+        raise HTTPException(404, "model_not_available")
+    doc = model_document(selected.slug, selected.name, base_url)
+    if output == "pdf":
+        data = await asyncio.to_thread(render_model_pdf, doc)
+        extension, media_type = "api.pdf", "application/pdf"
+    elif output == "agent":
+        data = agent_instructions(doc).encode("utf-8")
+        extension, media_type = "agent.md", "text/markdown"
+    else:
+        raise HTTPException(400, "invalid_document_format")
+    return Response(
+        data, media_type=media_type, headers={
+            "Content-Disposition": f'attachment; filename="{doc.slug}-{extension}"',
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
 def model_link(root, slug, **extra):
     return root + "&" + urlencode({"model": slug, **extra})
 
@@ -263,7 +287,7 @@ def render_model_selection(rows, base_url, root, slug="", *, lang="ru"):
             if items:
                 parts.append(f"<h3>{label}</h3><ul>")
                 parts.extend(
-                    f'<li><a href="{escape(model_link(root, row.slug), quote=True)}">{escape(row.name)}</a> '
+                    f'<li><a href="{escape(model_link(root, row.slug), quote=True)}#integrations">{escape(row.name)}</a> '
                     f'<code>{escape(row.slug)}</code></li>' for row in items
                 )
                 parts.append("</ul>")
@@ -275,7 +299,7 @@ def render_model_selection(rows, base_url, root, slug="", *, lang="ru"):
     pdf_url = escape(model_link(root, slug, format="pdf"), quote=True)
     agent_url = escape(model_link(root, slug, format="agent"), quote=True)
     return (
-        f'<section id="integrations"><a href="{escape(root, quote=True)}">← Все модели</a>'
+        f'<section id="integrations"><a href="{escape(root, quote=True)}#integrations">← Все модели</a>'
         f'<h2>{escape(doc.name)}</h2><p>Model ID: <code>{escape(doc.slug)}</code></p>'
         '<h3>Ручная интеграция</h3><p>API-контракт, примеры запросов и правила обработки ответов.</p>'
         f'<p><a class="button button-secondary" href="{pdf_url}">Скачать PDF</a></p>'
