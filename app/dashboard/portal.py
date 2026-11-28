@@ -30,7 +30,7 @@ _PAGE_SIZE = 25
 _EXPORT_LIMIT = 1000
 _MAX_PERIOD = 90
 _ALLOWED_SECTIONS = frozenset(
-    {"overview", "activity", "logs", "models", "keys", "credits", "invoices", "ledger", "settings"}
+    {"overview", "activity", "logs", "models", "keys", "credits", "invoices", "ledger", "settings", "integration"}
 )
 
 
@@ -188,6 +188,20 @@ async def render_portal(request: Request, db: DbSession, partner: Partner, sessi
                 )
             ).scalar_one_or_none()
         body = logs_view(generations, total, current_page, selected_status, selected_model, detail)
+    elif section == "integration":
+        from app.api.model_integration import documented_models, model_download, render_model_selection
+
+        rows = await documented_models(db, partner.id)
+        slug = request.query_params.get("model", "")[:80]
+        output = request.query_params.get("format", "")
+        base_url = get_settings().public_api_base_url.rstrip("/")
+        if output:
+            return await model_download(rows, slug, base_url, output)
+        if slug and not any(row.slug == slug for row in rows):
+            raise HTTPException(404, "model_not_available")
+        body = '<section class="surface">' + render_model_selection(
+            rows, base_url, "/cabinet?section=integration", slug,
+        ) + "</section>"
     elif section == "models":
         query = (
             select(Model, PartnerPrice, PartnerPriceSnapshot)
