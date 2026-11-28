@@ -9,8 +9,8 @@ from sqlalchemy import select
 
 from app.api.dependencies import DbSession
 from app.api.marketing import marketing_page
-from app.api.model_integration import model_download, render_model_selection
 from app.api.model_explorer import render_catalog
+from app.api.model_integration import model_download, render_model_selection
 from app.api.native_video_reference import REVIEWED_VIDEO_MODELS, render_native_video_reference
 from app.api.partner_reference import render_reference, table
 from app.api.public_ui import page
