@@ -23,6 +23,7 @@ _SECTIONS = (
     ("activity", "Аналитика", "◫", "Использование"),
     ("logs", "Запросы", "≡", "Использование"),
     ("models", "Модели и тарифы", "◇", "Использование"),
+    ("integration", "Интеграция моделей", "⌗", "Использование"),
     ("keys", "API-ключи", "⌘", "Управление"),
     ("credits", "Баланс и пополнение", "◉", "Биллинг"),
     ("invoices", "Счета", "▤", "Биллинг"),
@@ -410,7 +411,7 @@ async def models_view(db, tariff_rows: list, search: str) -> str:
     title = _heading(
         "КАТАЛОГ / MODELS", "Модели и тарифы",
         "Только модели, доступные вашему аккаунту. Все тарифы показаны в рублях.",
-        '<a class="button button-secondary" href="/guide?lang=ru#models">'
+        '<a class="button button-secondary" href="/cabinet?section=integration">'
         'Документация API ↗</a>',
     )
     filters = (
