@@ -413,7 +413,7 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
                 "object | file · optional",
                 t(
                     'GPT edits: {"image_url":"https://…/mask.png"} или файл PNG с альфа-каналом; '
-                    "Редактируется прозрачная область маски. "
+                    "Редактируется область изображения, соответствующая прозрачной области маски. "
                     "Размер маски должен совпадать с размером первого изображения. Допускается не более одной маски.",
                     'GPT edits: {"image_url":"https://…/mask.png"} or a PNG file with alpha; transparent '
                     "areas are edited. "
