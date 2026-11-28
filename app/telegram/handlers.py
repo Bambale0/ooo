@@ -594,7 +594,12 @@ async def handle_callback(event, db, dialog) -> None:
                    "Начните с авторизации и примеров запросов, затем выберите нужную модель. "
                    "Для доступа понадобится API-ключ из соответствующего раздела кабинета.\n\n"
                    + get_settings().public_api_base_url.rstrip("/") + "/guide",
-                   keyboard(("Открыть руководство", get_settings().public_api_base_url.rstrip("/") + "/guide")))
+                   keyboard(("Выбрать модель", "docs_models:0"),
+                            ("Открыть веб-документацию", get_settings().public_api_base_url.rstrip("/") + "/guide")))
+    elif data.startswith(("docs_models:", "docs_model:", "docs_pdf:", "docs_agent:")):
+        from app.telegram.model_docs import model_docs_callback
+
+        await model_docs_callback(event, db, data, partner.id)
     elif data == "delete":
         await ask_confirmation(
             event,
