@@ -109,13 +109,23 @@ async def home(lang: str = Query(default="ru", pattern="^(ru|en)$")):
 
 
 @router.get("/docs", response_class=HTMLResponse, include_in_schema=False)
-async def docs(db: DbSession, lang: str = Query(default="ru", pattern="^(ru|en)$")):
-    return await _public_connection_guide(db, lang)
+async def docs(
+    db: DbSession,
+    lang: str = Query(default="ru", pattern="^(ru|en)$"),
+    model: str = Query(default="", max_length=80),
+    format: str = Query(default="", pattern="^(|pdf|agent)$"),
+):
+    return await _public_connection_guide(db, lang, model, format)
 
 
 @router.get("/guide", response_class=HTMLResponse, include_in_schema=False)
-async def guide(db: DbSession, lang: str = Query(default="ru", pattern="^(ru|en)$")):
-    return await _public_connection_guide(db, lang)
+async def guide(
+    db: DbSession,
+    lang: str = Query(default="ru", pattern="^(ru|en)$"),
+    model: str = Query(default="", max_length=80),
+    format: str = Query(default="", pattern="^(|pdf|agent)$"),
+):
+    return await _public_connection_guide(db, lang, model, format)
 
 
 @router.get("/price", response_class=HTMLResponse, include_in_schema=False)
