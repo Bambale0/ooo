@@ -268,3 +268,27 @@ async def test_restricted_models_and_price_changes_respect_control_plane(browser
     assert (await browser.post('/cabinet/playground/run', json=payload, headers=headers)).status_code == 409
     assert await db_session.scalar(select(func.count()).select_from(Generation)) == 0
     await upstream.aclose()
+
+
+async def test_quote_cannot_be_forged_with_browser_visible_csrf(browser, db_session, monkeypatch):
+    import hashlib
+    import hmac
+    import json
+    import time
+
+    _, headers, payload, upstream = await context(browser, db_session, monkeypatch)
+    quoted = (await browser.post('/cabinet/playground/quote', json=payload, headers=headers)).json()
+    expires = int(time.time()) + 300
+    from app.accounts.models import ApiKey
+
+    partner_id = await db_session.scalar(select(ApiKey.partner_id).where(ApiKey.id == payload['api_key_id']))
+    message = json.dumps(
+        ['synthetic-session', partner_id, payload['protocol'], payload['api_key_id'],
+         payload['body'], payload['idempotency_key'], quoted['estimate_rub'], expires],
+        sort_keys=True, separators=(',', ':'), ensure_ascii=True,
+    )
+    forged = hmac.new(headers['X-CSRF-Token'].encode(), message.encode(), hashlib.sha256).hexdigest()
+    payload['quote_token'] = f'{expires}.{forged}'
+    assert (await browser.post('/cabinet/playground/run', json=payload, headers=headers)).status_code == 409
+    assert await db_session.scalar(select(func.count()).select_from(Generation)) == 0
+    await upstream.aclose()

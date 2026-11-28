@@ -85,14 +85,17 @@ async def _estimate(db, partner, payload) -> str:
 
 
 def _quote_signature(session_id, partner_id, payload, amount, expires):
-    from app.dashboard.web import _csrf_for_session
-
-    key = _csrf_for_session(session_id, get_settings().telegram_bot_token or "")
+    secret = get_settings().provider_credentials_master_key
+    if not secret:
+        raise HTTPException(503, "playground_quote_unavailable")
+    # Domain-separated server secret; the browser-visible CSRF token is NOT a signing key.
+    key = hmac.new(secret.encode(), b"cabinet-playground-quote-v1", hashlib.sha256).digest()
     message = json.dumps(
-        [partner_id, payload.protocol, payload.api_key_id, payload.body, payload.idempotency_key, amount, expires],
+        [session_id, partner_id, payload.protocol, payload.api_key_id, payload.body,
+         payload.idempotency_key, amount, expires],
         sort_keys=True, separators=(",", ":"), ensure_ascii=True,
     )
-    return hmac.new(key.encode(), message.encode(), hashlib.sha256).hexdigest()
+    return hmac.new(key, message.encode(), hashlib.sha256).hexdigest()
 
 
 @router.get('/cabinet/playground/catalog')
