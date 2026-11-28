@@ -104,6 +104,7 @@ def render_catalog(rows: list[tuple[Model, PartnerPrice]], fx: Decimal) -> str:
         kind, label = _modality(model.modality)
         contract = MODELS.get(model.slug)
         endpoint = contract.get("endpoint") if contract else None
+        section = {"video": "video", "image": "images", "text": "text"}.get(kind, "models")
         rate = retail_rate(model.slug, price, fx)
         mode = (
             "edit · с видеореференсом"
@@ -124,10 +125,12 @@ def render_catalog(rows: list[tuple[Model, PartnerPrice]], fx: Decimal) -> str:
             f'<strong class="price-number">{exact_price} ₽</strong>'
             f'<span>{_escape(_unit(price.billing_unit))}</span>'
         )
-        link_html = (
-            f'<a class="catalog-docs-link" href="/docs?model={_escape(model.slug)}#integrations">Интеграция ↗</a>'
-            if contract else '<a class="catalog-docs-link" href="/guide#models">Документация ↗</a>'
-        )
+        link_html = f'<a class="catalog-docs-link" href="/guide?lang=ru#{section}">Документация ↗</a>'
+        if contract:
+            link_html += (
+                f'<a class="catalog-docs-link" href="/docs?model={_escape(model.slug)}#integrations">'
+                'Интеграция ↗</a>'
+            )
         entries.append(
             f'<tr data-kind="{kind}" data-name="{_escape(model.name.casefold() + " " + model.slug.casefold())}" '
             f'data-price="{exact_price}">'
