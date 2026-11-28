@@ -11,7 +11,7 @@ RUN pip install --no-cache-dir --prefix=/install --no-deps .
 FROM docker.io/library/python:3.12-slim-trixie@sha256:2b4f19dae3a777dfc3b76730bda1e82e1f66ab2a2686fa93ca78edbfb4f04ffe AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 APP_ENV=production
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends fonts-dejavu-core \
+RUN apt-get update && apt-get install -y --no-install-recommends fonts-dejavu-core fonts-dejavu-mono \
     && rm -rf /var/lib/apt/lists/*
 RUN groupadd -r neironych && useradd -r -g neironych -d /app -s /usr/sbin/nologin neironych
 RUN mkdir -p /data/support /data/generated-images && chown neironych:neironych /data/support /data/generated-images
