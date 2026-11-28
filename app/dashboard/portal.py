@@ -30,7 +30,10 @@ _PAGE_SIZE = 25
 _EXPORT_LIMIT = 1000
 _MAX_PERIOD = 90
 _ALLOWED_SECTIONS = frozenset(
-    {"overview", "playground", "activity", "logs", "models", "keys", "credits", "invoices", "ledger", "settings", "referrals"}
+    {
+        "overview", "playground", "activity", "logs", "models", "keys",
+        "credits", "invoices", "ledger", "settings", "referrals",
+    }
 )
 
 
