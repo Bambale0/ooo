@@ -67,7 +67,10 @@ def create_app() -> FastAPI:
         is_public_html = (
             response.status_code == 200
             and response.headers.get("content-type", "").startswith("text/html")
-            and (path in {"/", "/docs", "/guide", "/price", "/prices", "/models"} or path.startswith("/models/"))
+            and (
+                path in {"/", "/docs", "/guide", "/price", "/prices", "/models", "/partners"}
+                or path.startswith("/models/")
+            )
         )
         if not is_public_html and path not in {"/robots.txt", "/sitemap.xml"} and not path.startswith("/ui/"):
             response.headers["X-Robots-Tag"] = "noindex, nofollow"

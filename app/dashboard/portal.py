@@ -30,7 +30,10 @@ _PAGE_SIZE = 25
 _EXPORT_LIMIT = 1000
 _MAX_PERIOD = 90
 _ALLOWED_SECTIONS = frozenset(
-    {"overview", "playground", "activity", "logs", "models", "keys", "credits", "invoices", "ledger", "settings"}
+    {
+        "overview", "playground", "activity", "logs", "models", "keys",
+        "credits", "invoices", "ledger", "settings", "referrals",
+    }
 )
 
 
@@ -130,6 +133,7 @@ async def render_portal(request: Request, db: DbSession, partner: Partner, sessi
         models_view,
         overview_view,
         page_html,
+        referrals_view,
         settings_view,
     )
     from app.dashboard.web import _csrf_for_session
@@ -145,6 +149,19 @@ async def render_portal(request: Request, db: DbSession, partner: Partner, sessi
         from app.dashboard.playground_ui import playground_view
 
         body = playground_view(csrf)
+    elif section == "referrals":
+        from app.referrals.models import ReferralCommission
+        from app.referrals.service import get_or_create_profile, referral_stats
+
+        profile = await get_or_create_profile(db, partner.id)
+        stats = await referral_stats(db, partner.id)
+        query = (
+            select(ReferralCommission)
+            .where(ReferralCommission.referrer_partner_id == partner.id)
+            .order_by(ReferralCommission.created_at.desc(), ReferralCommission.id.desc())
+        )
+        commissions, total = await _page_items(db, query, current_page)
+        body = referrals_view(profile.code, stats, commissions, total, current_page)
     elif section == "overview":
         usage = await _usage(db, partner.id, 30)
         recent = (

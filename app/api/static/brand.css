@@ -317,3 +317,13 @@ input::placeholder { color: var(--muted); }
   border:1px solid #5b417f;border-left:3px solid var(--purple);border-radius:10px}
 .catalog-rule strong{display:block;font-size:13px;color:#e9d8ff}
 .catalog-rule p{margin:8px 0 0;font-size:12px;line-height:1.7;color:var(--soft)}
+
+/* Partner program: existing brand palette and responsive marketing primitives. */
+.referral-reward-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+.referral-rate { color: var(--purple-soft); font-size: clamp(52px,8vw,88px); line-height: 1.15; letter-spacing: -.07em; margin-top: 20px; }
+.referral-reward-grid .capability-card h3 { margin-top: 8px; }
+.referral-faq { display: grid; gap: 12px; }
+.referral-faq details { border: 1px solid var(--line); background: var(--panel); border-radius: var(--radius); padding: 18px 22px; }
+.referral-faq summary { cursor: pointer; color: var(--text); font-weight: 650; }
+.referral-faq details p { margin-bottom: 0; }
+@media(max-width: 700px) { .referral-reward-grid { grid-template-columns: 1fr; } }

@@ -1,5 +1,11 @@
 from app.infrastructure.config import get_settings
-from app.referrals.service import get_or_create_profile, referral_stats
+from app.referrals.service import (
+    API_TOPUP_RATE,
+    DEVELOPMENT_ORDER_RATE,
+    get_or_create_profile,
+    rate_percent,
+    referral_stats,
+)
 from app.telegram.ui import keyboard, show
 
 
@@ -10,8 +16,8 @@ async def show_program(event, db, partner) -> None:
     link = f"https://t.me/{username}?start=ref_{profile.code}" if username else None
     text = (
         "🤝 Партнёрская программа Нейроныча\n\n"
-        "• 20% от полностью оплаченного заказа на разработку.\n"
-        "• 7% от каждого пополнения API приглашённого пользователя — пожизненно.\n\n"
+        f"• {rate_percent(DEVELOPMENT_ORDER_RATE)} от полностью оплаченного заказа на разработку.\n"
+        f"• {rate_percent(API_TOPUP_RATE)} от каждого пополнения API приглашённого пользователя — пожизненно.\n\n"
         f"Приглашено: {stats['invited']}\n"
         f"Начислено: {stats['balance_rub']:.2f} ₽\n\n"
         "Реферал закрепляется за вами при первом переходе и не меняется."
