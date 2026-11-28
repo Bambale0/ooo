@@ -25,7 +25,7 @@ def _telegram_icon() -> str:
 
 def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, landing: bool = False,
          seo_path: str | None = None, seo_description: str | None = None,
-         seo_headline: str | None = None) -> HTMLResponse:
+         seo_headline: str | None = None, partners: bool = False) -> HTMLResponse:
     ru = lang == "ru"
     bot_url = telegram_bot_url()
     bot_action = (
@@ -52,7 +52,15 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, land
         introduction, _, rest = body.partition('<nav class="contents">')
         contents, _, body = rest.partition("</nav>")
         contents = contents.replace(" · ", "")
-    if landing:
+    if partners:
+        headline = "Рекомендуйте Нейроныч.<br><span>Получайте вознаграждение.</span>"
+        description = "Приглашайте клиентов в Нейроныч API и на разработку. Отслеживайте начисления в личном кабинете."
+        action = (
+            f'<a class="button primary" href="{cabinet_url}?section=referrals">Открыть партнёрский кабинет →</a>'
+            f'{bot_action}'
+        )
+        side = ""
+    elif landing:
         headline = t("Нейросети.<br><span>В вашем продукте.</span>", "AI models.<br><span>In your product.</span>")
         description = t(
             "Создавайте сервисы с генерацией текста, изображений и видео. "
@@ -109,7 +117,7 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, land
         )
     language = ""
     language_path = "/" if landing else "/guide"
-    if not pricing:
+    if not pricing and not partners:
         language = (
             f'<nav class="language" aria-label="{t("Язык", "Language")}">'
             f'<a data-language href="{language_path}?lang=ru" lang="ru" {"aria-current=page" if ru else ""}>RU</a>'
@@ -117,7 +125,7 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, land
             '</nav>'
         )
     docs_tools = ""
-    if not landing and not pricing:
+    if not landing and not pricing and not partners:
         api_base = escape(get_settings().public_api_base_url.rstrip("/"))
         docs_tools = (
             '<section class="docs-start" aria-label="' + t("Быстрый доступ", "Quick links") + '">'
@@ -138,9 +146,13 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, land
         )
     # The docs host intentionally exposes only the public reference; keep private cabinet links on site and prices.
     cabinet_nav_link = (
-        f'<a href="{cabinet_url}">{t("Личный кабинет", "Cabinet")}</a>' if landing or pricing else ""
+        f'<a href="{cabinet_url}">{t("Личный кабинет", "Cabinet")}</a>' if landing or pricing or partners else ""
     )
-    path = seo_path or ("/" if landing else "/models" if pricing else "/docs")
+    partner_nav_link = (
+        f'<a href="/partners" {"aria-current=page" if partners else ""}>{t("Партнёрам", "Partners")}</a>'
+        if landing or pricing or partners else ""
+    )
+    path = seo_path or ("/partners" if partners else "/" if landing else "/models" if pricing else "/docs")
     description = seo_description or description
     headline = escape(seo_headline) if seo_headline else headline
     return HTMLResponse(
@@ -151,7 +163,7 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, land
         f'{seo_head(title, description, path, lang)}'
         '<link rel="icon" href="/ui/logo-mark.svg" type="image/svg+xml">'
         '<link rel="stylesheet" href="/ui/brand.css?v=3"><script src="/ui/brand.js?v=2" defer></script>'
-        f'</head><body class="{"pricing-page" if pricing else "reference-page" if landing else "docs-page"}">'
+        f'</head><body class="{"pricing-page" if pricing else "reference-page" if landing or partners else "docs-page"}">'
         f'<a class="skip-link" href="#main">{t("К содержимому", "Skip to content")}</a>'
         '<header class="site-header"><div class="header-inner">'
         f'<a class="brand" href="/" aria-label="{t("Нейроныч API — главная", "Neironych API — home")}">'
@@ -159,26 +171,28 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, land
         f"<span>{t('Нейроныч', 'Neironych')}<small>API PLATFORM</small></span></a>"
         f'<nav class="primary-nav" aria-label="{t("Основная навигация", "Main navigation")}">'
         f'<a href="/" {"aria-current=page" if landing else ""}>{t("Обзор", "Overview")}</a>'
-        f'<a href="{docs_url}" {"aria-current=page" if not pricing and not landing else ""}>'
+        f'<a href="{docs_url}" {"aria-current=page" if not pricing and not landing and not partners else ""}>'
         f"{t('Документация', 'Documentation')}</a>"
         f'<a href="{price_url}" {"aria-current=page" if pricing else ""}>{t("Модели и цены", "Models & pricing")}</a>'
-        f'{cabinet_nav_link}</nav>'
+        f'{partner_nav_link}{cabinet_nav_link}</nav>'
         f'{bot_header}'
         f'{language}</div></header><main id="main" tabindex="-1" class="container">'
         '<section class="hero" aria-labelledby="page-title"><div class="hero-copy">'
-        f'<p class="eyebrow">{t("Нейроныч для разработчиков", "Neironych for developers")}</p>'
+        f'<p class="eyebrow">{("Партнёрская программа" if partners else t("Нейроныч для разработчиков", "Neironych for developers"))}</p>'
         f'<h1 id="page-title">{headline}</h1><p class="hero-description">{description}</p>'
         f'<div class="hero-actions">{action}</div><div class="hero-tags">'
-        f"<span>{t('Текст', 'Text')}</span><span>{t('Изображения', 'Images')}</span>"
-        f'<span>{t("Видео", "Video")}</span></div></div><div class="hero-art" aria-hidden="true">'
+        f"{'<span>API</span><span>Разработка</span><span>Реферальные начисления</span>' if partners else ''}"
+        f"{'' if partners else '<span>' + t('Текст', 'Text') + '</span><span>' + t('Изображения', 'Images') + '</span>'}"
+        f"{'' if partners else '<span>' + t('Видео', 'Video') + '</span>'}"
+        '</div></div><div class="hero-art" aria-hidden="true">'
         '<span class="orbit orbit-one"></span><span class="orbit orbit-two"></span>'
         '<span class="art-code">{ }</span><img src="/ui/neuronych.webp" width="473" height="1000" alt="">'
         f'<span class="art-note">{t("Умно. Просто. По делу.", "Smart. Simple. To the point.")}</span></div></section>'
-        f'<div class="{"landing-layout" if landing else "document-layout"}">{side}'
+        f'<div class="{"landing-layout" if landing or partners else "document-layout"}">{side}'
         f'<article class="document" aria-label="{escape(title, quote=True)}">'
         f"{'<div class=reference-intro>' + introduction + '</div>' if introduction else ''}"
         f"{docs_tools}{body}</article></div>"
         '</main><footer class="site-footer container"><span>Нейроныч · API</span>'
-        f'<a href="#main">{t("Наверх", "Back to top")} ↑</a></footer>'
+        f'{partner_nav_link}<a href="#main">{t("Наверх", "Back to top")} ↑</a></footer>'
         '<p class="toast" role="status" aria-live="polite" aria-atomic="true"></p></body></html>'
     )

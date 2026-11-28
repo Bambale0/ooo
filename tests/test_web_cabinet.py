@@ -196,3 +196,58 @@ async def test_inactive_account_cannot_reuse_existing_session(browser, db_sessio
     assert page.status_code == 200
     assert "My Private Project" not in page.text
     assert 'data-telegram-login="apineurobrobot"' in page.text
+
+
+async def test_referral_cabinet_uses_existing_ledger_and_is_tenant_scoped(browser, db_session, web_partner):
+    from app.referrals.service import API_TOPUP_RATE, accrue_commission, bind_referral, get_or_create_profile
+
+    partner, stranger, _ = web_partner
+    profile = await get_or_create_profile(db_session, partner.id)
+    other_profile = await get_or_create_profile(db_session, stranger.id)
+    assert await bind_referral(db_session, referred_telegram_id="345678901", code=profile.code)
+    assert await bind_referral(db_session, referred_telegram_id="345678902", code=other_profile.code)
+    for telegram_id, kind, event_key, base, reverse in (
+        ("345678901", "api_topup", "web-referral-test-topup", "1000", False),
+        ("345678901", "api_topup_refund", "web-referral-test-refund", "100", True),
+        ("345678902", "api_topup", "web-referral-test-other", "9000", False),
+    ):
+        await accrue_commission(
+            db_session, referred_telegram_id=telegram_id, kind=kind,
+            source_id=event_key, event_key=event_key, base_amount_rub=Decimal(base),
+            rate=API_TOPUP_RATE, reverse=reverse,
+        )
+    await db_session.commit()
+    url = "/cabinet?section=referrals"
+    anonymous = await browser.get(url)
+    assert profile.code not in anonymous.text
+    login = await _login(browser, int(partner.telegram_id))
+    assert login.status_code == 200
+    response = await browser.get(url)
+    assert response.status_code == 200
+    assert response.headers["cache-control"].startswith("private, no-store")
+    assert 'aria-current=page' in response.text
+    assert f"https://t.me/apineurobrobot?start=ref_{profile.code}" in response.text
+    assert 'data-copy-target="referral-link"' in response.text
+    assert "63.00 ₽" in response.text
+    assert "-7.00 ₽" in response.text
+    assert "70.00 ₽" in response.text
+    assert "630.00 ₽" not in response.text
+    assert other_profile.code not in response.text
+    assert "345678901" not in response.text
+    assert "345678902" not in response.text
+    assert profile.code in (await browser.get(url)).text
+
+
+async def test_referral_cabinet_creates_stable_profile_for_new_partner(browser, web_partner):
+    partner, _, _ = web_partner
+    login = await _login(browser, int(partner.telegram_id))
+    assert login.status_code == 200
+    url = "/cabinet?section=referrals"
+    first = await browser.get(url)
+    second = await browser.get(url)
+    assert first.status_code == second.status_code == 200
+    pattern = r"https://t.me/apineurobrobot\?start=ref_([a-f0-9]+)"
+    match = re.search(pattern, first.text)
+    assert match is not None
+    assert match.group(1) == re.search(pattern, second.text).group(1)
+    assert "Пока пусто" in first.text

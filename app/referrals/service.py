@@ -15,6 +15,10 @@ DEVELOPMENT_ORDER_RATE = Decimal("0.20")
 RUB_CENT = Decimal("0.01")
 
 
+def rate_percent(rate: Decimal) -> str:
+    return f"{(rate * 100).normalize():f}%"
+
+
 def commission_amount(base_amount_rub: Decimal, rate: Decimal) -> Decimal:
     base = Decimal(base_amount_rub)
     if base <= 0:

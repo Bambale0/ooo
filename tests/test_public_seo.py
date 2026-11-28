@@ -83,3 +83,21 @@ async def test_crawler_controls(client):
     assert "Disallow: /cabinet" not in robots.text  # allow crawling noindex, auth remains mandatory
     for path in ["/cabinet", "/v1/models", "/nonexistent-seo"]:
         assert "noindex" in (await client.get(path)).headers["X-Robots-Tag"]
+
+
+async def test_partner_program_is_public_indexable_and_linked(client):
+    from app.referrals.service import API_TOPUP_RATE, DEVELOPMENT_ORDER_RATE, rate_percent
+
+    response = await client.get("/partners")
+    assert response.status_code == 200
+    base = get_settings().public_api_base_url.rstrip("/")
+    assert f'<link rel="canonical" href="{base}/partners">' in response.text
+    assert "X-Robots-Tag" not in response.headers
+    assert rate_percent(API_TOPUP_RATE) in response.text
+    assert rate_percent(DEVELOPMENT_ORDER_RATE) in response.text
+    assert "/cabinet?section=referrals" in response.text
+    assert 'src="/ui/neuronych.webp"' in response.text
+    assert 'href="/partners"' in (await client.get("/")).text
+    assert 'href="/partners"' in (await client.get("/prices")).text
+    assert 'href="/partners"' not in (await client.get("/docs")).text
+    assert f"<loc>{base}/partners</loc>" in (await client.get("/sitemap.xml")).text

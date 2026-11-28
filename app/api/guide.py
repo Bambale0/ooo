@@ -14,6 +14,7 @@ from app.api.model_explorer import render_catalog
 from app.api.native_video_reference import REVIEWED_VIDEO_MODELS, render_native_video_reference
 from app.api.partner_reference import render_reference, table
 from app.api.public_ui import page
+from app.api.referral_marketing import referral_marketing_page
 from app.api.seo import canonical_url, model_path, sitemap_xml
 from app.catalog.models import Model, PartnerPrice
 from app.catalog.video_edit_pricing import EDIT_MODE, EDIT_MODEL, edit_markup
@@ -102,6 +103,11 @@ async def _public_connection_guide(db: DbSession, lang: str) -> HTMLResponse:
 @router.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def home(lang: str = Query(default="ru", pattern="^(ru|en)$")):
     return marketing_page(lang)
+
+
+@router.get("/partners", response_class=HTMLResponse, include_in_schema=False)
+async def partners():
+    return referral_marketing_page()
 
 
 @router.get("/docs", response_class=HTMLResponse, include_in_schema=False)
@@ -198,7 +204,7 @@ async def robots():
 @router.get("/sitemap.xml", include_in_schema=False)
 async def sitemap(db: DbSession):
     models = {model.slug: model.modality for model, _ in await _priced_rows(db) if model.slug in MODELS}
-    paths = ["/", "/?lang=en", "/docs", "/docs?lang=en", "/models"]
+    paths = ["/", "/?lang=en", "/docs", "/docs?lang=en", "/models", "/partners"]
     paths.extend(model_path(slug) for slug, (modality, _) in _CATEGORIES.items() if modality in models.values())
     paths.extend(model_path(slug) for slug in sorted(models))
     return Response(sitemap_xml(paths), media_type="application/xml")

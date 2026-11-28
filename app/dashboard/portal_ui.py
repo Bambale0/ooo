@@ -28,6 +28,7 @@ _SECTIONS = (
     ("credits", "Баланс и пополнение", "◉", "Биллинг"),
     ("invoices", "Счета", "▤", "Биллинг"),
     ("ledger", "История операций", "⇄", "Биллинг"),
+    ("referrals", "Партнёрская программа", "◇", "Партнёрство"),
     ("settings", "Настройки", "⚙", "Аккаунт"),
 )
 _TITLES = {id_: label for id_, label, _, _ in _SECTIONS}
@@ -663,6 +664,65 @@ def ledger_view(items: list[LedgerEntry], total: int, current: int, selected_typ
         + _table(("Дата UTC", "Операция", "Сумма", "Баланс после"), rows, "Операций ещё нет.")
         + _pagination("ledger", total, current, extra=f"&type={quote(selected_type)}")
         + "</section>"
+    )
+
+
+def referrals_view(code: str, stats: dict, commissions: list, total: int, current: int) -> str:
+    from app.api.public_ui import telegram_bot_url
+    from app.referrals.service import API_TOPUP_RATE, DEVELOPMENT_ORDER_RATE, rate_percent
+
+    bot_url = telegram_bot_url()
+    link = f"{bot_url}?start=ref_{quote(code, safe='')}" if bot_url else ""
+    title = _heading(
+        "Партнёрство", "Партнёрская программа",
+        "Приглашайте клиентов и отслеживайте вознаграждение отдельно от API-баланса.",
+        '<a class="button button-secondary" href="/partners">Условия программы ↗</a>',
+    )
+    cards = _stats([
+        ("Приглашено", str(stats["invited"]), "Закреплённые рефералы"),
+        ("Начислено", _rub(stats["balance_rub"]), "С учётом корректировок"),
+        ("Пополнения API", rate_percent(API_TOPUP_RATE), "Пожизненно"),
+        ("Заказы на разработку", rate_percent(DEVELOPMENT_ORDER_RATE), "После полной оплаты"),
+    ])
+    if link:
+        link_field = (
+            '<div class="secret-field"><code id="referral-link">'
+            f'{_e(link)}</code><button class="button button-secondary" type="button" '
+            'data-copy-target="referral-link">Копировать ссылку</button></div>'
+        )
+    else:
+        link_field = (
+            f'<p>Ваш код: <code>{_e(code)}</code></p>'
+            '<p>Ссылка временно недоступна. Обратитесь в поддержку.</p>'
+        )
+    sharing = (
+        '<section class="surface action-surface"><div><h2>Ваша партнёрская ссылка</h2>'
+        '<p>Привязка действует при первом посещении Telegram-бота.</p></div>'
+        f'<div>{link_field}</div></section>'
+    )
+    rows = []
+    kinds = {
+        "api_topup": "Пополнение API",
+        "api_topup_refund": "Корректировка пополнения API",
+        "development_order": "Заказ на разработку",
+    }
+    for commission in commissions:
+        label = kinds.get(commission.kind, "Корректировка" if commission.amount_rub < 0 else "Вознаграждение")
+        rows.append((
+            _e(_dt(commission.created_at)), _e(label), _e(_rub(commission.base_amount_rub)),
+            _e(rate_percent(commission.rate)), _e(_rub(commission.amount_rub)),
+            '<span class="tag tag-negative">Корректировка</span>' if commission.amount_rub < 0
+            else '<span class="tag tag-positive">Начислено</span>',
+        ))
+    return (
+        title + cards + sharing
+        + '<section class="surface"><div class="section-top"><div><h2>История начислений</h2>'
+        '<p>Журнал вознаграждений и корректировок · UTC</p></div></div>'
+        + _table(("Дата", "Операция", "База", "Ставка", "Сумма", "Статус"), rows,
+                 "Поделитесь ссылкой: начисления появятся после подходящих оплаченных операций.")
+        + _pagination("referrals", total, current) + "</section>"
+        '<p class="footnote">Начисления не являются доступным балансом API или подтверждённой суммой к выводу. '
+        'По вопросам получения вознаграждения обратитесь в Telegram-поддержку.</p>'
     )
 
 
