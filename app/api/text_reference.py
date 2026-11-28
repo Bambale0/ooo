@@ -412,11 +412,14 @@ def _render_model_limits(ru: bool) -> str:
         + ("Лимиты и возможности текстовых моделей" if ru else "Text model limits and capabilities")
         + "</h3><p>"
         + escape(
-            "Проверено 28.09.2026. Здесь перечислены объявленные технические параметры, а не обещание "
-            "доступности всех ID: работающая модель должна присутствовать в GET /v1/models. Контекст включает "
-            "вход и вывод вместе; максимумы входа и вывода не всегда достижимы одновременно. Системные "
-            "инструкции, история, инструменты и рассуждения также используют токены. Не объявлено означает, "
-            "что подтверждённого значения нет; это не ноль, не отсутствие ограничения и не поддержка функции. "
+            "В таблице приведены заявленные технические характеристики моделей. Эти сведения не гарантируют "
+            "доступность всех идентификаторов: проверяйте наличие нужной модели через GET /v1/models. Контекст "
+            "включает "
+            "входные и выходные токены; максимальные значения для входа и выхода не всегда достижимы "
+            "одновременно. Системные "
+            "инструкции, история, инструменты и рассуждения также используют токены. Отметка «Не объявлено» означает, "
+            "что подтверждённое значение отсутствует. Это не означает нулевой лимит, отсутствие ограничения или "
+            "поддержку функции. "
             "API проверяет общий формат, а конкретная модель может отклонить превышение своего лимита."
             if ru
             else "Reviewed 2026-09-28. These are declared technical capabilities, not a promise that every ID is "
@@ -525,10 +528,12 @@ def render_text_reference(lang: str) -> str:
     required = choose("Да", "Yes")
     result = '<section aria-labelledby="text"><h2 id="text">' + choose("Текстовые модели", "Text models") + "</h2>"
     result += paragraph(
-        "Выберите включённую текстовую модель из GET /v1/models. ID в примерах показывают формат запроса; "
-        "их наличие в справочнике не означает, что модель сейчас доступна. GPT-модели вызывайте через Responses "
-        "или Chat Completions. Messages подходит для Claude и совместимых моделей. Возможности vision, tools, "
-        "JSON Schema и reasoning зависят от выбранной модели и не становятся доступными при смене протокола.",
+        "Выберите доступную текстовую модель из списка GET /v1/models. Идентификаторы моделей в примерах "
+        "демонстрируют формат запроса; "
+        "их наличие в справочнике не означает, что модель сейчас доступна. Для моделей GPT используйте Responses "
+        "или Chat Completions. Для Claude и совместимых моделей используйте Messages. Поддержка анализа "
+        "изображений (vision), инструментов (tools), "
+        "JSON Schema и режима рассуждений (reasoning) определяется выбранной моделью, а не протоколом.",
         "Select an enabled text model from GET /v1/models. Example IDs illustrate request syntax and do not "
         "indicate current availability. Use Responses or Chat Completions for GPT models. Messages is for "
         "Claude and compatible models. Vision, tools, JSON Schema and reasoning capabilities depend on the "
@@ -546,13 +551,13 @@ def render_text_reference(lang: str) -> str:
     result += paragraph(
         "reasoning.effort в Responses или reasoning_effort в Chat: low, medium, high, xhigh, max; "
         "по умолчанию medium. Контекст 1 050 000 токенов, вход до 922 000, вывод до 128 000. "
-        "Reasoning-токены входят в лимит вывода и оплачиваются как выходные.",
+        "Токены рассуждений (reasoning) учитываются в лимите вывода и тарифицируются как выходные токены.",
         "Use reasoning.effort in Responses or reasoning_effort in Chat: low, medium, high, xhigh, max; "
         "the default is medium. Context is 1,050,000 tokens, input up to 922,000, output up to 128,000. "
         "Reasoning tokens count toward the output cap and are billed as output tokens.",
     )
     result += paragraph(
-        "service_tier — необязательная строка. Опустите её для стандартного режима. Значения priority "
+        "service_tier — необязательная строка. Для стандартного режима не передавайте этот параметр. Значения priority "
         "или fast включают Fast: все опубликованные рублёвые тарифы этой модели умножаются на 2, "
         "включая вход, выход, чтение и запись кэша. Это правило относится к Luna; наличие Fast у другой "
         "модели проверяйте отдельно.",
@@ -611,7 +616,8 @@ def render_text_reference(lang: str) -> str:
                 "integer",
                 "1–10,000,000",
                 choose(
-                    "Используйте поле своего протокола, описанное ниже. Это граница проверки API, а не лимит модели. "
+                    "Используйте поле своего протокола, описанное ниже. Это ограничение проверки запроса на "
+                    "уровне API, а не предельное значение конкретной модели. "
                     "Фактический максимум вывода и общий контекст могут быть меньше. Указывайте явный предел; "
                     "reasoning-токены могут входить в него.",
                     "Use the field for your protocol below. This is the API validation boundary, not a model "
@@ -624,8 +630,9 @@ def render_text_reference(lang: str) -> str:
                 "number",
                 optional,
                 choose(
-                    "Управление вариативностью. Диапазоны и совместимость с reasoning зависят от модели; "
-                    "при первом запросе опустите оба поля.",
+                    "Управляют вариативностью ответа. Допустимые диапазоны и совместимость с режимом "
+                    "рассуждений зависят от модели; "
+                    "при первом запросе не указывайте ни один из этих параметров.",
                     "Sampling controls. Ranges and reasoning compatibility depend on the model; omit both "
                     "for the first request.",
                 ),
@@ -719,7 +726,7 @@ def render_text_reference(lang: str) -> str:
     result += _curl(EXAMPLES[0])
     result += paragraph(
         "HTTP 200: читайте output[] и собирайте блоки content[] с type=output_text. Массив может также "
-        "содержать reasoning и function_call. Не привязывайте извлечение текста к одному индексу. "
+        "содержать reasoning и function_call. При извлечении текста не полагайтесь на фиксированный индекс элемента. "
         "status=incomplete означает частичный результат; проверяйте incomplete_details.",
         "HTTP 200: traverse output[] and collect content[] blocks with type=output_text. The array can "
         "also contain reasoning and function_call items. Do not assume a fixed text index. "
@@ -756,7 +763,7 @@ def render_text_reference(lang: str) -> str:
                 "max_completion_tokens",
                 "integer",
                 optional,
-                choose("Предпочтительное поле предела вывода.", "Preferred output cap field."),
+                choose("Рекомендуемый параметр ограничения числа выходных токенов.", "Preferred output cap field."),
             ),
             (
                 "max_tokens",
@@ -791,7 +798,7 @@ def render_text_reference(lang: str) -> str:
                 optional,
                 choose(
                     "type=json_object для JSON или type=json_schema с вложенным json_schema для схемы. "
-                    "Просите JSON также в тексте запроса.",
+                    "Также укажите требование вернуть JSON в тексте запроса.",
                     "type=json_object for JSON, or type=json_schema with nested json_schema for a schema. "
                     "Also request JSON in the prompt.",
                 ),
@@ -821,7 +828,8 @@ def render_text_reference(lang: str) -> str:
                 "string | array / integer / number / number",
                 optional,
                 choose(
-                    "Остановка, подсказка генератору и штрафы повторения только у поддерживающих их моделей. "
+                    "Последовательности остановки, параметры генерации и штрафы за повторы доступны только у "
+                    "моделей, которые их поддерживают. "
                     "seed не гарантирует точное воспроизведение.",
                     "Stop sequences, sampling seed and repetition controls only for supporting models. "
                     "seed does not guarantee exact reproduction.",
@@ -832,7 +840,8 @@ def render_text_reference(lang: str) -> str:
     result += _curl(EXAMPLES[1])
     result += paragraph(
         "HTTP 200: текст находится в choices[].message.content, вызовы функций — в message.tool_calls, "
-        "причина завершения — finish_reason. length означает достижение лимита и возможный обрыв текста.",
+        "причина завершения указана в finish_reason. Значение length означает достижение лимита и возможное "
+        "усечение ответа.",
         "HTTP 200: text is in choices[].message.content, function calls in message.tool_calls and "
         "the termination reason in finish_reason. length indicates that a cap was reached and text may be truncated.",
     )
@@ -870,7 +879,8 @@ def render_text_reference(lang: str) -> str:
                 "integer",
                 required,
                 choose(
-                    "Предел вывода. Обязателен даже при stream=true.", "Output cap, required even with stream=true."
+                    "Максимальное число выходных токенов. Параметр обязателен, в том числе при stream=true.",
+                    "Output cap, required even with stream=true."
                 ),
             ),
             (
@@ -978,7 +988,8 @@ def render_text_reference(lang: str) -> str:
         '<h3 id="text-vision">' + choose("Изображение в текстовом запросе", "Image input for text models") + "</h3>"
     )
     result += paragraph(
-        "Используйте только vision-модель. Замените https://example.com/reference.jpg на прямую доступную "
+        "Используйте модель, поддерживающую анализ изображений (vision). Замените "
+        "https://example.com/reference.jpg на прямую доступную "
         "HTTPS-ссылку на изображение. Base64 также зависит от модели: в Responses input_image.image_url "
         "и Chat image_url.url передают data:image/jpeg;base64,...; в Messages используют source с "
         "type=base64, media_type=image/jpeg и data с чистым base64. Для Kimi K3 используйте "
@@ -995,7 +1006,7 @@ def render_text_reference(lang: str) -> str:
 
     result += '<h3 id="text-qwen-video">' + choose("Видео в Qwen3.8-Max", "Video input in Qwen3.8-Max") + "</h3>"
     result += paragraph(
-        "Оригинальная модель Qwen3.8-Max понимает видео, но текущий маршрут Нейроныча "
+        "Модель Qwen3.8-Max поддерживает анализ видео, однако текущая интеграция Нейроныча "
         "принимает для неё только текст и изображения. Блоки video_url, input_video и video "
         "отклоняются с HTTP 422 invalid_request_contract и заголовком "
         "X-Validation-Error: video_input_unavailable до создания задачи и оплаты. "
@@ -1013,7 +1024,8 @@ def render_text_reference(lang: str) -> str:
         "Для GLM и Kimi управляйте reasoning_effort через Chat Completions. Таблица описывает настройку "
         "при доступности соответствующей модели; уровни не универсальны. GPT использует reasoning.effort "
         "в Responses или reasoning_effort в Chat. У Claude thinking и output_config зависят от поколения; "
-        "без подтверждённой конфигурации опустите их. HTTP 200 не подтверждает, что произвольная "
+        "не указывайте их, если поддержка выбранной конфигурации не подтверждена. HTTP 200 не подтверждает, что "
+        "произвольная "
         "неподдерживаемая настройка повлияла на результат.",
         "For GLM and Kimi, use reasoning_effort through Chat Completions. The table applies when the "
         "corresponding model is available; levels are not universal. GPT uses reasoning.effort in "
@@ -1087,7 +1099,8 @@ def render_text_reference(lang: str) -> str:
 
     result += '<h3 id="text-stream">SSE / stream=true</h3>'
     result += paragraph(
-        "Успешный поток имеет Content-Type: text/event-stream и X-Request-Id. События разделяются пустой "
+        "При успешном потоковом ответе API возвращает заголовки Content-Type: text/event-stream и X-Request-Id. "
+        "События разделяются пустой "
         "строкой; граница сетевого чанка не является границей события. Собирайте data: до конца события, "
         "затем разбирайте JSON. Обрабатывайте event:, служебные блоки и ошибки; при [DONE] JSON-парсер "
         "не вызывается. Иллюстрации ниже сокращены: токены usage и текст приведены только как пример.",

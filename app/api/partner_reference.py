@@ -253,7 +253,7 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
 
     def params(rows):
         return table(
-            (t("Параметр", "Parameter"), t("Тип / обязательность", "Type / required"), t("Правила", "Rules")), rows
+            (t("Параметр", "Parameter"), t("Тип и обязательность", "Type / required"), t("Описание", "Rules")), rows
         )
 
     def example(name):
@@ -261,55 +261,63 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
         return code(f"POST /v1/{protocol}") + code(body)
 
     body = p(
-        "Нейроныч API · Контракт проверен 28.09.2026. Здесь описаны запросы генерации, их параметры и ответы. "
-        "Ключ выдаётся после подключения партнёра. Для генерации нужны активный ключ, доступная модель и баланс.",
+        "Документация API Нейроныча. В справочнике описаны методы API, параметры запросов, форматы ответов и "
+        "правила обработки ошибок. "
+        "Для выполнения генерации необходимы действующий API-ключ, доступная модель и достаточный баланс.",
         "Neironych API · Contract reviewed 2026-09-28. This reference covers generation requests, parameters and "
         "responses. Obtain a key through partner onboarding. Generations require an active key, an enabled model "
         "and sufficient balance.",
     )
     anchors = [
-        ("connect", "Подключение", "Connection"),
+        ("connect", "Подключение и авторизация", "Connection"),
         ("balance", "Баланс", "Balance"),
         ("models", "Модели", "Models"),
         ("text", "Текст", "Text"),
         ("images", "Изображения", "Images"),
         ("video", "Видео", "Video"),
         ("uploads", "Загрузка референса", "Reference upload"),
-        ("python", "Полный пример Python", "Complete Python example"),
-        ("errors", "Ошибки и повторы", "Errors and repeated requests"),
+        ("python", "Пример интеграции на Python", "Complete Python example"),
+        ("errors", "Ошибки и повторные запросы", "Errors and repeated requests"),
     ]
     body += (
         '<nav class="contents">'
         + " · ".join(f'<a href="#{anchor}">{escape(t(ru, en))}</a>' for anchor, ru, en in anchors)
         + "</nav>"
     )
-    body += heading("connect", "Подключение", "Connection") + code(base_url)
+    body += heading("connect", "Подключение и авторизация", "Connection") + code(base_url)
     body += code(
         "Authorization: Bearer <PARTNER_API_KEY>\nContent-Type: application/json\n"
         "Idempotency-Key: <unique-request-key>\nX-Client-Request-Id: <your-task-id>"
     )
     body += p(
-        "Base URL выше не содержит /v1. Указывайте полный путь метода. Все операции, кроме GET /v1/models, "
-        "требуют авторизацию. Вместо Authorization допустим x-api-key; не передавайте оба заголовка. "
-        "Ключ храните на своём сервере, не в браузере или мобильном клиенте.",
+        "Базовый URL указан без префикса /v1. Добавляйте полный путь к нужному методу. Все операции, кроме GET "
+        "/v1/models, "
+        "требуют авторизации. Вместо Authorization можно использовать x-api-key. Передавайте только один из "
+        "этих заголовков. "
+        "Храните API-ключ на сервере приложения. Не включайте его в клиентский код браузера или мобильного приложения.",
         "The base URL above does not include /v1. Append the complete method path. Every operation except "
         "GET /v1/models requires authentication. x-api-key is an alternative to Authorization; do not send both. "
         "Keep the key on your server, never in a browser or mobile client.",
     )
     body += p(
-        "Idempotency-Key обязателен для всех POST генерации текста, изображений и видео: строка 8–160 символов, "
-        "например UUID. Один ключ обозначает один запрос в пределах партнёра, включая все его API-ключи. "
-        "Сохраните ключ и исходное тело до отправки. Для получения статуса, скачивания и создания "
-        "загрузки он не нужен.",
+        "Для POST-запросов генерации текста, изображений и видео обязателен заголовок Idempotency-Key: строка "
+        "длиной от 8 до 160 символов, "
+        "например UUID. Ключ идентифицирует одну операцию в пределах аккаунта партнёра независимо от "
+        "используемого API-ключа. "
+        "Сохраните ключ идемпотентности и исходное тело запроса до отправки. Для проверки статуса, скачивания и "
+        "создания "
+        "загрузки этот заголовок не требуется.",
         "Idempotency-Key is required for every text, image and video generation POST: a string of 8–160 characters, "
         "such as a UUID. A key identifies one request across the partner account, including its other API keys. "
         "Persist the key and original body before submitting. Status, download and upload-ticket "
         "operations do not need it.",
     )
     body += p(
-        "Необязательный X-Client-Request-Id сохраняет UUID задачи вашей системы и возвращается в статусе и callback. "
-        "Если ключ имеет вид generation:<UUID>:provider:<N>, UUID извлекается автоматически. Потерянный ответ "
-        "можно восстановить через GET /api/v1/generations/by-client-request-id/<UUID>.",
+        "Необязательный заголовок X-Client-Request-Id позволяет связать запрос с UUID задачи в вашей системе. "
+        "Идентификатор возвращается в ответе о статусе и в callback. "
+        "Если ключ имеет вид generation:<UUID>:provider:<N>, UUID извлекается автоматически. При потере "
+        "HTTP-ответа сведения о запросе "
+        "можно получить через GET /api/v1/generations/by-client-request-id/<UUID>.",
         "Optional X-Client-Request-Id persists your system task UUID and returns it in status and callback payloads. "
         "For generation:<UUID>:provider:<N> keys, the UUID is extracted automatically. Recover a lost response with "
         "GET /api/v1/generations/by-client-request-id/<UUID>.",
@@ -336,10 +344,11 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
     )
     body += heading("balance", "Баланс партнёра", "Partner balance")
     body += p(
-        "GET /v1/balance возвращает только текущий рублёвый баланс владельца переданного партнёрского "
+        "Метод GET /v1/balance возвращает текущий баланс в рублях для аккаунта, которому принадлежит переданный "
+        "партнёрский "
         "API-ключа. Требуется Authorization: Bearer <PARTNER_API_KEY> либо x-api-key. "
-        "Нельзя получить баланс другого партнёра или использовать административный ключ. "
-        "Этот GET не создаёт генерацию, не списывает деньги и не требует Idempotency-Key. "
+        "Доступ к балансу другого партнёра и авторизация административным ключом не поддерживаются. "
+        "Запрос не создаёт генерацию, не списывает средства и не требует заголовка Idempotency-Key. "
         "Ответ не кешируется (Cache-Control: no-store).",
         "GET /v1/balance returns only the current RUB balance belonging to the provided partner API key. "
         "Use Authorization: Bearer <PARTNER_API_KEY> or x-api-key. Another partner's balance and admin API "
@@ -354,9 +363,9 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
         "available_balance_rub": "1249.99",
     })
     body += p(
-        "balance_rub — фактический денежный остаток в ₽; credit_limit_rub — отдельно одобренный "
+        "balance_rub — текущий остаток средств в рублях; credit_limit_rub — отдельно одобренный "
         "кредитный лимит; available_balance_rub — их сумма. Для предупреждения о необходимости "
-        "пополнения денежных средств сравнивайте именно balance_rub, не кредитный лимит. "
+        "пополнения средств используйте balance_rub, а не кредитный лимит. "
         "Денежные значения передаются строками с точностью до копейки.",
         "balance_rub is the actual RUB cash balance, credit_limit_rub the separately approved limit, "
         "and available_balance_rub their sum. For low cash alerts compare balance_rub, not credit "
@@ -365,10 +374,12 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
     # The enabled-model table is inserted by guide.py, matching GET /v1/models.
     body += heading("models", "Доступность моделей", "Model availability")
     body += p(
-        "GET /v1/models — актуальный список включённых Model ID, без пагинации и без параметров. "
-        "data может быть пустым. Наличие модели в примере или таблице ограничений ниже не означает, что она включена "
-        "для генераций. Отдельные режимы и размеры также должны быть доступны для вашего подключения. "
-        "Model ID передавайте точно, включая регистр и версию.",
+        "Метод GET /v1/models возвращает актуальный список доступных идентификаторов моделей. Параметры запроса "
+        "и пагинация не предусмотрены. "
+        "Массив data может быть пустым. Наличие модели в примере или таблице ограничений не подтверждает её "
+        "доступность "
+        "для генерации. Поддержка отдельных режимов и размеров также зависит от условий подключения. "
+        "Передавайте идентификатор модели без изменений, включая регистр символов и версию.",
         "GET /v1/models returns currently enabled model IDs, with no pagination or parameters. data may be empty. "
         "A model appearing in an example or limits table below does not mean it is enabled for generations. "
         "Individual modes and sizes must also be available for your connection. Send the exact model ID, "
@@ -380,7 +391,8 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
     body += heading("images", "Изображения", "Images")
     body += p(
         "POST /v1/images/generations создаёт изображения. POST /v1/images/edits принимает JSON с images "
-        "или multipart/form-data с файлами. Запрос синхронный: дождитесь ответа, не создавайте второй при задержке.",
+        "или multipart/form-data с файлами. Запрос выполняется синхронно. При задержке ответа не отправляйте "
+        "новую генерацию.",
         "POST /v1/images/generations creates images. POST /v1/images/edits accepts JSON with images or "
         "multipart/form-data with files. Requests are synchronous: wait for the response; a delay is not a reason "
         "to submit another generation.",
@@ -390,12 +402,15 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
             (
                 "model",
                 "string · required",
-                t("Model ID семейства изображений из /v1/models.", "Image model ID from /v1/models."),
+                t("Идентификатор модели генерации изображений из /v1/models.", "Image model ID from /v1/models."),
             ),
             (
                 "prompt",
                 "string · required",
-                t("Непустое описание результата/изменений.", "Non-empty output/edit description."),
+                t(
+                    "Непустое текстовое описание требуемого результата или изменений.",
+                    "Non-empty output/edit description.",
+                ),
             ),
             ("n", "integer · optional, 1", "GPT Image: 1–7; Nano Banana: 1–4; Grok Image: 1–10; Seedream 5.0 Pro: 1."),
             (
@@ -413,8 +428,8 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
                 "object | file · optional",
                 t(
                     'GPT edits: {"image_url":"https://…/mask.png"} или файл PNG с альфа-каналом; '
-                    "прозрачная область меняется. "
-                    "Размер совпадает с первым изображением; не более одной маски.",
+                    "Редактируется область изображения, соответствующая прозрачной области маски. "
+                    "Размер маски должен совпадать с размером первого изображения. Допускается не более одной маски.",
                     'GPT edits: {"image_url":"https://…/mask.png"} or a PNG file with alpha; transparent '
                     "areas are edited. "
                     "Match the first image dimensions; at most one mask.",
@@ -424,8 +439,9 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
                 "size",
                 "string · optional, auto",
                 t(
-                    "GPT: auto или WIDTHxHEIGHT, например 1024x1024. Обе стороны положительные. "
-                    "Итоговые пиксели могут отличаться от запроса; проверяйте результат.",
+                    "GPT: auto или WIDTHxHEIGHT, например 1024x1024. Ширина и высота должны быть положительными. "
+                    "Фактические размеры изображения могут отличаться от запрошенных. Проверяйте размер "
+                    "полученного файла.",
                     "GPT: auto or WIDTHxHEIGHT, e.g. 1024x1024. Both dimensions are positive. "
                     "Actual output pixels may differ; inspect the result.",
                 ),
@@ -475,7 +491,7 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
     body += p(
         "Seedream 5.5: 1k/2k, n=1, PNG, 11 пропорций. До 8 изображений-референсов в одном запросе; "
         "каждый референс тарифицируется отдельно. Поддерживаются JSON images и multipart image[]. "
-        "Финальный тариф смотрите в /pricing, доступность — в /v1/models.",
+        "Актуальные тарифы опубликованы в /pricing. Доступность модели проверяйте через GET /v1/models.",
         "Seedream 5.5: 1k/2k, n=1, PNG, 11 aspect ratios. Up to 8 reference images per request; "
         "each input image has a separate retail fee. JSON images and multipart image[] are supported. "
         "Check /pricing for retail rates and /v1/models for availability.",
@@ -527,9 +543,11 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
     body += code({"created": 1790596800, "data": [{"b64_json": "<base64-encoded-image>"}]})
     body += p(
         "Ответ содержит data[] с b64_json или url в выбранном формате, возможен revised_prompt. "
-        "Декодируйте base64 либо сразу скачайте URL. Ссылки временные; срок постоянного хранения не гарантирован. "
-        "На внешние ссылки изображений не отправляйте API-ключ. X-Request-Id содержит наш ID запроса. Потерянный "
-        "HTTP-ответ можно восстановить через статус по нашему ID или X-Client-Request-Id. "
+        "Декодируйте данные base64 или скачайте файл по полученной ссылке. Ссылки действуют ограниченное время; "
+        "постоянное хранение результата не гарантируется. "
+        "Не передавайте API-ключ при скачивании изображений с внешних адресов. Заголовок X-Request-Id содержит "
+        "идентификатор запроса API. Потерянный "
+        "HTTP-ответ можно восстановить, проверив статус по идентификатору запроса API или X-Client-Request-Id. "
         "У GPT размерный класс определяется фактическими пикселями: до 1024 по длинной стороне — 1K, "
         "до 2048 — 2K, выше — 4K. Учитывается каждое возвращённое изображение.",
         "The response contains data[] with b64_json or url in the chosen format, and may include revised_prompt. "
@@ -539,16 +557,20 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
         "GPT size tiers use actual pixels: longest edge up to 1024 is 1K, up to 2048 is 2K, above is 4K. "
         "Each returned image counts.",
     )
-    body += heading("video", "Видео: создание и получение", "Video: creation and retrieval")
+    body += heading("video", "Генерация видео и получение результата", "Video: creation and retrieval")
     body += p(
         "POST /v1/videos/generations принимает только JSON. Все модели возвращают 202 с request_id; "
-        "это подтверждение приёма запроса, а не готовности видео. Сохраните ID. Все значения duration — целые секунды.",
+        "ответ подтверждает приём запроса, но не завершение генерации. Сохраните request_id. Длительность "
+        "duration указывается целым числом секунд.",
         "POST /v1/videos/generations accepts JSON only. Every model returns 202 with request_id; "
         "this acknowledges the request, not a completed video. Save the ID. duration values are integer seconds.",
     )
     body += params(
         [
-            ("model", "string · required", t("Точный ID доступной видеомодели.", "Exact enabled video model ID.")),
+            (
+                "model", "string · required",
+                t("Идентификатор доступной модели генерации видео.", "Exact enabled video model ID."),
+            ),
             (
                 "prompt",
                 "string",
@@ -565,9 +587,10 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
                 "duration",
                 "integer",
                 t(
-                    "Задавайте явно в диапазоне своей модели, см. таблицу. "
-                    "Для Seedance/Kling/MiniMax/Wan при пропуске — 5; "
-                    "у Grok задавайте обязательно для предсказуемой длины. Для Seedance 2.5 edit — -1 или пропустить.",
+                    "Указывайте длительность в пределах диапазона выбранной модели (см. таблицу). "
+                    "Для Seedance, Kling, MiniMax и Wan значение по умолчанию — 5 секунд; "
+                    "для Grok указывайте длительность явно. В режиме edit модели Seedance 2.5 передайте -1 или "
+                    "не указывайте параметр.",
                     "Set explicitly within the model range below. "
                     "Seedance/Kling/MiniMax/Wan default to 5 when omitted; "
                     "always set it for Grok to make length predictable. Seedance 2.5 edit: -1 or omit.",
@@ -596,7 +619,8 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
                 "reference_images / reference_videos / reference_audios",
                 "array<object> · optional",
                 t(
-                    '[{"url":"https://…"}]. Порядок определяет нумерацию референсов. Лимиты каждого типа и суммы ниже. '
+                    '[{"url":"https://…"}]. Порядок элементов определяет нумерацию референсов. Ограничения для '
+                    'каждого типа и общее количество указаны ниже. '
                     "Не передавайте duration референса: длина определяется по файлу.",
                     '[{"url":"https://…"}]. Order determines reference numbering. Per-type and combined limits below. '
                     "Do not supply a reference duration: it is determined from the file.",
@@ -668,7 +692,7 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
             "Model ID",
             t("Секунды", "Seconds"),
             "resolution",
-            t("Фото / видео / аудио / всего", "Images / videos / audio / total"),
+            t("Изображения / видео / аудио / всего", "Images / videos / audio / total"),
         ),
         (row for row in VIDEO_LIMITS if video_models is None or row[0] in video_models),
     )
@@ -796,7 +820,7 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
         "must agree with size. MiniMax maps 1366x768 to 768p; other sizes require an explicit resolution. "
         "Prefer the primary fields above for new integrations.",
     )
-    body += "<h3>" + t("Ответ и опрос статуса", "Response and status polling") + "</h3>"
+    body += "<h3>" + t("Ответ API и проверка статуса", "Response and status polling") + "</h3>"
     body += code({"request_id": "<our-request-id>", "client_request_id": "<your-task-id>"})
     body += code('curl --fail-with-body "$API_BASE/v1/videos/$REQUEST_ID" \\\n  -H "Authorization: Bearer $API_KEY"')
     body += table(
@@ -805,25 +829,29 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
             (
                 "pending",
                 t(
-                    "В очереди или выполняется; продолжайте опрос раз в 10–15 секунд.",
+                    "Запрос ожидает выполнения или обрабатывается. Проверяйте статус каждые 10–15 секунд.",
                     "Queued or running; continue polling every 10–15 seconds.",
                 ),
             ),
             (
                 "done",
                 t(
-                    "Готово: video.url временно доступен без авторизации; authenticated_url требует ключ.",
+                    "Генерация завершена. Ссылка video.url временно доступна без авторизации, а "
+                    "authenticated_url требует API-ключ.",
                     "Complete: video.url is temporarily available without auth; authenticated_url requires the key.",
                 ),
             ),
             (
                 "failed",
-                t("Терминальная ошибка; смотрите error, если он есть.", "Terminal failure; inspect error if present."),
+                t(
+                    "Генерация завершилась ошибкой. Проверьте поле error, если оно присутствует.",
+                    "Terminal failure; inspect error if present.",
+                ),
             ),
             (
                 "expired",
                 t(
-                    "Истекло время выполнения задачи; терминальный статус.",
+                    "Время выполнения задачи истекло. Статус окончательный.",
                     "Task execution timed out; terminal status.",
                 ),
             ),
@@ -846,7 +874,7 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
         "request_id в пути — ID из ответа 202, он доступен только своему партнёру. video появляется при done; "
         "usage.billed_seconds может отсутствовать и означает учтённые секунды, включая входное видео, "
         "а не только длительность результата. progress, ETA и video.duration не входят в ответ этого API. "
-        "Не запускайте новую генерацию из-за истечения времени ожидания в своём приложении.",
+        "Истечение времени ожидания в приложении не является основанием для запуска новой генерации.",
         "The request_id path value comes from the 202 response and is accessible only to its partner. "
         "video appears when done; usage.billed_seconds is optional and includes chargeable input-video time, "
         "not just output duration. This API does not return progress, ETA or video.duration. "
@@ -868,7 +896,8 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
     )
     body += render_uploads(lang)
     body += heading(
-        "python", "Полный пример: локальное фото → Seedance → MP4", "Complete example: local photo → Seedance → MP4"
+        "python", "Пример на Python: генерация видео из локального изображения",
+        "Complete example: local photo → Seedance → MP4"
     )
     body += p(
         "Установите Python 3.12+ и httpx (pip install httpx), сохраните код ниже как seedance_reference.py. "
@@ -898,8 +927,9 @@ def render_uploads(lang):
     body += (
         "<p>"
         + (
-            "Для локального файла сначала создайте загрузку, затем отправьте байты по upload_url. "
-            "media_url вставьте в запрос генерации. Генерация и загрузка — разные операции. "
+            "Чтобы передать локальный файл, создайте запрос на загрузку, затем отправьте содержимое файла по "
+            "адресу upload_url. "
+            "Используйте полученный media_url в запросе генерации. Загрузка файла и генерация выполняются отдельно. "
             "POST /v1/media/uploads принимает только JSON с описанием файла, а не сам файл. "
             "Не отправляйте сюда multipart/form-data, байты JPEG/PNG или base64 вместо JSON. "
             "Такой Content-Type возвращает 415 media_upload_requires_json; повреждённый JSON — "
@@ -937,10 +967,12 @@ def render_uploads(lang):
     body += (
         "<p>"
         + (
-            "201 возвращает подписанные ссылки и сроки в UTC. PUT должен завершиться до upload_expires_at "
-            "(обычно 15 минут), media_url действует до expires_at (обычно 7 дней). Ориентируйтесь на ответ. "
+            "Ответ HTTP 201 содержит подписанные ссылки и сроки их действия в UTC. Запрос PUT должен "
+            "завершиться до upload_expires_at "
+            "(обычно 15 минут), media_url действует до expires_at (обычно 7 дней). Используйте сроки, указанные "
+            "в ответе API. "
             "Отправляйте исходные байты, точные Content-Type и Content-Length; не JSON и не multipart. "
-            "upload_url уже содержит разрешение: API-ключ на адрес хранилища не передавайте. Не меняйте "
+            "Ссылка upload_url уже содержит данные авторизации. Не передавайте API-ключ хранилищу и не изменяйте "
             "query-параметры "
             "подписанных ссылок. Пример size_bytes=123456 нужно заменить реальным размером файла."
             if ru
@@ -1012,7 +1044,8 @@ def render_errors(lang):
     body += (
         "<p>"
         + t(
-            "Проверяйте HTTP status до обработки результата. Ошибки имеют один из двух форматов ниже; detail "
+            "Перед обработкой ответа проверяйте код состояния HTTP. Ошибки возвращаются в одном из двух "
+            "форматов, приведённых ниже; поле detail "
             "также может быть массивом ошибок проверки запроса. Сохраняйте request_id или X-Request-Id для поддержки.",
             "Check HTTP status before processing results. Errors use either format below; detail may also be an array "
             "of request validation errors. Keep request_id or X-Request-Id when contacting support.",
@@ -1045,17 +1078,17 @@ def render_errors(lang):
         (
             "401",
             "api_key_required / invalid_api_key",
-            t("Проверьте ключ и активность аккаунта.", "Check key and account status."),
+            t("Проверьте корректность API-ключа и статус аккаунта.", "Check key and account status."),
         ),
         (
             "402",
             "insufficient_balance",
-            t("Недостаточно доступного баланса для запроса.", "Insufficient available balance."),
+            t("Для выполнения запроса недостаточно доступных средств.", "Insufficient available balance."),
         ),
         (
             "403",
             "partner_not_active",
-            t("Обратитесь за активацией аккаунта.", "Contact support for account activation."),
+            t("Обратитесь в службу поддержки для активации аккаунта.", "Contact support for account activation."),
         ),
         (
             "404",
@@ -1069,7 +1102,7 @@ def render_errors(lang):
             "409",
             "idempotency_conflict",
             t(
-                "Этот ключ уже использован с другим телом или методом.",
+                "Ключ идемпотентности уже использован для другого тела запроса или метода.",
                 "The key was used with a different body or method.",
             ),
         ),
@@ -1103,8 +1136,8 @@ def render_errors(lang):
             "415",
             "media_upload_requires_json",
             t(
-                "Создайте upload ticket через application/json с описанием файла. "
-                "Затем отправьте байты отдельным PUT по upload_url.",
+                "Создайте запрос на загрузку с описанием файла в формате application/json. "
+                "Затем отправьте содержимое файла отдельным запросом PUT по адресу upload_url.",
                 "Create an upload ticket using application/json file metadata. "
                 "Then send the bytes with a separate PUT to upload_url.",
             ),
@@ -1130,7 +1163,7 @@ def render_errors(lang):
             "429",
             "provider_rate_limited",
             t(
-                "Достигнут лимит запросов; учитывайте Retry-After, если присутствует.",
+                "Превышен лимит частоты запросов. Учитывайте значение заголовка Retry-After, если он присутствует.",
                 "Request limit reached; respect Retry-After when present.",
             ),
         ),
@@ -1159,13 +1192,16 @@ def render_errors(lang):
         "<p>"
         + t(
             "Для видео повторите то же тело с тем же Idempotency-Key: вернётся исходный request_id. "
-            "При наличии ID достаточно GET статуса. Для завершённых новых запросов текста/изображений тот же ключ "
+            "Если идентификатор запроса известен, используйте GET для проверки его статуса. Для завершённых "
+            "новых запросов текста/изображений тот же ключ "
             "возвращает исходный ответ; "
-            "сохранённый статус изображения доступен по нашему ID или X-Client-Request-Id. Новый ключ означает новую "
+            "сохранённый статус изображения доступен по нашему ID или X-Client-Request-Id. Новый ключ "
+            "идемпотентности создаёт новую "
             "операцию и может привести к повторной оплате. "
-            "При timeout, обрыве сети или 5xx не меняйте ключ для автоматической повторной отправки. "
+            "При истечении времени ожидания, сетевой ошибке или ответе HTTP 5xx сохраняйте исходный ключ при "
+            "повторной отправке. "
             "У клиентов с автоматическими повторами POST отключите их; при однозначно отклонённом запросе "
-            "исправленный новый запрос отправляют с новым ключом. Фиксированная общая квота RPS здесь не "
+            "исправленный новый запрос отправляют с новым ключом. Единый фиксированный лимит запросов в секунду не "
             "гарантируется.",
             "For video, resubmit the same body with the same Idempotency-Key to get the original request_id. "
             "If you have the ID, simply GET its status. Completed new text/image requests replay the original "

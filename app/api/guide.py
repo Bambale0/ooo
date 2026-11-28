@@ -48,7 +48,7 @@ async def _public_connection_guide(db: DbSession, lang: str) -> HTMLResponse:
     ru = lang == "ru"
     settings = get_settings()
     base_url = settings.public_api_base_url.rstrip("/")
-    title = "Нейроныч API — документация" if ru else "Neironych API reference"
+    title = "Документация API — Нейроныч" if ru else "Neironych API reference"
 
     model_rows = (
         (await db.execute(select(Model).where(Model.status == "production").order_by(Model.slug))).scalars().all()
@@ -57,7 +57,7 @@ async def _public_connection_guide(db: DbSession, lang: str) -> HTMLResponse:
     model_rows = [model for model in model_rows if model.slug in MODELS]
     enabled = (
         f'<p class="doc-model-count">{len(model_rows)} '
-        + ("публично доступных моделей" if ru else "publicly available models")
+        + ("моделей в публичном каталоге" if ru else "publicly available models")
         + "</p>"
         + table(
             (
@@ -81,7 +81,7 @@ async def _public_connection_guide(db: DbSession, lang: str) -> HTMLResponse:
     )
     if not model_rows:
         enabled += (
-            "<p>Публично включённых моделей пока нет.</p>"
+            "<p>В публичном каталоге пока нет доступных моделей.</p>"
             if ru
             else "<p>No models are currently enabled for public partner use.</p>"
         )
