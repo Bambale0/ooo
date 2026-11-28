@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from app.api.dependencies import DbSession
 from app.api.marketing import marketing_page
+from app.api.model_integration import model_download, render_model_selection
 from app.api.model_explorer import render_catalog
 from app.api.native_video_reference import REVIEWED_VIDEO_MODELS, render_native_video_reference
 from app.api.partner_reference import render_reference, table
@@ -44,7 +45,7 @@ async def public_asset(asset: str):
     )
 
 
-async def _public_connection_guide(db: DbSession, lang: str) -> HTMLResponse:
+async def _public_connection_guide(db: DbSession, lang: str, model: str = "", output: str = "") -> Response:
     ru = lang == "ru"
     settings = get_settings()
     base_url = settings.public_api_base_url.rstrip("/")
@@ -55,6 +56,12 @@ async def _public_connection_guide(db: DbSession, lang: str) -> HTMLResponse:
     )
 
     model_rows = [model for model in model_rows if model.slug in MODELS]
+    if output:
+        return await model_download(model_rows, model, base_url, output)
+    if model and not any(row.slug == model for row in model_rows):
+        raise HTTPException(404, "model_not_available")
+    root = f"/docs?lang={lang}&integration=1"
+    integration = render_model_selection(model_rows, base_url, root, model, lang=lang)
     enabled = (
         f'<p class="doc-model-count">{len(model_rows)} '
         + ("публично доступных моделей" if ru else "publicly available models")
@@ -91,6 +98,8 @@ async def _public_connection_guide(db: DbSession, lang: str) -> HTMLResponse:
     )
     anchor = '<h2 id="uploads">'
     body = body.replace(anchor, render_native_video_reference(lang, video_models) + anchor, 1)
+    model_anchor = '<h2 id="models">'
+    body = body.replace(model_anchor, integration + model_anchor, 1)
     return page(title, body, lang)
 
 
