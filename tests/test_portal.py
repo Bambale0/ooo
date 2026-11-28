@@ -333,3 +333,18 @@ async def test_unknown_action_and_export_rejected(portal_browser, portal_account
     response = await _post(portal_browser, csrf, "credit_balance", requested_rub="10000000")
     assert response.status_code == 422
     assert (await portal_browser.get("/cabinet/export/private-secrets")).status_code == 404
+
+
+async def test_partner_pages_omit_internal_commercial_details(portal_browser, portal_accounts):
+    own, _, _, _, _ = portal_accounts
+    await _authenticate(portal_browser, own)
+    for section in ('models', 'credits'):
+        response = await portal_browser.get('/cabinet', params={'section': section})
+        assert response.status_code == 200
+        for phrase in ('Тарификация и валюта рассчитываются на сервере', 'Цены поставщика',
+                       'закупочные лимиты', 'Покрытие себестоимости'):
+            assert phrase not in response.text
+    assert 'Фактическое списание отображается в журнале запросов' in (
+        await portal_browser.get('/cabinet?section=models')
+    ).text
+    assert 'Кредитный лимит' in (await portal_browser.get('/cabinet?section=credits')).text

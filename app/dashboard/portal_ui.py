@@ -477,8 +477,7 @@ async def models_view(db, tariff_rows: list, search: str) -> str:
         + '<p class="table-intro">Цены зависят от режима и настроек запроса. '
         'Фактическое списание отображается в журнале запросов.</p>'
         + _table(("Модель", "Категория", "Тарифы"), rows, "Доступных моделей по запросу не найдено.")
-        + '</section><p class="footnote">Тарификация и валюта рассчитываются на сервере по действующим правилам. '
-        'Цены поставщика и внутренние закупочные лимиты не отображаются.</p>'
+        + "</section>"
     )
 
 
@@ -550,7 +549,6 @@ def credits_view(partner: Partner, invoices: list[PaymentInvoice], csrf: str, id
         ("Баланс", _rub(partner.balance_rub), "Доступные средства"),
         ("Кредитный лимит", _rub(partner.credit_limit_rub), "Установлен администратором"),
         ("Доступно", _rub(partner.available_balance_rub), "Баланс + кредитный лимит"),
-        ("Покрытие себестоимости", _rub(partner.cost_coverage_rub), "Расчётная величина"),
     ])
     form = (
         '<section class="surface action-surface"><div><h2>Пополнить баланс</h2>'
