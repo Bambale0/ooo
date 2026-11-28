@@ -72,17 +72,19 @@ async def test_public_downloads_and_grant_isolation(client, db_session):
     assert {m.slug for m in await documented_models(db_session)} == {public.slug}
     assert {m.slug for m in await documented_models(db_session, "partner-one")} == {public.slug, private.slug}
     assert {m.slug for m in await documented_models(db_session, "partner-two")} == {public.slug}
-    for model in (private, disabled):
-        response = await client.get("/docs", params={"model": model.slug, "format": "agent"})
+    # HTTP 404 rolls back the shared fixture session and expires ORM instances.
+    public_slug, private_slug, disabled_slug = public.slug, private.slug, disabled.slug
+    for slug in (private_slug, disabled_slug):
+        response = await client.get("/docs", params={"model": slug, "format": "agent"})
         assert response.status_code == 404
-    response = await client.get("/docs", params={"model": public.slug, "format": "agent"})
+    response = await client.get("/docs", params={"model": public_slug, "format": "agent"})
     assert response.status_code == 200
     assert response.headers["cache-control"] == "private, no-store"
     assert "seedance-2.5" in response.text
-    response = await client.get("/docs", params={"model": public.slug, "format": "pdf"})
+    response = await client.get("/docs", params={"model": public_slug, "format": "pdf"})
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/pdf"
     assert response.content.startswith(b"%PDF-")
-    response = await client.get("/docs", params={"model": public.slug})
+    response = await client.get("/docs", params={"model": public_slug})
     assert response.status_code == 200
     assert "model-agent-instructions" in response.text
