@@ -101,8 +101,18 @@ def _details(slug, entry):
     if category == "image":
         profile = entry.get("image", {})
         lines = [f"{label}: {_display(profile[key])}" for key, label in IMAGE_FIELDS.items() if key in profile]
-        if "max_references" not in profile:
+        if not profile:
+            # Only public tier labels, never procurement amounts or metadata.
+            tiers = ", ".join(tier["label"] for tier in entry["procurement"]["tiers"])
+            lines.append(f"Классы разрешений: {tiers}")
             lines.append(f"Лимит входных изображений в JSON на уровне API: {image_reference_limit(slug)}")
+            if slug.startswith("gpt-image"):
+                lines.append("Параметр size: auto или WIDTHxHEIGHT; response_format: b64_json или url.")
+            elif slug.startswith("nano-"):
+                lines.append("Параметры resolution, aspect_ratio; response_format: b64_json.")
+            else:
+                lines.append("Параметр resolution; response_format: b64_json или url.")
+            lines.append("Для редактирования используйте /v1/images/edits и сверяйте ограничения режима.")
         for size in profile.get("output_sizes", profile.get("sizes", [])):
             lines.append(f"{size['aspect_ratio']}: {_display(size['pixels'])}")
         return tuple(lines)
@@ -212,7 +222,7 @@ def manual_markdown(doc):
 
 def agent_instructions(doc):
     protocol, body = doc.examples[0]
-    details = "\n".join(f"- {line}" for line in doc.details[:12]) or "- Дополнительные параметры не подтверждены."
+    details = "\n".join(f"- {line}" for line in doc.details) or "- Дополнительные параметры не подтверждены."
     return (
         f"# Задача: интегрировать {doc.slug} через API Нейроныча\n\n"
         "Изучи существующий проект и его инструкции. Реализуй интеграцию в действующей архитектуре, "
@@ -287,7 +297,8 @@ def render_model_selection(rows, base_url, root, slug="", *, lang="ru"):
             if items:
                 parts.append(f"<h3>{label}</h3><ul>")
                 parts.extend(
-                    f'<li><a href="{escape(model_link(root, row.slug), quote=True)}#integrations">{escape(row.name)}</a> '
+                    f'<li><a href="{escape(model_link(root, row.slug), quote=True)}#integrations">'
+                    f'{escape(row.name)}</a> '
                     f'<code>{escape(row.slug)}</code></li>' for row in items
                 )
                 parts.append("</ul>")
