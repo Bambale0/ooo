@@ -436,7 +436,17 @@ async def models_view(db, tariff_rows: list, search: str) -> str:
             fx = (await current_fx(db))["rate"]
         except HTTPException:
             fx = Decimal("0")
-    rows = []
+    tariffs = {}
+    labels = {
+        "default": "Базовый тариф", "input_tokens": "Входные токены",
+        "output_tokens": "Выходные токены", "cached_input_tokens": "Входные токены из кэша",
+        "cache_write_tokens": "Запись в кэш", "video_input": "С видео на входе",
+        "reference_image": "Референсное изображение",
+    }
+    units = {
+        "generation": "за результат", "second": "за секунду",
+        "million_tokens": "за млн токенов", "image_reference": "за референс",
+    }
     for model, rate, snapshot in tariff_rows:
         if snapshot is not None:
             price = _rub(snapshot.price_rub)
@@ -444,20 +454,29 @@ async def models_view(db, tariff_rows: list, search: str) -> str:
             price = "По запросу"
         else:
             price = _rub(retail_rate(model.slug, rate, fx))
-        unit = {"generation": "за генерацию", "second": "за секунду", "million_tokens": "за млн токенов"}
-        rows.append((
+        label = labels.get(rate.mode, rate.mode)
+        if rate.resolution != "default":
+            label += f" · {rate.resolution}"
+        unit = units.get(rate.billing_unit, rate.billing_unit)
+        if rate.mode == "video_input":
+            unit = "за секунду входа и выхода"
+        if rate.mode == "cache_write_tokens" and price == _rub(Decimal("0")):
+            price = "Без доплаты"
+        _, items = tariffs.setdefault(model.slug, (model, []))
+        items.append(f'<li>{_e(label)} — <strong>{_e(price)}</strong> {_e(unit)}</li>')
+    rows = [
+        (
             f'<strong class="model-name">{_e(model.name)}</strong><small class="model-id">{_e(model.slug)}</small>',
             _e({"llm": "Текст", "image": "Изображение", "video": "Видео"}.get(model.modality, model.modality)),
-            f'<code>{_e(rate.mode)}</code> · {_e(rate.resolution)}',
-            f'<strong>{_e(price)}</strong>'
-            f'<small class="model-id">{_e(unit.get(rate.billing_unit, rate.billing_unit))}</small>',
-            '<span class="tag tag-positive">Доступна</span>',
-        ))
+            '<ul class="model-tariffs">' + "".join(items) + '</ul>',
+        )
+        for model, items in tariffs.values()
+    ]
     return (
         title + '<section class="surface">' + filters
         + '<p class="table-intro">Цены зависят от режима и настроек запроса. '
         'Фактическое списание отображается в журнале запросов.</p>'
-        + _table(("Модель", "Категория", "Режим", "Тариф", "Доступ"), rows, "Доступных моделей по запросу не найдено.")
+        + _table(("Модель", "Категория", "Тарифы"), rows, "Доступных моделей по запросу не найдено.")
         + '</section><p class="footnote">Тарификация и валюта рассчитываются на сервере по действующим правилам. '
         'Цены поставщика и внутренние закупочные лимиты не отображаются.</p>'
     )
