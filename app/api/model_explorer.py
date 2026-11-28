@@ -126,6 +126,11 @@ def render_catalog(rows: list[tuple[Model, PartnerPrice]], fx: Decimal) -> str:
             f'<span>{_escape(_unit(price.billing_unit))}</span>'
         )
         link_html = f'<a class="catalog-docs-link" href="/guide?lang=ru#{section}">Документация ↗</a>'
+        if contract:
+            link_html += (
+                f'<a class="catalog-docs-link" href="/docs?model={_escape(model.slug)}#integrations">'
+                'Интеграция ↗</a>'
+            )
         entries.append(
             f'<tr data-kind="{kind}" data-name="{_escape(model.name.casefold() + " " + model.slug.casefold())}" '
             f'data-price="{exact_price}">'
