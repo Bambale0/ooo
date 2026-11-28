@@ -485,12 +485,12 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
         "Seedream 5.0 Pro: 1k или 2k (по умолчанию), только n=1; JPEG. "
         "Соотношения: 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 21:9, 2:1, 1:2, 9:21. "
         "Редактирование: до 8 референсов через JSON images или multipart image[]; суммарно до 48 MiB. "
-        "Размер HTTPS-референсов проверяет поставщик. Формат ответа: b64_json или url. "
+        "Размер HTTPS-референсов проверяется при обработке запроса. Формат ответа: b64_json или url. "
         "Параметры size, quality и stream не поддерживаются. Доступность модели проверяйте в /v1/models.",
         "Seedream 5.0 Pro: 1k or 2k (default), n=1 only; JPEG. "
         "Aspect ratios: 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 21:9, 2:1, 1:2, 9:21. "
         "Edits accept up to 8 JSON images or multipart image[] references, 48 MiB combined. "
-        "The provider validates the size of HTTPS references. Response format: b64_json or url. "
+        "HTTPS reference sizes are validated during request processing. Response format: b64_json or url. "
         "size, quality and stream are unsupported. Check /v1/models for availability.",
     )
     body += "<h3>GPT Image 2.5 Sunburst · 4K</h3>" + example("image-sunburst")
@@ -734,16 +734,16 @@ def render_reference(base_url: str, lang: str, *, video_models: set[str] | None 
     body += p(
         "Тарификация Seedance 2.5: для обычного reference с reference_videos применяется тариф edit "
         "для выбранного разрешения, даже когда также переданы фото/аудио. "
-        "Extend и draft имеют отдельные ставки и проходят проверку покрытия действующей розничной ценой. "
+        "Для extend и draft действуют отдельные условия тарификации. "
         "Без reference_videos применяется обычный тариф. "
-        "При наличии видео поставщик считает оплачиваемые секунды как длительность результата плюс суммарную "
+        "При наличии видео оплачиваемые секунды включают длительность результата и суммарную "
         "длительность видеореференсов; после завершения списывается только фактический usage. "
         "Наличие видео не меняет режим запроса автоматически.",
         "Seedance 2.5 billing: an ordinary reference request with reference_videos uses the edit retail rate at the "
-        "selected resolution, even when combined with image/audio. Extend and draft use separate cost rates "
-        "and must be covered by the active retail rate. Without reference_videos, the normal rate "
+        "selected resolution, even when combined with image/audio. Extend and draft have separate billing terms. "
+        "Without reference_videos, the normal rate "
         "applies. With video input, billable seconds include output plus reference video duration; final billing "
-        "uses actual provider usage. Pricing never changes the provider request mode.",
+        "uses actual usage. Pricing does not change the requested mode.",
     )
 
     body += p(
@@ -1025,12 +1025,12 @@ def render_errors(lang):
         + t(
             "При 422 invalid_request_contract заголовок X-Validation-Error может содержать безопасный код причины: "
             "edit_requires_single_video, invalid_duration, invalid_generate_audio или unsupported_aspect_ratio. "
-            "Тело ответа остаётся прежним; неизвестные внутренние ошибки не раскрываются. "
-            "Отклонение на request_validation происходит до резервирования денег и отправки провайдеру.",
+            "Тело ответа сохраняет стандартный формат. "
+            "При request_validation средства не резервируются, запрос не выполняется.",
             "For 422 invalid_request_contract, X-Validation-Error may contain a safe reason code: "
             "edit_requires_single_video, invalid_duration, invalid_generate_audio or unsupported_aspect_ratio. "
-            "The response body is unchanged; unknown internal errors are not disclosed. "
-            "Rejection at request_validation happens before balance reservation or provider submission.",
+            "The response body retains its standard format. "
+            "A request_validation rejection does not reserve funds or execute the request.",
         )
         + "</p>"
     )

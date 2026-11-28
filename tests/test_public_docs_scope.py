@@ -218,3 +218,13 @@ async def test_guide_alias_uses_same_public_reference(client):
     assert docs.status_code == 200
     assert guide.status_code == 200
     assert docs.text == guide.text
+
+
+@pytest.mark.parametrize('lang', ['ru', 'en'])
+async def test_docs_describe_client_billing_without_internal_economics(client, lang):
+    response = await client.get('/docs', params={'lang': lang})
+    assert response.status_code == 200
+    for phrase in ('проверку покрытия действующей розничной ценой', 'separate cost rates',
+                   'must be covered by the active retail rate', 'неизвестные внутренние ошибки не раскрываются',
+                   'unknown internal errors are not disclosed'):
+        assert phrase not in response.text
