@@ -61,6 +61,19 @@ def create_app() -> FastAPI:
     app.include_router(reconciliation_router, prefix=settings.api_prefix + "/providers", tags=["Reconciliation"])
 
     @app.middleware("http")
+    async def search_index_policy(request: Request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        is_public_html = (
+            response.status_code == 200
+            and response.headers.get("content-type", "").startswith("text/html")
+            and (path in {"/", "/docs", "/guide", "/price", "/prices", "/models"} or path.startswith("/models/"))
+        )
+        if not is_public_html and path not in {"/robots.txt", "/sitemap.xml"} and not path.startswith("/ui/"):
+            response.headers["X-Robots-Tag"] = "noindex, nofollow"
+        return response
+
+    @app.middleware("http")
     async def prometheus_http_metrics(request: Request, call_next):
         started_at = monotonic_seconds()
         status_code = 500

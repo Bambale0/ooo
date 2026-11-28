@@ -5,6 +5,7 @@ from html import escape
 
 from fastapi.responses import HTMLResponse
 
+from app.api.seo import seo_head
 from app.infrastructure.config import get_settings
 
 
@@ -22,7 +23,9 @@ def _telegram_icon() -> str:
     )
 
 
-def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, landing: bool = False) -> HTMLResponse:
+def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, landing: bool = False,
+         seo_path: str | None = None, seo_description: str | None = None,
+         seo_headline: str | None = None) -> HTMLResponse:
     ru = lang == "ru"
     bot_url = telegram_bot_url()
     bot_action = (
@@ -63,8 +66,9 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, land
         )
         side = ""
     elif pricing:
-        headline = "Прозрачно.<br><span>В рублях.</span>"
-        description = "Актуальные цены для партнёров. Выберите модель и конфигурацию под свою задачу."
+        headline = "Каталог нейросетей API.<br><span>Цены в рублях.</span>"
+        description = ("Каталог API нейросетей для видео, изображений и текста. "
+                       "Актуальные тарифы в рублях, разрешения, режимы и параметры интеграции.")
         action = (
             f'<a class="button primary" href="{docs_url}">Перейти к интеграции <span aria-hidden="true">↗</span></a>'
         )
@@ -136,11 +140,15 @@ def page(title: str, body: str, lang: str = "ru", *, pricing: bool = False, land
     cabinet_nav_link = (
         f'<a href="{cabinet_url}">{t("Личный кабинет", "Cabinet")}</a>' if landing or pricing else ""
     )
+    path = seo_path or ("/" if landing else "/models" if pricing else "/docs")
+    description = seo_description or description
+    headline = escape(seo_headline) if seo_headline else headline
     return HTMLResponse(
         f'<!doctype html><html lang="{lang}"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         '<meta name="theme-color" content="#05070b">'
         f'<meta name="description" content="{escape(description, quote=True)}"><title>{escape(title)}</title>'
+        f'{seo_head(title, description, path, lang)}'
         '<link rel="icon" href="/ui/logo-mark.svg" type="image/svg+xml">'
         '<link rel="stylesheet" href="/ui/brand.css?v=3"><script src="/ui/brand.js?v=2" defer></script>'
         f'</head><body class="{"pricing-page" if pricing else "reference-page" if landing else "docs-page"}">'
