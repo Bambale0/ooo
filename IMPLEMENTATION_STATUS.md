@@ -1,5 +1,9 @@
 # Состояние реализации — 23.09.2026
 
+Кандидат [PR #185](https://github.com/Bambale0/ooo/pull/185), 27.11.2026: API-песочница в веб-кабинете, native биллинг/queue/replay и
+удаление trial-кнопки из новых Telegram меню. Локальные проверки и точный PR/CI
+фиксируются в `docs/agents/EXECUTION.md`; production-релиз требует отдельных фактов.
+
 Текущая доказательная база: [production review](docs/PRODUCTION_REVIEW.md).
 Она заменяет ранние записи о семи тестах, hash-only provider keys и заглушках кабинета.
 Production launch отдельно регулируется [чек-листом](PRODUCTION_LAUNCH_CHECKLIST.md).

@@ -50,7 +50,6 @@ def home_keyboard(*, admin: bool = False) -> InlineKeyboardMarkup:
     """Mobile-first hub: two primary paths, compact grouped secondary actions."""
     builder = InlineKeyboardBuilder()
     actions = [
-        ("🎬 Бесплатные видеотесты", "trials"),
         ("🤖 Заказать разработку бота", "dev:start"),
         ("🌐 Веб-кабинет", get_settings().public_api_base_url.rstrip("/") + "/cabinet"),
         ("💳 Баланс", "balance"),

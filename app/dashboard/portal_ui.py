@@ -20,6 +20,7 @@ from app.payments.models import PaymentInvoice
 
 _SECTIONS = (
     ("overview", "Обзор", "▦", "Рабочее пространство"),
+    ("playground", "Песочница API", "▷", "Рабочее пространство"),
     ("activity", "Аналитика", "◫", "Использование"),
     ("logs", "Запросы", "≡", "Использование"),
     ("models", "Модели и тарифы", "◇", "Использование"),
@@ -386,6 +387,8 @@ def logs_view(
             f'<div><span>Разрешение</span><strong>{_e(detail.resolution)}</strong></div>'
             f'<div><span>Длительность</span><strong>{_e(detail.duration_seconds)} с</strong></div>'
             f'<div><span>Списано</span><strong>{_e(_rub(detail.actual_charge_rub))}</strong></div></div>'
+            f'<a class="button button-secondary" href="/cabinet?section=playground&amp;generation_id={_e(detail.id)}">'
+            'Открыть результат в песочнице →</a>'
             '<h3>Запрос</h3>'
             f'<pre class="prompt-preview">{_e(prompt)}</pre>'
             f'<p class="small-muted">Создан: {_e(_dt(detail.created_at))} UTC'

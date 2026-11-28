@@ -361,3 +361,70 @@ Branch: `fix/persistent-partner-pricing-20261010`.
   publications on old revisions after the migration. Schema downgrade refuses
   while any custom rate exists.
 - Verification status: pending PR CI / migration / production release.
+
+## 2026-11-27 — Cabinet API playground and Telegram menu
+
+Baseline: `5b436ea88ea3383bf1097b96dc207c64982a13af`; branch `feature/cabinet-playground`.
+Preflight: this is the SaaS repository (Bambale0/ooo). The existing cabinet is a
+session-authenticated BFF with Origin/session CSRF protection. Native inference
+owns validation, partner prices/snapshots, actual-only settlement, admission,
+durable video queue and response replay. The reviewed model registry contains
+text/image/video protocols; no audio endpoint exists. No new provider adapter,
+ledger, tariffs, secrets, trial entitlement or schema is needed.
+
+Outcome/acceptance: remove trials from generated Telegram menus, preserve old
+callbacks; add cabinet navigation and a usable model/parameter editor, signed
+server quote, explicit paid submission, request/response, polling/result and curl.
+Use current active owned API key identity, without retrieving its plaintext.
+History stays in existing generations/logs. Preserve native replay and price gates.
+
+Test seams authorized by the request: synthetic Telegram updates; authenticated
+cabinet HTTP (CSRF, ownership, validation, quote tampering, balance); real native
+admission/settlement and queue with isolated provider transport; browser UI against
+an isolated local server. Provider credentials/results never enter logs/examples.
+No new migrations/configuration. Business availability/prices remain DB/admin-owned.
+Safe diagnostics use existing native correlation IDs and redacted errors.
+
+1. [done] Read AGENTS, README, brief, launch gates, cabinet/inference architecture,
+   tests and CI. Initialized pinned .agents via HTTPS (SSH port 22 unavailable).
+   Applied local python-testing-patterns and api-security-best-practices.
+2. [done] Regression slice: menus, authenticated playground and paid execution.
+3. [in progress] Focused/full tests, browser scenario, lint/review and exact-head CI.
+4. [pending] PR and release access/gates inspection; production claims need live evidence.
+
+Verification update: PR https://github.com/Bambale0/ooo/pull/185. Ten new HTTP/menu
+regressions pass, including text/image actual charges, durable paid video, duplicate
+replay, CSRF/Origin, quote tampering/expiration, model grants, price changes, inactive
+keys/account, size limits and foreign generation isolation. Thirty-two focused tests
+pass with the updated Telegram compatibility regressions. Full local pytest initially
+found two old menu expectations; both corrected without removing old callbacks.
+
+Standalone Chromium smoke passed: real HTTPS local app, synthetic session/database,
+isolated upstream adapter, dynamic text/video/image controls (including size-only
+GPT Image 2.6), quote → paid submit → deliberately lost success response → repeat
+(one provider call, one generation, one 0.03 RUB charge) → result → reload. DOM XSS
+probe remained inert. No horizontal overflow at 320/375/390/430px; screenshots were
+visually inspected. Reproduce with optional Playwright plus system Chromium:
+`PYTHONPATH=. python tests/browser_playground.py`. No real provider/Telegram requests.
+Browser evidence in the execution workspace: `/tmp/ooo-playground-browser-99s2k74a/`.
+Full Ruff, JS syntax, diff whitespace and single Alembic head checks pass.
+
+Review used pinned local `.agents/skills/api-security-best-practices/SKILL.md`,
+`python-testing-patterns/SKILL.md`, and `code-review-checklist/SKILL.md`; prior source
+guidance inspected during repository discovery: Bambale0/skills engineering/tdd,
+Bambale0/claw backend-integration/frontend-qa, wondelai/skills clean-code and
+anthropics/skills webapp-testing (only applicable safe guidance, user authorization
+takes precedence). No new tariffs, schema, provider integration or financial path.
+
+Release preflight: baseline main CI is successful. Existing independent production
+schema workflow 46054442178 is still running (encrypted backup download), and latest
+autodeploy 46055084731 was skipped. Reading repository Actions variables is denied
+(403 integration scope); this is not proof of an armed deploy gate. Never arm a gate
+or bypass this migration for this feature. Exact candidate CI and final release
+status will be recorded in the PR; a push alone is not deployment evidence.
+
+Full local suite after the menu updates: **2056 passed, 52 skipped**, 8 existing
+library deprecation warnings, 122.51s. PostgreSQL-only cases are intentionally
+skipped locally and must pass CI. Final tenant-read fixture extension was also
+rerun separately (10 playground regressions passed). Browser smoke was repeated
+after the final JS/profile changes and passed.

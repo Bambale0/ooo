@@ -27,7 +27,7 @@ async def test_home_has_obvious_order_action_and_compact_copy(cabinet, db_sessio
     assert len(screen.text) < 400
     rows = screen.reply_markup.inline_keyboard
     assert any(button.callback_data == "dev:start" for row in rows for button in row)
-    assert any(button.callback_data == "trials" for row in rows for button in row)
+    assert all(button.callback_data != "trials" for row in rows for button in row)
     assert all(len(row) <= 2 for row in rows)
 
 
